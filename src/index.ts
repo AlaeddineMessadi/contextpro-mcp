@@ -8,6 +8,7 @@ import { mkdir, writeFile } from "fs/promises";
 import { dirname, resolve } from "path";
 import { z } from "zod";
 import { startEmbeddingTracker } from "./core/embedding-tracker.js";
+import { isBrokenPipeError, runCleanup } from "./core/process-lifecycle.js";
 import { getContextTree } from "./tools/context-tree.js";
 import { getFileSkeleton } from "./tools/file-skeleton.js";
 import { ensureMcpDataDir } from "./core/embeddings.js";
@@ -371,13 +372,48 @@ async function main() {
       maxFilesPerTick: Number.parseInt(process.env.CONTEXTPLUS_EMBED_TRACKER_MAX_FILES ?? "8", 10),
     })
     : () => { };
-
-  process.once("SIGINT", () => stopTracker());
-  process.once("SIGTERM", () => stopTracker());
-  process.once("exit", () => stopTracker());
-
   const transport = new StdioServerTransport();
   await server.connect(transport);
+
+  let shuttingDown = false;
+  const closeServer = async () => {
+    const closable = server as unknown as { close?: () => Promise<void> | void };
+    if (typeof closable.close === "function") {
+      await closable.close();
+    }
+  };
+  const closeTransport = async () => {
+    const closable = transport as unknown as { close?: () => Promise<void> | void };
+    if (typeof closable.close === "function") {
+      await closable.close();
+    }
+  };
+  const shutdown = async (reason: string, exitCode: number = 0) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    console.error(`Context+ MCP shutdown requested: ${reason}`);
+    await runCleanup({ stopTracker, closeServer, closeTransport });
+    process.exit(exitCode);
+  };
+  const requestShutdown = (reason: string, exitCode: number = 0) => {
+    void shutdown(reason, exitCode);
+  };
+
+  process.once("SIGINT", () => requestShutdown("SIGINT", 0));
+  process.once("SIGTERM", () => requestShutdown("SIGTERM", 0));
+  process.once("exit", () => stopTracker());
+  process.stdin.once("end", () => requestShutdown("stdin-end", 0));
+  process.stdin.once("close", () => requestShutdown("stdin-close", 0));
+  process.stdin.once("error", (error) => {
+    if (isBrokenPipeError(error)) requestShutdown("stdin-error", 0);
+  });
+  process.stdout.once("error", (error) => {
+    if (isBrokenPipeError(error)) requestShutdown("stdout-error", 0);
+  });
+  process.stderr.once("error", (error) => {
+    if (isBrokenPipeError(error)) requestShutdown("stderr-error", 0);
+  });
+
   console.error(`Context+ MCP server running on stdio | root: ${ROOT_DIR}`);
 }
 
