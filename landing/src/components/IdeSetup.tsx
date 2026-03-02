@@ -25,7 +25,9 @@ function buildConfig(runner: string, ideId: string): string {
         mcp: {
           contextplus: {
             type: "local",
-            command: isNpx ? ["npx", "-y", "contextplus"] : ["bunx", "contextplus"],
+            command: isNpx
+              ? ["npx", "-y", "contextplus"]
+              : ["bunx", "contextplus"],
             enabled: true,
             environment: {
               OLLAMA_EMBED_MODEL: "nomic-embed-text",
