@@ -12,14 +12,30 @@ describe("init-opencode", () => {
   it("writes valid opencode.json for npx runner", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "contextplus-opencode-"));
     try {
-      await execFileAsync(process.execPath, [join(process.cwd(), "build", "index.js"), "init", "opencode", "--runner=npx"], { cwd });
+      await execFileAsync(
+        process.execPath,
+        [
+          join(process.cwd(), "build", "index.js"),
+          "init",
+          "opencode",
+          "--runner=npx",
+        ],
+        { cwd },
+      );
       const raw = await readFile(join(cwd, "opencode.json"), "utf8");
       const cfg = JSON.parse(raw);
       assert.equal(cfg.$schema, "https://opencode.ai/config.json");
       assert.equal(cfg.mcp.contextplus.type, "local");
-      assert.deepEqual(cfg.mcp.contextplus.command, ["npx", "-y", "contextplus"]);
+      assert.deepEqual(cfg.mcp.contextplus.command, [
+        "npx",
+        "-y",
+        "contextplus",
+      ]);
       assert.equal(cfg.mcp.contextplus.enabled, true);
-      assert.equal(cfg.mcp.contextplus.environment.OLLAMA_EMBED_MODEL, "nomic-embed-text");
+      assert.equal(
+        cfg.mcp.contextplus.environment.OLLAMA_EMBED_MODEL,
+        "nomic-embed-text",
+      );
     } finally {
       await rm(cwd, { recursive: true, force: true });
     }
@@ -28,7 +44,16 @@ describe("init-opencode", () => {
   it("writes valid opencode.json for bunx runner", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "contextplus-opencode-"));
     try {
-      await execFileAsync(process.execPath, [join(process.cwd(), "build", "index.js"), "init", "opencode", "--runner=bunx"], { cwd });
+      await execFileAsync(
+        process.execPath,
+        [
+          join(process.cwd(), "build", "index.js"),
+          "init",
+          "opencode",
+          "--runner=bunx",
+        ],
+        { cwd },
+      );
       const raw = await readFile(join(cwd, "opencode.json"), "utf8");
       const cfg = JSON.parse(raw);
       assert.deepEqual(cfg.mcp.contextplus.command, ["bunx", "contextplus"]);

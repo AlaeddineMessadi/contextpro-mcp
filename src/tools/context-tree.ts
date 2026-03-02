@@ -56,7 +56,7 @@ async function buildTree(entries: FileEntry[], _rootDir: string, includeSymbols:
         if (includeSymbols && analysis.symbols.length > 0) {
           node.symbols = analysis.symbols.map((s) => formatSymbol(s, 0)).join("\n");
         }
-      } catch {}
+      } catch { }
     }
 
     parent.children.push(node);

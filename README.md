@@ -108,10 +108,6 @@ Config file locations:
 | Windsurf    | `.windsurf/mcp.json` |
 | OpenCode    | `opencode.json`      |
 
-### OpenCode MCP Config
-
-`init opencode` generates an `opencode.json` file using OpenCode's config schema (`https://opencode.ai/config.json`) and registers Context+ under the `mcp` key as a local MCP server.
-
 ### CLI Subcommands
 
 - `init [target]` - Generate MCP configuration (targets: `claude`, `cursor`, `vscode`, `windsurf`, `opencode`).
