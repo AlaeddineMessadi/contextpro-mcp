@@ -21,13 +21,14 @@ import { listRestorePoints, restorePoint } from "./git/shadow.js";
 import { semanticNavigate } from "./tools/semantic-navigate.js";
 import { getFeatureHub } from "./tools/feature-hub.js";
 
-type AgentTarget = "claude" | "cursor" | "vscode" | "windsurf";
+type AgentTarget = "claude" | "cursor" | "vscode" | "windsurf" | "opencode";
 
 const AGENT_CONFIG_PATH: Record<AgentTarget, string> = {
   claude: ".mcp.json",
   cursor: ".cursor/mcp.json",
   vscode: ".vscode/mcp.json",
   windsurf: ".windsurf/mcp.json",
+  opencode: "opencode.json",
 };
 
 const SUB_COMMANDS = ["init", "skeleton", "tree"];
@@ -42,7 +43,8 @@ function parseAgentTarget(input?: string): AgentTarget {
   if (normalized === "cursor") return "cursor";
   if (normalized === "vscode" || normalized === "vs-code" || normalized === "vs") return "vscode";
   if (normalized === "windsurf") return "windsurf";
-  throw new Error(`Unsupported coding agent \"${input}\". Use one of: claude, cursor, vscode, windsurf.`);
+  if (normalized === "opencode" || normalized === "open-code") return "opencode";
+  throw new Error(`Unsupported coding agent \"${input}\". Use one of: claude, cursor, vscode, windsurf, opencode.`);
 }
 
 function parseRunner(args: string[]): "npx" | "bunx" {
@@ -87,13 +89,39 @@ function buildMcpConfig(runner: "npx" | "bunx") {
   );
 }
 
+function buildOpenCodeConfig(runner: "npx" | "bunx") {
+  const command = runner === "npx" ? ["npx", "-y", "contextplus"] : ["bunx", "contextplus"];
+  return JSON.stringify(
+    {
+      $schema: "https://opencode.ai/config.json",
+      mcp: {
+        contextplus: {
+          type: "local",
+          command,
+          enabled: true,
+          environment: {
+            OLLAMA_EMBED_MODEL: "nomic-embed-text",
+            OLLAMA_CHAT_MODEL: "gemma2:27b",
+            OLLAMA_API_KEY: "YOUR_OLLAMA_API_KEY",
+            CONTEXTPLUS_EMBED_BATCH_SIZE: "8",
+            CONTEXTPLUS_EMBED_TRACKER: "true",
+          },
+        },
+      },
+    },
+    null,
+    2,
+  );
+}
+
 async function runInitCommand(args: string[]) {
   const nonFlags = args.filter((arg) => !arg.startsWith("--"));
   const target = parseAgentTarget(nonFlags[0]);
   const runner = parseRunner(args);
   const outputPath = resolve(process.cwd(), AGENT_CONFIG_PATH[target]);
+  const content = target === "opencode" ? buildOpenCodeConfig(runner) : buildMcpConfig(runner);
   await mkdir(dirname(outputPath), { recursive: true });
-  await writeFile(outputPath, `${buildMcpConfig(runner)}\n`, "utf8");
+  await writeFile(outputPath, `${content}\n`, "utf8");
   console.error(`Context+ initialized for ${target} using ${runner}.`);
   console.error(`Wrote MCP config: ${outputPath}`);
 }

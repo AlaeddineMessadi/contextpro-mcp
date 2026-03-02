@@ -93,9 +93,10 @@ Or generate the MCP config file directly in your current directory:
 ```bash
 npx -y contextplus init claude
 bunx contextplus init cursor
+npx -y contextplus init opencode
 ```
 
-Supported coding agent names: `claude`, `cursor`, `vscode`, `windsurf`.
+Supported coding agent names: `claude`, `cursor`, `vscode`, `windsurf`, `opencode`.
 
 Config file locations:
 
@@ -105,10 +106,15 @@ Config file locations:
 | Cursor      | `.cursor/mcp.json`   |
 | VS Code     | `.vscode/mcp.json`   |
 | Windsurf    | `.windsurf/mcp.json` |
+| OpenCode    | `opencode.json`      |
+
+### OpenCode MCP Config
+
+`init opencode` generates an `opencode.json` file using OpenCode's config schema (`https://opencode.ai/config.json`) and registers Context+ under the `mcp` key as a local MCP server.
 
 ### CLI Subcommands
 
-- `init [target]` - Generate MCP configuration (targets: `claude`, `cursor`, `vscode`, `windsurf`).
+- `init [target]` - Generate MCP configuration (targets: `claude`, `cursor`, `vscode`, `windsurf`, `opencode`).
 - `skeleton [path]` or `tree [path]` - **(New)** View the structural tree of a project with file headers and symbol definitions directly in your terminal.
 - `[path]` - Start the MCP server (stdio) for the specified path (defaults to current directory).
 
