@@ -16,7 +16,14 @@ bun dev
 
 Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
 
+When running locally you can hit [http://localhost:3000/api/instructions](http://localhost:3000/api/instructions) to fetch the instructions file.
+
 You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+
+### Instructions API
+
+An HTTP endpoint at `/api/instructions` serves the repository's
+`INSTRUCTIONS.md` file as `text/markdown`.
 
 This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
 

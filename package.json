@@ -2,6 +2,7 @@
   "name": "contextplus",
   "version": "1.0.4",
   "type": "module",
+  "license": "MIT",
   "bin": {
     "contextplus": "./build/index.js"
   },
