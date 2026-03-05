@@ -20,8 +20,11 @@ describe("semantic-navigate", () => {
   });
 
   it("skips data files and navigates source files", async () => {
-    const { semanticNavigate } = await import("../../build/tools/semantic-navigate.js");
-    const rootDir = await mkdtemp(join(tmpdir(), "contextplus-semantic-navigate-"));
+    const { semanticNavigate } =
+      await import("../../build/tools/semantic-navigate.js");
+    const rootDir = await mkdtemp(
+      join(tmpdir(), "contextplus-semantic-navigate-"),
+    );
     const originalEmbed = Ollama.prototype.embed;
     const originalChat = Ollama.prototype.chat;
 
@@ -34,18 +37,30 @@ describe("semantic-navigate", () => {
     };
 
     try {
-      await writeFile(join(rootDir, "app.ts"), [
-        "// Semantic navigate fixture header line one two three four",
-        "// FEATURE: semantic navigate fixture for source-only clustering output",
-        "export const meaning = 42;",
-        "",
-      ].join("\n"));
+      await writeFile(
+        join(rootDir, "app.ts"),
+        [
+          "// Semantic navigate fixture header line one two three four",
+          "// FEATURE: semantic navigate fixture for source-only clustering output",
+          "export const meaning = 42;",
+          "",
+        ].join("\n"),
+      );
       await writeFile(
         join(rootDir, "data.json"),
-        JSON.stringify({ rows: Array.from({ length: 10000 }, (_, idx) => ({ id: idx, value: `cell_${idx}` })) }),
+        JSON.stringify({
+          rows: Array.from({ length: 10000 }, (_, idx) => ({
+            id: idx,
+            value: `cell_${idx}`,
+          })),
+        }),
       );
 
-      const result = await semanticNavigate({ rootDir, maxDepth: 2, maxClusters: 5 });
+      const result = await semanticNavigate({
+        rootDir,
+        maxDepth: 2,
+        maxClusters: 5,
+      });
       assert.match(result, /app\.ts/);
       assert.doesNotMatch(result, /data\.json/);
     } finally {

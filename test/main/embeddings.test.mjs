@@ -61,18 +61,22 @@ describe("embeddings", () => {
       try {
         const index = new SearchIndex();
         const sharedPrefix = "x".repeat(8500);
-        const firstDoc = [{
-          path: "src/long.ts",
-          header: "header",
-          symbols: ["alpha"],
-          content: `${sharedPrefix} tail_one`,
-        }];
-        const secondDoc = [{
-          path: "src/long.ts",
-          header: "header",
-          symbols: ["alpha"],
-          content: `${sharedPrefix} tail_two`,
-        }];
+        const firstDoc = [
+          {
+            path: "src/long.ts",
+            header: "header",
+            symbols: ["alpha"],
+            content: `${sharedPrefix} tail_one`,
+          },
+        ];
+        const secondDoc = [
+          {
+            path: "src/long.ts",
+            header: "header",
+            symbols: ["alpha"],
+            content: `${sharedPrefix} tail_two`,
+          },
+        ];
 
         await index.index(firstDoc, rootDir);
         const firstPassCalls = callCount;
@@ -145,12 +149,16 @@ describe("embeddings", () => {
             throw new Error("input length exceeds context length");
         }
         return {
-          embeddings: batch.map((value) => [value.includes(tailMarker) ? 10 : 1]),
+          embeddings: batch.map((value) => [
+            value.includes(tailMarker) ? 10 : 1,
+          ]),
         };
       };
 
       try {
-        const vectors = await fetchEmbedding(`${"a".repeat(9000)}${tailMarker}${"b".repeat(1000)}`);
+        const vectors = await fetchEmbedding(
+          `${"a".repeat(9000)}${tailMarker}${"b".repeat(1000)}`,
+        );
         assert.equal(vectors.length, 1);
         assert.ok(vectors[0][0] > 1);
         assert.ok(seenLengths.every((length) => length <= 8000));
@@ -204,7 +212,9 @@ describe("embeddings", () => {
 
       Ollama.prototype.embed = async function (request) {
         requests.push(request);
-        const batch = Array.isArray(request.input) ? request.input : [request.input];
+        const batch = Array.isArray(request.input)
+          ? request.input
+          : [request.input];
         return { embeddings: batch.map((value) => [value.length]) };
       };
 

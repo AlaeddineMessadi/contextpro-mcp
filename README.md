@@ -41,14 +41,14 @@ https://github.com/user-attachments/assets/a97a451f-c9b4-468d-b036-15b65fc13e79
 
 ### Memory & RAG
 
-| Tool                       | Description                                                                                                       |
-| -------------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| `upsert_memory_node`       | Create or update a memory node (concept, file, symbol, note) with auto-generated embeddings.                      |
-| `create_relation`          | Create typed edges between nodes (relates_to, depends_on, implements, references, similar_to, contains).          |
-| `search_memory_graph`      | Semantic search with graph traversal — finds direct matches then walks 1st/2nd-degree neighbors.                  |
-| `prune_stale_links`        | Remove decayed edges (e^(-λt) below threshold) and orphan nodes with low access counts.                           |
-| `add_interlinked_context`  | Bulk-add nodes with auto-similarity linking (cosine ≥ 0.72 creates edges automatically).                         |
-| `retrieve_with_traversal`  | Start from a node and walk outward — returns all reachable neighbors scored by decay and depth.                   |
+| Tool                      | Description                                                                                              |
+| ------------------------- | -------------------------------------------------------------------------------------------------------- |
+| `upsert_memory_node`      | Create or update a memory node (concept, file, symbol, note) with auto-generated embeddings.             |
+| `create_relation`         | Create typed edges between nodes (relates_to, depends_on, implements, references, similar_to, contains). |
+| `search_memory_graph`     | Semantic search with graph traversal — finds direct matches then walks 1st/2nd-degree neighbors.         |
+| `prune_stale_links`       | Remove decayed edges (e^(-λt) below threshold) and orphan nodes with low access counts.                  |
+| `add_interlinked_context` | Bulk-add nodes with auto-similarity linking (cosine ≥ 0.72 creates edges automatically).                 |
+| `retrieve_with_traversal` | Start from a node and walk outward — returns all reachable neighbors scored by decay and depth.          |
 
 ## Setup
 
