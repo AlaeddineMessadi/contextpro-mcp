@@ -11,6 +11,17 @@ export interface EmbeddingTrackerOptions {
   maxFilesPerTick?: number;
 }
 
+export interface EmbeddingTrackerController {
+  ensureStarted: () => void;
+  stop: () => void;
+  isRunning: () => boolean;
+}
+
+export interface EmbeddingTrackerControllerOptions extends EmbeddingTrackerOptions {
+  mode?: string;
+  starter?: (options: EmbeddingTrackerOptions) => () => void;
+}
+
 const MIN_FILES_PER_TICK = 5;
 const MAX_FILES_PER_TICK = 10;
 const DEFAULT_FILES_PER_TICK = 8;
@@ -42,6 +53,14 @@ function clampFilesPerTick(value: number | undefined): number {
 function clampDebounceMs(value: number | undefined): number {
   if (!Number.isFinite(value)) return DEFAULT_DEBOUNCE_MS;
   return Math.max(100, Math.floor(value ?? DEFAULT_DEBOUNCE_MS));
+}
+
+export function parseEmbeddingTrackerMode(value: string | undefined): "off" | "lazy" | "eager" {
+  if (!value) return "lazy";
+  const normalized = value.trim().toLowerCase();
+  if (["false", "0", "no", "off", "disabled", "none"].includes(normalized)) return "off";
+  if (["eager", "startup", "boot"].includes(normalized)) return "eager";
+  return "lazy";
 }
 
 export function startEmbeddingTracker(options: EmbeddingTrackerOptions): () => void {
@@ -109,5 +128,33 @@ export function startEmbeddingTracker(options: EmbeddingTrackerOptions): () => v
     if (timer) clearTimeout(timer);
     watcher?.close();
     watcher = null;
+  };
+}
+
+export function createEmbeddingTrackerController(options: EmbeddingTrackerControllerOptions): EmbeddingTrackerController {
+  const { mode: rawMode, starter = startEmbeddingTracker, ...trackerOptions } = options;
+  const mode = parseEmbeddingTrackerMode(rawMode);
+
+  let running = false;
+  let stopTracker = () => { };
+
+  const ensureStarted = (): void => {
+    if (running || mode === "off") return;
+    stopTracker = starter(trackerOptions);
+    running = true;
+  };
+
+  if (mode === "eager") ensureStarted();
+
+  return {
+    ensureStarted,
+    stop: () => {
+      if (!running) return;
+      running = false;
+      const stop = stopTracker;
+      stopTracker = () => { };
+      stop();
+    },
+    isRunning: () => running,
   };
 }

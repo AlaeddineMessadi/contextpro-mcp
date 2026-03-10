@@ -7,8 +7,8 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { mkdir, writeFile } from "fs/promises";
 import { dirname, resolve } from "path";
 import { z } from "zod";
-import { startEmbeddingTracker } from "./core/embedding-tracker.js";
-import { isBrokenPipeError, runCleanup } from "./core/process-lifecycle.js";
+import { createEmbeddingTrackerController } from "./core/embedding-tracker.js";
+import { createIdleMonitor, getIdleShutdownMs, getParentPollMs, isBrokenPipeError, runCleanup, startParentMonitor } from "./core/process-lifecycle.js";
 import { getContextTree } from "./tools/context-tree.js";
 import { getFileSkeleton } from "./tools/file-skeleton.js";
 import { ensureMcpDataDir } from "./core/embeddings.js";
@@ -39,6 +39,20 @@ const ROOT_DIR = passthroughArgs[0] && !SUB_COMMANDS.includes(passthroughArgs[0]
   : process.cwd();
 const INSTRUCTIONS_SOURCE_URL = "https://contextplus.vercel.app/api/instructions";
 const INSTRUCTIONS_RESOURCE_URI = "contextplus://instructions";
+
+let noteServerActivity = () => { };
+let ensureTrackerRunning = () => { };
+
+function withRequestActivity<TArgs, TResult>(
+  handler: (args: TArgs) => Promise<TResult>,
+  options?: { useEmbeddingTracker?: boolean },
+): (args: TArgs) => Promise<TResult> {
+  return async (args: TArgs): Promise<TResult> => {
+    noteServerActivity();
+    if (options?.useEmbeddingTracker) ensureTrackerRunning();
+    return handler(args);
+  };
+}
 
 function parseAgentTarget(input?: string): AgentTarget {
   const normalized = (input ?? "claude").toLowerCase();
@@ -82,7 +96,7 @@ function buildMcpConfig(runner: "npx" | "bunx") {
             OLLAMA_CHAT_MODEL: "gemma2:27b",
             OLLAMA_API_KEY: "YOUR_OLLAMA_API_KEY",
             CONTEXTPLUS_EMBED_BATCH_SIZE: "8",
-            CONTEXTPLUS_EMBED_TRACKER: "true",
+            CONTEXTPLUS_EMBED_TRACKER: "lazy",
           },
         },
       },
@@ -107,7 +121,7 @@ function buildOpenCodeConfig(runner: "npx" | "bunx") {
             OLLAMA_CHAT_MODEL: "gemma2:27b",
             OLLAMA_API_KEY: "YOUR_OLLAMA_API_KEY",
             CONTEXTPLUS_EMBED_BATCH_SIZE: "8",
-            CONTEXTPLUS_EMBED_TRACKER: "true",
+            CONTEXTPLUS_EMBED_TRACKER: "lazy",
           },
         },
       },
@@ -139,7 +153,7 @@ const server = new McpServer({
 server.resource(
   "contextplus_instructions",
   INSTRUCTIONS_RESOURCE_URI,
-  async (uri) => {
+  withRequestActivity(async (uri) => {
     const response = await fetch(INSTRUCTIONS_SOURCE_URL);
     return {
       contents: [{
@@ -148,7 +162,7 @@ server.resource(
         text: await response.text(),
       }],
     };
-  },
+  }),
 );
 
 server.tool(
@@ -162,7 +176,7 @@ server.tool(
     include_symbols: z.boolean().optional().describe("Include function/class/enum names in the tree. Defaults to true."),
     max_tokens: z.number().optional().describe("Maximum tokens for output. Auto-prunes if exceeded. Default: 20000."),
   },
-  async ({ target_path, depth_limit, include_symbols, max_tokens }) => ({
+  withRequestActivity(async ({ target_path, depth_limit, include_symbols, max_tokens }) => ({
     content: [{
       type: "text" as const,
       text: await getContextTree({
@@ -173,7 +187,7 @@ server.tool(
         maxTokens: max_tokens,
       }),
     }],
-  }),
+  })),
 );
 
 server.tool(
@@ -188,7 +202,7 @@ server.tool(
     semantic_weight: z.number().optional().describe("Weight for semantic similarity score. Default: 0.78."),
     keyword_weight: z.number().optional().describe("Weight for keyword overlap score. Default: 0.22."),
   },
-  async ({ query, top_k, top_calls_per_identifier, include_kinds, semantic_weight, keyword_weight }) => ({
+  withRequestActivity(async ({ query, top_k, top_calls_per_identifier, include_kinds, semantic_weight, keyword_weight }) => ({
     content: [{
       type: "text" as const,
       text: await semanticIdentifierSearch({
@@ -201,7 +215,7 @@ server.tool(
         keywordWeight: keyword_weight,
       }),
     }],
-  }),
+  }), { useEmbeddingTracker: true }),
 );
 
 server.tool(
@@ -211,12 +225,12 @@ server.tool(
   {
     file_path: z.string().describe("Path to the file to inspect (relative to project root)."),
   },
-  async ({ file_path }) => ({
+  withRequestActivity(async ({ file_path }) => ({
     content: [{
       type: "text" as const,
       text: await getFileSkeleton({ rootDir: ROOT_DIR, filePath: file_path }),
     }],
-  }),
+  })),
 );
 
 server.tool(
@@ -234,7 +248,7 @@ server.tool(
     require_keyword_match: z.boolean().optional().describe("When true, only return files with keyword overlap."),
     require_semantic_match: z.boolean().optional().describe("When true, only return files with positive semantic similarity."),
   },
-  async ({
+  withRequestActivity(async ({
     query,
     top_k,
     semantic_weight,
@@ -260,7 +274,7 @@ server.tool(
         requireSemanticMatch: require_semantic_match,
       }),
     }],
-  }),
+  }), { useEmbeddingTracker: true }),
 );
 
 server.tool(
@@ -271,12 +285,12 @@ server.tool(
     symbol_name: z.string().describe("The function, class, or variable name to trace across the codebase."),
     file_context: z.string().optional().describe("The file where the symbol is defined. Excludes the definition line from results."),
   },
-  async ({ symbol_name, file_context }) => ({
+  withRequestActivity(async ({ symbol_name, file_context }) => ({
     content: [{
       type: "text" as const,
       text: await getBlastRadius({ rootDir: ROOT_DIR, symbolName: symbol_name, fileContext: file_context }),
     }],
-  }),
+  })),
 );
 
 server.tool(
@@ -286,12 +300,12 @@ server.tool(
   {
     target_path: z.string().optional().describe("Specific file or folder to lint (relative to root). Omit for full project."),
   },
-  async ({ target_path }) => ({
+  withRequestActivity(async ({ target_path }) => ({
     content: [{
       type: "text" as const,
       text: await runStaticAnalysis({ rootDir: ROOT_DIR, targetPath: target_path }),
     }],
-  }),
+  })),
 );
 
 server.tool(
@@ -303,7 +317,7 @@ server.tool(
     file_path: z.string().describe("Where to save the file (relative to project root)."),
     new_content: z.string().describe("The complete file content to save."),
   },
-  async ({ file_path, new_content }) => {
+  withRequestActivity(async ({ file_path, new_content }) => {
     invalidateSearchCache();
     invalidateIdentifierSearchCache();
     return {
@@ -312,7 +326,7 @@ server.tool(
         text: await proposeCommit({ rootDir: ROOT_DIR, filePath: file_path, newContent: new_content }),
       }],
     };
-  },
+  }),
 );
 
 server.tool(
@@ -320,7 +334,7 @@ server.tool(
   "List all shadow restore points created by propose_commit. Each point captures the file state before the AI made changes. " +
   "Use this to find a restore point ID for undoing a bad change.",
   {},
-  async () => {
+  withRequestActivity(async () => {
     const points = await listRestorePoints(ROOT_DIR);
     if (points.length === 0) return { content: [{ type: "text" as const, text: "No restore points found." }] };
 
@@ -328,7 +342,7 @@ server.tool(
       `${p.id} | ${new Date(p.timestamp).toISOString()} | ${p.files.join(", ")} | ${p.message}`,
     );
     return { content: [{ type: "text" as const, text: `Restore Points (${points.length}):\n\n${lines.join("\n")}` }] };
-  },
+  }),
 );
 
 server.tool(
@@ -338,7 +352,7 @@ server.tool(
   {
     point_id: z.string().describe("The restore point ID (format: rp-timestamp-hash). Get from list_restore_points."),
   },
-  async ({ point_id }) => {
+  withRequestActivity(async ({ point_id }) => {
     const restored = await restorePoint(ROOT_DIR, point_id);
     invalidateSearchCache();
     invalidateIdentifierSearchCache();
@@ -350,7 +364,7 @@ server.tool(
           : "No files were restored. The backup may be empty.",
       }],
     };
-  },
+  }),
 );
 
 server.tool(
@@ -362,12 +376,12 @@ server.tool(
     max_depth: z.number().optional().describe("Maximum nesting depth of clusters. Default: 3."),
     max_clusters: z.number().optional().describe("Maximum sub-clusters per level. Default: 20."),
   },
-  async ({ max_depth, max_clusters }) => ({
+  withRequestActivity(async ({ max_depth, max_clusters }) => ({
     content: [{
       type: "text" as const,
       text: await semanticNavigate({ rootDir: ROOT_DIR, maxDepth: max_depth, maxClusters: max_clusters }),
     }],
-  }),
+  })),
 );
 
 server.tool(
@@ -380,7 +394,7 @@ server.tool(
     feature_name: z.string().optional().describe("Feature name to search for. Finds matching hub file automatically."),
     show_orphans: z.boolean().optional().describe("If true, lists all source files not linked to any feature hub."),
   },
-  async ({ hub_path, feature_name, show_orphans }) => ({
+  withRequestActivity(async ({ hub_path, feature_name, show_orphans }) => ({
     content: [{
       type: "text" as const,
       text: await getFeatureHub({
@@ -390,7 +404,7 @@ server.tool(
         showOrphans: show_orphans,
       }),
     }],
-  }),
+  })),
 );
 
 server.tool(
@@ -403,12 +417,12 @@ server.tool(
     content: z.string().describe("Detailed content for the node. Used for embedding generation."),
     metadata: z.record(z.string()).optional().describe("Optional key-value metadata pairs."),
   },
-  async ({ type, label, content, metadata }) => ({
+  withRequestActivity(async ({ type, label, content, metadata }) => ({
     content: [{
       type: "text" as const,
       text: await toolUpsertMemoryNode({ rootDir: ROOT_DIR, type, label, content, metadata }),
     }],
-  }),
+  })),
 );
 
 server.tool(
@@ -422,12 +436,12 @@ server.tool(
     weight: z.number().optional().describe("Edge weight 0-1. Higher = stronger relationship. Default: 1.0."),
     metadata: z.record(z.string()).optional().describe("Optional key-value metadata for the edge."),
   },
-  async ({ source_id, target_id, relation, weight, metadata }) => ({
+  withRequestActivity(async ({ source_id, target_id, relation, weight, metadata }) => ({
     content: [{
       type: "text" as const,
       text: await toolCreateRelation({ rootDir: ROOT_DIR, sourceId: source_id, targetId: target_id, relation, weight, metadata }),
     }],
-  }),
+  })),
 );
 
 server.tool(
@@ -441,12 +455,12 @@ server.tool(
     edge_filter: z.array(z.enum(["relates_to", "depends_on", "implements", "references", "similar_to", "contains"])).optional()
       .describe("Only traverse edges of these types. Omit for all types."),
   },
-  async ({ query, max_depth, top_k, edge_filter }) => ({
+  withRequestActivity(async ({ query, max_depth, top_k, edge_filter }) => ({
     content: [{
       type: "text" as const,
       text: await toolSearchMemoryGraph({ rootDir: ROOT_DIR, query, maxDepth: max_depth, topK: top_k, edgeFilter: edge_filter }),
     }],
-  }),
+  })),
 );
 
 server.tool(
@@ -456,12 +470,12 @@ server.tool(
   {
     threshold: z.number().optional().describe("Minimum decayed weight to keep an edge. Default: 0.15. Lower = keep more edges."),
   },
-  async ({ threshold }) => ({
+  withRequestActivity(async ({ threshold }) => ({
     content: [{
       type: "text" as const,
       text: await toolPruneStaleLinks({ rootDir: ROOT_DIR, threshold }),
     }],
-  }),
+  })),
 );
 
 server.tool(
@@ -478,12 +492,12 @@ server.tool(
     })).describe("Array of nodes to add. Each needs type, label, and content."),
     auto_link: z.boolean().optional().describe("Whether to auto-create similarity edges. Default: true."),
   },
-  async ({ items, auto_link }) => ({
+  withRequestActivity(async ({ items, auto_link }) => ({
     content: [{
       type: "text" as const,
       text: await toolAddInterlinkedContext({ rootDir: ROOT_DIR, items, autoLink: auto_link }),
     }],
-  }),
+  })),
 );
 
 server.tool(
@@ -496,12 +510,12 @@ server.tool(
     edge_filter: z.array(z.enum(["relates_to", "depends_on", "implements", "references", "similar_to", "contains"])).optional()
       .describe("Only traverse edges of these types. Omit for all."),
   },
-  async ({ start_node_id, max_depth, edge_filter }) => ({
+  withRequestActivity(async ({ start_node_id, max_depth, edge_filter }) => ({
     content: [{
       type: "text" as const,
       text: await toolRetrieveWithTraversal({ rootDir: ROOT_DIR, startNodeId: start_node_id, maxDepth: max_depth, edgeFilter: edge_filter }),
     }],
-  }),
+  })),
 );
 
 async function main() {
@@ -521,18 +535,25 @@ async function main() {
     return;
   }
   await ensureMcpDataDir(ROOT_DIR);
-  const trackerEnabled = (process.env.CONTEXTPLUS_EMBED_TRACKER ?? "true").toLowerCase() !== "false";
-  const stopTracker = trackerEnabled
-    ? startEmbeddingTracker({
-      rootDir: ROOT_DIR,
-      debounceMs: Number.parseInt(process.env.CONTEXTPLUS_EMBED_TRACKER_DEBOUNCE_MS ?? "700", 10),
-      maxFilesPerTick: Number.parseInt(process.env.CONTEXTPLUS_EMBED_TRACKER_MAX_FILES ?? "8", 10),
-    })
-    : () => { };
+  const trackerController = createEmbeddingTrackerController({
+    rootDir: ROOT_DIR,
+    mode: process.env.CONTEXTPLUS_EMBED_TRACKER,
+    debounceMs: Number.parseInt(process.env.CONTEXTPLUS_EMBED_TRACKER_DEBOUNCE_MS ?? "700", 10),
+    maxFilesPerTick: Number.parseInt(process.env.CONTEXTPLUS_EMBED_TRACKER_MAX_FILES ?? "8", 10),
+  });
   const transport = new StdioServerTransport();
   await server.connect(transport);
 
   let shuttingDown = false;
+  let stopParentMonitor = () => { };
+  const idleMonitor = createIdleMonitor({
+    timeoutMs: getIdleShutdownMs(process.env.CONTEXTPLUS_IDLE_TIMEOUT_MS),
+    onIdle: () => requestShutdown("idle-timeout", 0),
+  });
+
+  noteServerActivity = idleMonitor.touch;
+  ensureTrackerRunning = trackerController.ensureStarted;
+
   const closeServer = async () => {
     const closable = server as unknown as { close?: () => Promise<void> | void };
     if (typeof closable.close === "function") {
@@ -549,16 +570,36 @@ async function main() {
     if (shuttingDown) return;
     shuttingDown = true;
     console.error(`Context+ MCP shutdown requested: ${reason}`);
-    await runCleanup({ stopTracker, closeServer, closeTransport });
+    await runCleanup({
+      stopTracker: trackerController.stop,
+      closeServer,
+      closeTransport,
+      stopMonitors: () => {
+        idleMonitor.stop();
+        stopParentMonitor();
+      },
+    });
     process.exit(exitCode);
   };
   const requestShutdown = (reason: string, exitCode: number = 0) => {
     void shutdown(reason, exitCode);
   };
 
+  stopParentMonitor = startParentMonitor({
+    parentPid: process.ppid,
+    pollIntervalMs: getParentPollMs(process.env.CONTEXTPLUS_PARENT_POLL_MS),
+    onParentExit: () => requestShutdown("parent-exit", 0),
+  });
+
   process.once("SIGINT", () => requestShutdown("SIGINT", 0));
   process.once("SIGTERM", () => requestShutdown("SIGTERM", 0));
-  process.once("exit", () => stopTracker());
+  process.once("SIGHUP", () => requestShutdown("SIGHUP", 0));
+  process.once("disconnect", () => requestShutdown("disconnect", 0));
+  process.once("exit", () => {
+    idleMonitor.stop();
+    stopParentMonitor();
+    trackerController.stop();
+  });
   process.stdin.once("end", () => requestShutdown("stdin-end", 0));
   process.stdin.once("close", () => requestShutdown("stdin-close", 0));
   process.stdin.once("error", (error) => {
@@ -571,6 +612,7 @@ async function main() {
     if (isBrokenPipeError(error)) requestShutdown("stderr-error", 0);
   });
 
+  noteServerActivity();
   console.error(`Context+ MCP server running on stdio | root: ${ROOT_DIR}`);
 }
 
