@@ -11,7 +11,7 @@ import { createEmbeddingTrackerController } from "./core/embedding-tracker.js";
 import { createIdleMonitor, getIdleShutdownMs, getParentPollMs, isBrokenPipeError, runCleanup, startParentMonitor } from "./core/process-lifecycle.js";
 import { getContextTree } from "./tools/context-tree.js";
 import { getFileSkeleton } from "./tools/file-skeleton.js";
-import { ensureMcpDataDir } from "./core/embeddings.js";
+import { ensureMcpDataDir, cancelAllEmbeddings } from "./core/embeddings.js";
 import { semanticCodeSearch, invalidateSearchCache } from "./tools/semantic-search.js";
 import { semanticIdentifierSearch, invalidateIdentifierSearchCache } from "./tools/semantic-identifiers.js";
 import { getBlastRadius } from "./tools/blast-radius.js";
@@ -571,6 +571,7 @@ async function main() {
     shuttingDown = true;
     console.error(`Context+ MCP shutdown requested: ${reason}`);
     await runCleanup({
+      cancelEmbeddings: cancelAllEmbeddings,
       stopTracker: trackerController.stop,
       closeServer,
       closeTransport,

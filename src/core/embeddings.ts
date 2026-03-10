@@ -5,6 +5,14 @@ import { Ollama } from "ollama";
 import { readFile, writeFile, mkdir } from "fs/promises";
 import { join } from "path";
 
+const EMBED_TIMEOUT_MS = 60_000;
+let embedAbortController = new AbortController();
+
+export function cancelAllEmbeddings(): void {
+  embedAbortController.abort();
+  embedAbortController = new AbortController();
+}
+
 export interface SearchDocument {
   path: string;
   header: string;
@@ -120,6 +128,12 @@ function buildEmbedRequest(input: string[]): { model: string; input: string[]; o
   return options ? { model: EMBED_MODEL, input, options } : { model: EMBED_MODEL, input };
 }
 
+async function embedWithTimeout(request: ReturnType<typeof buildEmbedRequest>): Promise<{ embeddings: number[][] }> {
+  const timeoutCtrl = AbortSignal.timeout(EMBED_TIMEOUT_MS);
+  const signal = AbortSignal.any([embedAbortController.signal, timeoutCtrl]);
+  return ollama.embed({ ...request, signal } as Parameters<typeof ollama.embed>[0]);
+}
+
 export function getEmbeddingBatchSize(): number {
   const requested = toIntegerOr(process.env.CONTEXTPLUS_EMBED_BATCH_SIZE, DEFAULT_EMBED_BATCH_SIZE);
   return Math.min(MAX_EMBED_BATCH_SIZE, Math.max(MIN_EMBED_BATCH_SIZE, requested));
@@ -153,7 +167,7 @@ async function embedSingleAdaptive(input: string): Promise<number[]> {
 
   for (let attempt = 0; attempt <= MAX_SINGLE_INPUT_RETRIES; attempt++) {
     try {
-      const response = await ollama.embed(buildEmbedRequest([candidate]));
+      const response = await embedWithTimeout(buildEmbedRequest([candidate]));
       if (!response.embeddings[0]) throw new Error("Missing embedding vector in Ollama response");
       return response.embeddings[0];
     } catch (error) {
@@ -169,7 +183,7 @@ async function embedSingleAdaptive(input: string): Promise<number[]> {
 
 async function embedBatchAdaptive(batch: string[]): Promise<number[][]> {
   try {
-    const response = await ollama.embed(buildEmbedRequest(batch));
+    const response = await embedWithTimeout(buildEmbedRequest(batch));
     if (response.embeddings.length !== batch.length) {
       throw new Error(`Embedding response size mismatch: expected ${batch.length}, got ${response.embeddings.length}`);
     }

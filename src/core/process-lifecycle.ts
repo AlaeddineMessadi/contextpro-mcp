@@ -12,6 +12,7 @@ const DEFAULT_PARENT_POLL_MS = 5 * 1000;
 const MIN_PARENT_POLL_MS = 1 * 1000;
 
 export interface CleanupOptions {
+  cancelEmbeddings?: () => void;
   stopTracker: () => void;
   closeServer: () => Promise<void> | void;
   closeTransport: () => Promise<void> | void;
@@ -133,6 +134,7 @@ export function startParentMonitor(options: ParentMonitorOptions): () => void {
 }
 
 export async function runCleanup(options: CleanupOptions): Promise<void> {
+  options.cancelEmbeddings?.();
   options.stopMonitors?.();
   options.stopTracker();
   await Promise.allSettled([

@@ -25,7 +25,8 @@ export interface EmbeddingTrackerControllerOptions extends EmbeddingTrackerOptio
 const MIN_FILES_PER_TICK = 5;
 const MAX_FILES_PER_TICK = 10;
 const DEFAULT_FILES_PER_TICK = 8;
-const DEFAULT_DEBOUNCE_MS = 700;
+const DEFAULT_DEBOUNCE_MS = 1500;
+const MAX_PENDING_FILES = 50;
 
 const IGNORE_PREFIXES = [
   ".mcp_data/",
@@ -52,7 +53,7 @@ function clampFilesPerTick(value: number | undefined): number {
 
 function clampDebounceMs(value: number | undefined): number {
   if (!Number.isFinite(value)) return DEFAULT_DEBOUNCE_MS;
-  return Math.max(100, Math.floor(value ?? DEFAULT_DEBOUNCE_MS));
+  return Math.max(500, Math.floor(value ?? DEFAULT_DEBOUNCE_MS));
 }
 
 export function parseEmbeddingTrackerMode(value: string | undefined): "off" | "lazy" | "eager" {
@@ -78,6 +79,7 @@ export function startEmbeddingTracker(options: EmbeddingTrackerOptions): () => v
     timer = setTimeout(() => {
       void flushPending();
     }, delay);
+    timer.unref();
   };
 
   const flushPending = async (): Promise<void> => {
@@ -111,6 +113,7 @@ export function startEmbeddingTracker(options: EmbeddingTrackerOptions): () => v
       if (closed || !fileName) return;
       const relativePath = normalizeRelativePath(String(fileName));
       if (!shouldTrack(relativePath)) return;
+      if (pendingFiles.size >= MAX_PENDING_FILES) return;
       pendingFiles.add(relativePath);
       schedule();
     });
