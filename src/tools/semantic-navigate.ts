@@ -29,6 +29,7 @@ interface ClusterNode {
 }
 
 const EMBED_PROVIDER = (process.env.CONTEXTPLUS_EMBED_PROVIDER ?? "ollama").toLowerCase();
+const EMBED_MODEL = process.env.OLLAMA_EMBED_MODEL ?? "nomic-embed-text";
 const CHAT_MODEL = process.env.OLLAMA_CHAT_MODEL ?? "llama3.2";
 const OPENAI_CHAT_MODEL = process.env.CONTEXTPLUS_OPENAI_CHAT_MODEL ?? process.env.OPENAI_CHAT_MODEL ?? "gpt-4o-mini";
 const OPENAI_API_KEY = process.env.CONTEXTPLUS_OPENAI_API_KEY ?? process.env.OPENAI_API_KEY ?? "";
@@ -294,7 +295,7 @@ export async function semanticNavigate(options: SemanticNavigateOptions): Promis
   } catch (err) {
     const providerHint = EMBED_PROVIDER === "openai"
       ? `Check CONTEXTPLUS_OPENAI_API_KEY and CONTEXTPLUS_OPENAI_BASE_URL.`
-      : `Make sure Ollama is running with model ${CHAT_MODEL}.`;
+      : `Make sure Ollama is running (check OLLAMA_HOST) and that the embedding model configured in OLLAMA_EMBED_MODEL is available.`;
     return `Embedding provider (${EMBED_PROVIDER}) not available: ${err instanceof Error ? err.message : String(err)}\n${providerHint}`;
   }
 
