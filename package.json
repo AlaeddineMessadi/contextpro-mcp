@@ -16,6 +16,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.1",
+    "claude": "^0.1.2",
     "ignore": "^7.0.4",
     "ml-matrix": "^6.12.1",
     "ollama": "^0.6.3",
