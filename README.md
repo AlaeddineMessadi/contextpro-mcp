@@ -152,13 +152,21 @@ ollama serve
 
 ### Google Gemini (Free Tier)
 
+Full Claude Code `.mcp.json` example:
+
 ```json
 {
-  "env": {
-    "CONTEXTPLUS_EMBED_PROVIDER": "openai",
-    "CONTEXTPLUS_OPENAI_API_KEY": "YOUR_GEMINI_API_KEY",
-    "CONTEXTPLUS_OPENAI_BASE_URL": "https://generativelanguage.googleapis.com/v1beta/openai",
-    "CONTEXTPLUS_OPENAI_EMBED_MODEL": "text-embedding-004"
+  "mcpServers": {
+    "contextplus": {
+      "command": "npx",
+      "args": ["-y", "contextplus"],
+      "env": {
+        "CONTEXTPLUS_EMBED_PROVIDER": "openai",
+        "CONTEXTPLUS_OPENAI_API_KEY": "YOUR_GEMINI_API_KEY",
+        "CONTEXTPLUS_OPENAI_BASE_URL": "https://generativelanguage.googleapis.com/v1beta/openai",
+        "CONTEXTPLUS_OPENAI_EMBED_MODEL": "text-embedding-004"
+      }
+    }
   }
 }
 ```
@@ -169,10 +177,16 @@ Get a free API key at [Google AI Studio](https://aistudio.google.com/apikey).
 
 ```json
 {
-  "env": {
-    "CONTEXTPLUS_EMBED_PROVIDER": "openai",
-    "OPENAI_API_KEY": "sk-...",
-    "OPENAI_EMBED_MODEL": "text-embedding-3-small"
+  "mcpServers": {
+    "contextplus": {
+      "command": "npx",
+      "args": ["-y", "contextplus"],
+      "env": {
+        "CONTEXTPLUS_EMBED_PROVIDER": "openai",
+        "OPENAI_API_KEY": "sk-...",
+        "OPENAI_EMBED_MODEL": "text-embedding-3-small"
+      }
+    }
   }
 }
 ```
@@ -183,16 +197,24 @@ Any endpoint implementing the [OpenAI Embeddings API](https://platform.openai.co
 
 ```json
 {
-  "env": {
-    "CONTEXTPLUS_EMBED_PROVIDER": "openai",
-    "CONTEXTPLUS_OPENAI_API_KEY": "YOUR_KEY",
-    "CONTEXTPLUS_OPENAI_BASE_URL": "https://your-proxy.example.com/v1",
-    "CONTEXTPLUS_OPENAI_EMBED_MODEL": "your-model-name"
+  "mcpServers": {
+    "contextplus": {
+      "command": "npx",
+      "args": ["-y", "contextplus"],
+      "env": {
+        "CONTEXTPLUS_EMBED_PROVIDER": "openai",
+        "CONTEXTPLUS_OPENAI_API_KEY": "YOUR_KEY",
+        "CONTEXTPLUS_OPENAI_BASE_URL": "https://your-proxy.example.com/v1",
+        "CONTEXTPLUS_OPENAI_EMBED_MODEL": "your-model-name"
+      }
+    }
   }
 }
 ```
 
 > **Note:** The `semantic_navigate` tool also uses a chat model for cluster labeling. When using the `openai` provider, set `CONTEXTPLUS_OPENAI_CHAT_MODEL` (default: `gpt-4o-mini`).
+>
+> For VS Code, Cursor, or OpenCode, use the same `env` block inside your IDE's MCP config format (see [Config file locations](#setup) table above).
 
 ## Architecture
 
