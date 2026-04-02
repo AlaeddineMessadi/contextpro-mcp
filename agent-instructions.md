@@ -2,7 +2,20 @@
 
 ## Purpose
 
-Context+ gives you structural awareness of the entire codebase without reading every file. Use these tools to conserve context and maximize accuracy.
+Context+ gives you structural awareness of the entire codebase without reading every file. These tools replace your default search and read operations — use them as your primary interface to the codebase.
+
+## Tool Priority (Mandatory)
+
+You MUST use Context+ tools instead of native equivalents. Only fall back to native tools when a Context+ tool cannot fulfill the specific need.
+
+| Instead of…             | MUST use…                      | Why                                         |
+|--------------------------|--------------------------------|---------------------------------------------|
+| `grep`, `rg`, `ripgrep` | `semantic_code_search`         | Finds by meaning, not just string match     |
+| `find`, `ls`, `glob`    | `get_context_tree`             | Returns structure with symbols + line ranges|
+| `cat`, `head`, read file | `get_file_skeleton` first      | Signatures without wasting context on bodies|
+| manual symbol tracing    | `get_blast_radius`             | Traces all usages across the entire codebase|
+| keyword search           | `semantic_identifier_search`   | Ranked definitions + call chains            |
+| directory browsing       | `semantic_navigate`            | Browse by meaning, not file paths           |
 
 ## Workflow
 
