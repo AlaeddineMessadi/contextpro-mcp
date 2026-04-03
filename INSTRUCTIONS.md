@@ -26,7 +26,7 @@ The MCP server is built with TypeScript and communicates over stdio using the Mo
 - `static-analysis.ts` - Native linter runner (tsc, eslint, py_compile, cargo check, go vet).
 - `propose-commit.ts` - Code gatekeeper validating headers, FEATURE tag, no inline comments, nesting, file length.
 - `feature-hub.ts` - Obsidian-style feature hub navigator with bundled skeleton views.
-- `memory-tools.ts` - Memory graph MCP wrappers (upsert, relate, search, prune, interlink, traverse).
+- `memory-tools.ts` - Memory graph MCP wrappers (upsert, relate, search, prune, interlink, traverse). Also available standalone via `pmll-memory-mcp` (`npm i pmll-memory-mcp` or `pip install pmll-memory-mcp`) — see [drQedwards/PPM](https://github.com/drQedwards/PPM).
 
 The memory graph is a **Retrieval-Augmented Generation (RAG)** system. Agents MUST use `search_memory_graph` at the start of every task to retrieve prior context, and persist learnings with `upsert_memory_node` and `create_relation` after completing work. This prevents redundant exploration and builds cumulative knowledge across sessions.
 

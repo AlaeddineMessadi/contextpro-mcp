@@ -41,6 +41,20 @@ https://github.com/user-attachments/assets/a97a451f-c9b4-468d-b036-15b65fc13e79
 
 ### Memory & RAG
 
+These tools are built into the Context+ MCP server. They are also available as a standalone package via [pmll-memory-mcp](https://github.com/drQedwards/PPM) — a combined Context+ and PMLL integration:
+
+```bash
+npm i pmll-memory-mcp
+# or
+pip install pmll-memory-mcp
+```
+
+If both fail, clone the combined repo directly:
+
+```bash
+git clone https://github.com/drQedwards/PPM
+```
+
 | Tool                      | Description                                                                                              |
 | ------------------------- | -------------------------------------------------------------------------------------------------------- |
 | `upsert_memory_node`      | Create or update a memory node (concept, file, symbol, note) with auto-generated embeddings.             |
