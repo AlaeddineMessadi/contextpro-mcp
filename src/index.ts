@@ -4,8 +4,10 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { readFileSync } from "fs";
 import { mkdir, writeFile } from "fs/promises";
 import { dirname, resolve } from "path";
+import { fileURLToPath } from "url";
 import { z } from "zod";
 import { createEmbeddingTrackerController } from "./core/embedding-tracker.js";
 import { createIdleMonitor, getIdleShutdownMs, getParentPollMs, isBrokenPipeError, runCleanup, startParentMonitor } from "./core/process-lifecycle.js";
@@ -39,6 +41,13 @@ const ROOT_DIR = passthroughArgs[0] && !SUB_COMMANDS.includes(passthroughArgs[0]
   : process.cwd();
 const INSTRUCTIONS_SOURCE_URL = "https://contextplus.vercel.app/api/instructions";
 const INSTRUCTIONS_RESOURCE_URI = "contextplus://instructions";
+const PACKAGE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+let agentInstructions: string | undefined;
+try {
+  agentInstructions = readFileSync(resolve(PACKAGE_ROOT, "agent-instructions.md"), "utf8");
+} catch {
+  // agent-instructions.md not found, continuing without manifest instructions
+}
 
 let noteServerActivity = () => { };
 let ensureTrackerRunning = () => { };
@@ -148,6 +157,7 @@ const server = new McpServer({
   version: "1.0.0",
 }, {
   capabilities: { logging: {} },
+  ...(agentInstructions && { instructions: agentInstructions }),
 });
 
 server.resource(
