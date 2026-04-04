@@ -10,45 +10,43 @@ https://github.com/user-attachments/assets/a97a451f-c9b4-468d-b036-15b65fc13e79
 
 ### Discovery
 
-| Tool                         | Description                                                                                                                                                      |
-| ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `get_context_tree`           | Structural AST tree of a project with file headers and symbol ranges (line numbers for functions/classes/methods). Dynamic pruning shrinks output automatically. |
-| `get_file_skeleton`          | Function signatures, class methods, and type definitions with line ranges, without reading full bodies. Shows the API surface.                                   |
-| `semantic_code_search`       | Search by meaning, not exact text. Uses embeddings over file headers/symbols and returns matched symbol definition lines.                                        |
-| `semantic_identifier_search` | Identifier-level semantic retrieval for functions/classes/variables with ranked call sites and line numbers.                                                     |
-| `semantic_navigate`          | Browse codebase by meaning using spectral clustering. Groups semantically related files into labeled clusters.                                                   |
+| Tool        | Description                                                                                                                                                      |
+| ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `tree`      | Structural AST tree of a project with file headers and symbol ranges (line numbers for functions/classes/methods). Dynamic pruning shrinks output automatically. |
+| `skeleton`  | Function signatures, class methods, and type definitions with line ranges, without reading full bodies. Shows the API surface.                                   |
+| `search`    | Search by meaning with modes: `file` (headers/symbols), `identifier` (functions/classes with call chains), or `hybrid` (both). Uses embeddings + keyword scoring. |
+| `cluster`   | Browse codebase by meaning using spectral clustering. Groups semantically related files into labeled clusters.                                                   |
 
 ### Analysis
 
-| Tool                  | Description                                                                                                                   |
-| --------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| `get_blast_radius`    | Trace every file and line where a symbol is imported or used. Prevents orphaned references.                                   |
-| `run_static_analysis` | Run native linters and compilers to find unused variables, dead code, and type errors. Supports TypeScript, Python, Rust, Go. |
+| Tool           | Description                                                                                                                      |
+| -------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `blast_radius` | Trace every file and line where a symbol is imported or used. Prevents orphaned references.                                      |
+| `lint`         | Auto-detects and runs project linters (tsc, eslint, ruff, cargo check, go vet). Plus skill score checking for code quality.      |
 
 ### Code Ops
 
-| Tool              | Description                                                                                                              |
-| ----------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| `propose_commit`  | The only way to write code. Validates against strict rules before saving. Creates a shadow restore point before writing. |
-| `get_feature_hub` | Obsidian-style feature hub navigator. Hubs are `.md` files with `[[wikilinks]]` that map features to code files.         |
+| Tool         | Description                                                                                                              |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------ |
+| `checkpoint` | Save code with validation. Checks 2-line headers, no inline comments, nesting depth, file length. Creates a shadow restore point before writing. |
+| `hub`        | Feature hub navigator. Hubs are `.md` files with `[[wikilinks]]` that map features to code files. Auto-generates hubs from import graph. |
 
 ### Version Control
 
-| Tool                  | Description                                                                                                |
-| --------------------- | ---------------------------------------------------------------------------------------------------------- |
-| `list_restore_points` | List all shadow restore points created by `propose_commit`. Each captures file state before AI changes.    |
-| `undo_change`         | Restore files to their state before a specific AI change. Uses shadow restore points. Does not affect git. |
+| Tool          | Description                                                                                                |
+| ------------- | ---------------------------------------------------------------------------------------------------------- |
+| `checkpoints` | List all shadow restore points created by `checkpoint`. Each captures file state before changes.            |
+| `restore`     | Restore files to their state before a specific change. Uses shadow restore points. Does not affect git.     |
 
 ### Memory & RAG
 
-| Tool                      | Description                                                                                              |
-| ------------------------- | -------------------------------------------------------------------------------------------------------- |
-| `upsert_memory_node`      | Create or update a memory node (concept, file, symbol, note) with auto-generated embeddings.             |
-| `create_relation`         | Create typed edges between nodes (relates_to, depends_on, implements, references, similar_to, contains). |
-| `search_memory_graph`     | Semantic search with graph traversal — finds direct matches then walks 1st/2nd-degree neighbors.         |
-| `prune_stale_links`       | Remove decayed edges (e^(-λt) below threshold) and orphan nodes with low access counts.                  |
-| `add_interlinked_context` | Bulk-add nodes with auto-similarity linking (cosine ≥ 0.72 creates edges automatically).                 |
-| `retrieve_with_traversal` | Start from a node and walk outward — returns all reachable neighbors scored by decay and depth.          |
+| Tool              | Description                                                                                              |
+| ----------------- | -------------------------------------------------------------------------------------------------------- |
+| `memory_create`   | Create or update a memory node (concept, file, symbol, note) with auto-generated embeddings.             |
+| `memory_link`     | Create typed edges between nodes (relates_to, depends_on, implements, references, similar_to, contains). |
+| `memory_search`   | Semantic search with graph traversal — finds direct matches then walks neighbors.                        |
+| `memory_bulk`     | Bulk-add nodes with auto-similarity linking (cosine ≥ 0.72 creates edges automatically).                 |
+| `memory_explore`  | Start from a node and walk outward — returns all reachable neighbors scored by decay and depth.           |
 
 ## Setup
 
@@ -121,8 +119,8 @@ Config file locations:
 
 ### CLI Subcommands
 
-- `init [target]` - Generate MCP configuration (targets: `claude`, `cursor`, `vscode`, `windsurf`, `opencode`).
-- `skeleton [path]` or `tree [path]` - **(New)** View the structural tree of a project with file headers and symbol definitions directly in your terminal.
+- `init [target]` - Generate MCP configuration and scaffold `.contextplus/` directory with `config.json`.
+- `skeleton [path]` or `tree [path]` - View the structural tree of a project with file headers and symbol definitions directly in your terminal.
 - `[path]` - Start the MCP server (stdio) for the specified path (defaults to current directory).
 
 ### From Source
@@ -212,7 +210,7 @@ Any endpoint implementing the [OpenAI Embeddings API](https://platform.openai.co
 }
 ```
 
-> **Note:** The `semantic_navigate` tool also uses a chat model for cluster labeling. When using the `openai` provider, set `CONTEXTPLUS_OPENAI_CHAT_MODEL` (default: `gpt-4o-mini`).
+> **Note:** The `cluster` tool uses a chat model for cluster labeling. When using the `openai` provider, set `CONTEXTPLUS_OPENAI_CHAT_MODEL` (default: `gpt-4o-mini`).
 >
 > For VS Code, Cursor, or OpenCode, use the same `env` block inside your IDE's MCP config format (see [Config file locations](#setup) table above).
 
@@ -220,13 +218,13 @@ Any endpoint implementing the [OpenAI Embeddings API](https://platform.openai.co
 
 Three layers built with TypeScript over stdio using the Model Context Protocol SDK:
 
-**Core** (`src/core/`) - Multi-language AST parsing (tree-sitter, 43 extensions), gitignore-aware traversal, Ollama vector embeddings with disk cache, wikilink hub graph, in-memory property graph with decay scoring.
+**Core** (`src/core/`) - Multi-language AST parsing (tree-sitter, 43 extensions), nested gitignore-aware traversal with `.contextplusignore` support, multi-provider vector embeddings with parallel batching, SQLite + sqlite-vec storage, wikilink hub graph, in-memory property graph with decay scoring, import extraction for dependency graphs.
 
-**Tools** (`src/tools/`) - 17 MCP tools exposing structural, semantic, operational, and memory graph capabilities.
+**Tools** (`src/tools/`) - 15 MCP tools exposing structural, semantic, operational, and memory graph capabilities.
 
 **Git** (`src/git/`) - Shadow restore point system for undo without touching git history.
 
-**Runtime Cache** (`.contextplus/`) - created on server startup; stores reusable file, identifier, and call-site embeddings to avoid repeated GPU/CPU embedding work. A realtime tracker refreshes changed files/functions incrementally.
+**Data** (`.contextplus/`) - Project-scoped directory created on startup. Contains `index.db` (SQLite with vector search), `config.json`, `hubs/` (auto-generated feature hubs), and `backups/` (shadow restore points). Each project gets its own isolated `.contextplus/` directory — no cross-project data sharing.
 
 ## Config
 
@@ -249,7 +247,7 @@ Three layers built with TypeScript over stdio using the Model Context Protocol S
 | `CONTEXTPLUS_EMBED_NUM_BATCH`           | string (parsed as number) | -                  | Optional Ollama embed runtime `num_batch` override            |
 | `CONTEXTPLUS_EMBED_NUM_CTX`             | string (parsed as number) | -                  | Optional Ollama embed runtime `num_ctx` override              |
 | `CONTEXTPLUS_EMBED_LOW_VRAM`            | string (parsed as boolean)| -                  | Optional Ollama embed runtime `low_vram` override             |
-| `CONTEXTPLUS_EMBED_TRACKER`             | string (parsed as boolean)| `true`             | Enable realtime embedding refresh on file changes             |
+| `CONTEXTPLUS_EMBED_TRACKER`             | string                    | `lazy`             | Embedding tracker mode: `lazy`, `eager`, or `off`             |
 | `CONTEXTPLUS_EMBED_TRACKER_MAX_FILES`   | string (parsed as number) | `8`                | Max changed files processed per tracker tick, clamped to 5-10 |
 | `CONTEXTPLUS_EMBED_TRACKER_DEBOUNCE_MS` | string (parsed as number) | `700`              | Debounce window before tracker refresh                        |
 
