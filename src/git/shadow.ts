@@ -6,7 +6,7 @@ import { readFile, writeFile, mkdir } from "fs/promises";
 import { join, dirname } from "path";
 
 const SHADOW_BRANCH = "mcp-shadow-history";
-const DATA_DIR = ".mcp_data";
+const DATA_DIR = ".contextplus/backups";
 
 export interface RestorePoint {
   id: string;

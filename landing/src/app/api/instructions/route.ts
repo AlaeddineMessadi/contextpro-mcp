@@ -55,7 +55,7 @@ The memory graph is a **Retrieval-Augmented Generation (RAG)** system. Agents MU
 | \`CONTEXTPLUS_EMBED_TRACKER_MAX_FILES\`   | \`8\`                | Max changed files per tracker tick (hard-capped to 5-10)      |
 | \`CONTEXTPLUS_EMBED_TRACKER_DEBOUNCE_MS\` | \`700\`              | Debounce before applying tracker refresh                      |
 
-Runtime cache: \`.mcp_data/\` is created at MCP startup and stores reusable embedding vectors for files, identifiers, and call sites. A realtime tracker watches file updates and refreshes changed function/file embeddings incrementally.
+Runtime cache: \`.contextplus/\` is created at MCP startup and stores reusable embedding vectors for files, identifiers, and call sites. A realtime tracker watches file updates and refreshes changed function/file embeddings incrementally.
 
 ## Fast Execute Mode (Mandatory)
 

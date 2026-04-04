@@ -226,7 +226,7 @@ Three layers built with TypeScript over stdio using the Model Context Protocol S
 
 **Git** (`src/git/`) - Shadow restore point system for undo without touching git history.
 
-**Runtime Cache** (`.mcp_data/`) - created on server startup; stores reusable file, identifier, and call-site embeddings to avoid repeated GPU/CPU embedding work. A realtime tracker refreshes changed files/functions incrementally.
+**Runtime Cache** (`.contextplus/`) - created on server startup; stores reusable file, identifier, and call-site embeddings to avoid repeated GPU/CPU embedding work. A realtime tracker refreshes changed files/functions incrementally.
 
 ## Config
 

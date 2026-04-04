@@ -53,7 +53,7 @@ The memory graph is a **Retrieval-Augmented Generation (RAG)** system. Agents MU
 | `CONTEXTPLUS_EMBED_TRACKER_MAX_FILES`   | `8`                | Max changed files per tracker tick (hard-capped to 5-10)      |
 | `CONTEXTPLUS_EMBED_TRACKER_DEBOUNCE_MS` | `700`              | Debounce before applying tracker refresh                      |
 
-Runtime cache: `.mcp_data/` is created at MCP startup and stores reusable embedding vectors for files, identifiers, and call sites. A realtime tracker watches file updates and refreshes changed function/file embeddings incrementally.
+Runtime cache: `.contextplus/` is created at MCP startup and stores reusable embedding vectors for files, identifiers, and call sites. A realtime tracker watches file updates and refreshes changed function/file embeddings incrementally.
 
 ## Fast Execute Mode (Mandatory)
 
@@ -127,25 +127,23 @@ Strict order within every file:
 
 ## Tool Reference
 
-| Tool                         | When to Use                                                                        |
-| ---------------------------- | ---------------------------------------------------------------------------------- |
-| `get_context_tree`           | Start of every task. Map files + symbols with line ranges.                         |
-| `semantic_navigate`          | Browse codebase by meaning, not directory structure.                               |
-| `get_file_skeleton`          | MUST run before full reads. Get signatures + line ranges first.                    |
-| `semantic_code_search`       | Find relevant files by concept with symbol definition lines.                       |
-| `semantic_identifier_search` | Find closest functions/classes/variables and ranked call chains with line numbers. |
-| `get_blast_radius`           | Before deleting or modifying any symbol.                                           |
-| `run_static_analysis`        | After writing code. Catch dead code deterministically.                             |
-| `propose_commit`             | The ONLY way to save files. Validates before writing.                              |
-| `list_restore_points`        | See undo history.                                                                  |
-| `undo_change`                | Revert a bad AI change without touching git.                                       |
-| `get_feature_hub`            | Browse feature graph hubs. Find orphaned files.                                    |
-| `upsert_memory_node`         | Create/update memory nodes (concept, file, symbol, note) with auto-embedding.      |
-| `create_relation`            | Create typed edges between memory nodes (depends_on, implements, etc).             |
-| `search_memory_graph`        | Semantic search + graph traversal across 1st/2nd-degree neighbors.                 |
-| `prune_stale_links`          | Remove decayed edges (e^(-λt)) and orphan nodes periodically.                      |
-| `add_interlinked_context`    | Bulk-add nodes with auto-similarity linking (cosine ≥ 0.72).                       |
-| `retrieve_with_traversal`    | Start from a node, walk outward, return scored neighbors by decay and depth.       |
+| Tool              | When to Use                                                                   |
+| ----------------- | ----------------------------------------------------------------------------- |
+| `tree`            | Start of every task. Map files + symbols with line ranges.                    |
+| `skeleton`        | MUST run before full reads. Get signatures + line ranges first.               |
+| `search`          | Find files/identifiers by meaning. Modes: file, identifier, hybrid (default). |
+| `cluster`         | Browse codebase by meaning, not directory structure.                          |
+| `blast_radius`    | Before deleting or modifying any symbol.                                      |
+| `lint`            | After writing code. Auto-detects linters + skill score checking.              |
+| `checkpoint`      | Save files with validation. Creates restore point before writing.             |
+| `checkpoints`     | See undo history.                                                             |
+| `restore`         | Revert a bad change without touching git.                                     |
+| `hub`             | Browse feature graph hubs. Find orphaned files.                               |
+| `memory_create`   | Create/update memory nodes (concept, file, symbol, note) with auto-embedding. |
+| `memory_link`     | Create typed edges between memory nodes (depends_on, implements, etc).        |
+| `memory_search`   | Semantic search + graph traversal across neighbors.                           |
+| `memory_bulk`     | Bulk-add nodes with auto-similarity linking (cosine ≥ 0.72).                  |
+| `memory_explore`  | Start from a node, walk outward, return scored neighbors.                     |
 
 ## Anti-Patterns to Avoid
 

@@ -29,7 +29,7 @@ const DEFAULT_DEBOUNCE_MS = 1500;
 const MAX_PENDING_FILES = 50;
 
 const IGNORE_PREFIXES = [
-  ".mcp_data/",
+  ".contextplus/",
   ".git/",
   "node_modules/",
   "build/",

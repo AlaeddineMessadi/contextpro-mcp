@@ -73,7 +73,7 @@ export async function parseHubFile(hubPath: string): Promise<HubInfo> {
 
 export async function discoverHubs(rootDir: string): Promise<string[]> {
   const hubs: string[] = [];
-  const skip = new Set(["node_modules", ".git", "build", "dist", ".mcp_data"]);
+  const skip = new Set(["node_modules", ".git", "build", "dist", ".contextplus"]);
 
   async function walk(dir: string): Promise<void> {
     const entries = await readdir(dir, { withFileTypes: true });

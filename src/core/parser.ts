@@ -382,6 +382,119 @@ export function isSupportedFile(filePath: string): boolean {
   return getSupportedExtensions().includes(ext);
 }
 
+export interface ImportDeclaration {
+  source: string;
+  specifiers: string[];
+  type: "static" | "dynamic" | "re-export";
+  line: number;
+}
+
+const IMPORT_PATTERNS: Record<string, RegExp[]> = {
+  typescript: [
+    /^import\s+(?:type\s+)?(?:\{([^}]+)\}|(\w+)(?:\s*,\s*\{([^}]+)\})?)\s+from\s+["']([^"']+)["']/,
+    /^import\s+["']([^"']+)["']/,
+    /^export\s+(?:type\s+)?\{([^}]+)\}\s+from\s+["']([^"']+)["']/,
+    /import\(["']([^"']+)["']\)/,
+  ],
+  javascript: [
+    /^import\s+(?:\{([^}]+)\}|(\w+)(?:\s*,\s*\{([^}]+)\})?)\s+from\s+["']([^"']+)["']/,
+    /^import\s+["']([^"']+)["']/,
+    /^export\s+\{([^}]+)\}\s+from\s+["']([^"']+)["']/,
+    /require\(["']([^"']+)["']\)/,
+    /import\(["']([^"']+)["']\)/,
+  ],
+  python: [
+    /^from\s+([\w.]+)\s+import\s+(.+)/,
+    /^import\s+([\w.]+)/,
+  ],
+  go: [
+    /^\s*"([^"]+)"/,
+    /^\s*(\w+)\s+"([^"]+)"/,
+  ],
+  rust: [
+    /^use\s+([\w:]+(?:::\{[^}]+\})?)/,
+    /^use\s+([\w:]+)\s+as\s+\w+/,
+  ],
+};
+
+export function extractImports(content: string, filePath: string): ImportDeclaration[] {
+  const ext = extname(filePath).toLowerCase();
+  const lang = LANG_MAP[ext];
+  if (!lang) return [];
+
+  const langKey = (lang === "tsx" || lang === "typescript") ? "typescript"
+    : (lang === "jsx" || lang === "javascript") ? "javascript"
+    : lang;
+
+  const patterns = IMPORT_PATTERNS[langKey];
+  if (!patterns) return [];
+
+  const imports: ImportDeclaration[] = [];
+  const lines = content.split("\n");
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim();
+
+    if (langKey === "typescript" || langKey === "javascript") {
+      const staticMatch = line.match(/^import\s+(?:type\s+)?(?:\{([^}]+)\}|(\w+)(?:\s*,\s*\{([^}]+)\})?)\s+from\s+["']([^"']+)["']/);
+      if (staticMatch) {
+        const specParts = (staticMatch[1] || staticMatch[3] || "").split(",").map(s => s.trim().split(/\s+as\s+/)[0].trim()).filter(Boolean);
+        if (staticMatch[2]) specParts.unshift(staticMatch[2]);
+        imports.push({ source: staticMatch[4], specifiers: specParts, type: "static", line: i + 1 });
+        continue;
+      }
+      const sideEffectMatch = line.match(/^import\s+["']([^"']+)["']/);
+      if (sideEffectMatch) {
+        imports.push({ source: sideEffectMatch[1], specifiers: [], type: "static", line: i + 1 });
+        continue;
+      }
+      const reExportMatch = line.match(/^export\s+(?:type\s+)?\{([^}]+)\}\s+from\s+["']([^"']+)["']/);
+      if (reExportMatch) {
+        const specParts = reExportMatch[1].split(",").map(s => s.trim().split(/\s+as\s+/)[0].trim()).filter(Boolean);
+        imports.push({ source: reExportMatch[2], specifiers: specParts, type: "re-export", line: i + 1 });
+        continue;
+      }
+      const dynamicMatch = line.match(/import\(["']([^"']+)["']\)/);
+      if (dynamicMatch) {
+        imports.push({ source: dynamicMatch[1], specifiers: [], type: "dynamic", line: i + 1 });
+        continue;
+      }
+    }
+
+    if (langKey === "python") {
+      const fromMatch = line.match(/^from\s+([\w.]+)\s+import\s+(.+)/);
+      if (fromMatch) {
+        const specParts = fromMatch[2].split(",").map(s => s.trim().split(/\s+as\s+/)[0].trim()).filter(Boolean);
+        imports.push({ source: fromMatch[1], specifiers: specParts, type: "static", line: i + 1 });
+        continue;
+      }
+      const importMatch = line.match(/^import\s+([\w.]+)/);
+      if (importMatch) {
+        imports.push({ source: importMatch[1], specifiers: [], type: "static", line: i + 1 });
+        continue;
+      }
+    }
+
+    if (langKey === "go") {
+      const goMatch = line.match(/^\s*"([^"]+)"/);
+      if (goMatch) {
+        imports.push({ source: goMatch[1], specifiers: [], type: "static", line: i + 1 });
+        continue;
+      }
+    }
+
+    if (langKey === "rust") {
+      const useMatch = line.match(/^use\s+([\w:]+(?:::\{[^}]+\})?)/);
+      if (useMatch) {
+        imports.push({ source: useMatch[1], specifiers: [], type: "static", line: i + 1 });
+        continue;
+      }
+    }
+  }
+
+  return imports;
+}
+
 export function flattenSymbols(symbols: CodeSymbol[], parentName?: string): SymbolLocation[] {
   const out: SymbolLocation[] = [];
   for (const sym of symbols) {

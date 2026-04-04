@@ -16,17 +16,21 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.1",
+    "better-sqlite3": "^12.8.0",
     "claude": "^0.1.2",
     "ignore": "^7.0.4",
     "ml-matrix": "^6.12.1",
     "ollama": "^0.6.3",
+    "p-limit": "^7.3.0",
     "simple-git": "^3.27.0",
+    "sqlite-vec": "^0.1.9",
     "tree-sitter-wasms": "^0.1.13",
     "web-tree-sitter": "^0.20.8",
     "zod": "^3.25.23"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.2.1",
+    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^22.15.0",
     "tailwindcss": "^4.2.1",
     "typescript": "^5.8.3"

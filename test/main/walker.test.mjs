@@ -110,6 +110,72 @@ describe("walker", () => {
       assert.equal(docFiles.length, 0, "files inside docs/ should be ignored");
       await rm(join(FIXTURE_DIR, ".gitignore"));
     });
+
+    it("respects nested .gitignore files", async () => {
+      await mkdir(join(FIXTURE_DIR, "packages", "api", "generated"), { recursive: true });
+      await writeFile(join(FIXTURE_DIR, "packages", "api", "handler.ts"), "export function handle() {}");
+      await writeFile(join(FIXTURE_DIR, "packages", "api", "generated", "schema.ts"), "export type Schema = {}");
+      await writeFile(join(FIXTURE_DIR, "packages", "api", ".gitignore"), "generated/\n");
+
+      const entries = await walkDirectory({ rootDir: FIXTURE_DIR });
+      const handlerFiles = entries.filter((e) => e.relativePath.includes("handler.ts"));
+      const generatedFiles = entries.filter((e) => e.relativePath.includes("schema.ts"));
+
+      assert.equal(handlerFiles.length, 1, "handler.ts should be included");
+      assert.equal(generatedFiles.length, 0, "generated/schema.ts should be ignored by nested .gitignore");
+
+      await rm(join(FIXTURE_DIR, "packages"), { recursive: true, force: true });
+    });
+
+    it("stacks nested .gitignore rules with root rules", async () => {
+      await writeFile(join(FIXTURE_DIR, ".gitignore"), "*.log\n");
+      await mkdir(join(FIXTURE_DIR, "sub"), { recursive: true });
+      await writeFile(join(FIXTURE_DIR, "sub", ".gitignore"), "*.tmp\n");
+      await writeFile(join(FIXTURE_DIR, "sub", "app.ts"), "const x = 1;");
+      await writeFile(join(FIXTURE_DIR, "sub", "debug.log"), "log data");
+      await writeFile(join(FIXTURE_DIR, "sub", "cache.tmp"), "temp data");
+
+      const entries = await walkDirectory({ rootDir: FIXTURE_DIR });
+      const paths = entries.map((e) => e.relativePath);
+
+      assert.ok(paths.some((p) => p === "sub/app.ts"), "app.ts should be included");
+      assert.ok(!paths.some((p) => p === "sub/debug.log"), "debug.log should be ignored by root .gitignore");
+      assert.ok(!paths.some((p) => p === "sub/cache.tmp"), "cache.tmp should be ignored by nested .gitignore");
+
+      await rm(join(FIXTURE_DIR, "sub"), { recursive: true, force: true });
+      await rm(join(FIXTURE_DIR, ".gitignore"));
+    });
+
+    it("skips symlinks to prevent infinite loops", async () => {
+      const { symlink } = await import("fs/promises");
+      await mkdir(join(FIXTURE_DIR, "real_dir"), { recursive: true });
+      await writeFile(join(FIXTURE_DIR, "real_dir", "file.ts"), "export {}");
+      try {
+        await symlink(join(FIXTURE_DIR, "real_dir"), join(FIXTURE_DIR, "link_dir"));
+      } catch {
+        return;
+      }
+
+      const entries = await walkDirectory({ rootDir: FIXTURE_DIR });
+      const linkEntries = entries.filter((e) => e.relativePath.startsWith("link_dir"));
+      assert.equal(linkEntries.length, 0, "symlinked directories should be skipped");
+
+      await rm(join(FIXTURE_DIR, "link_dir"));
+      await rm(join(FIXTURE_DIR, "real_dir"), { recursive: true, force: true });
+    });
+
+    it("respects .contextplusignore file", async () => {
+      await mkdir(join(FIXTURE_DIR, "vendor"), { recursive: true });
+      await writeFile(join(FIXTURE_DIR, "vendor", "lib.js"), "module.exports = {}");
+      await writeFile(join(FIXTURE_DIR, ".contextplusignore"), "vendor/\n");
+
+      const entries = await walkDirectory({ rootDir: FIXTURE_DIR });
+      const vendorFiles = entries.filter((e) => e.relativePath.includes("vendor"));
+      assert.equal(vendorFiles.length, 0, "vendor/ should be ignored by .contextplusignore");
+
+      await rm(join(FIXTURE_DIR, "vendor"), { recursive: true, force: true });
+      await rm(join(FIXTURE_DIR, ".contextplusignore"));
+    });
   });
 
   describe("groupByDirectory", () => {

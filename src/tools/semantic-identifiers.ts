@@ -236,14 +236,19 @@ async function buildIdentifierIndex(rootDir: string): Promise<IdentifierIndex> {
 
   if (uncached.length > 0) {
     const batchSize = getEmbeddingBatchSize();
+    const batches: typeof uncached[] = [];
     for (let i = 0; i < uncached.length; i += batchSize) {
-      const batch = uncached.slice(i, i + batchSize);
+      batches.push(uncached.slice(i, i + batchSize));
+    }
+    const pLimit = (await import("p-limit")).default;
+    const limit = pLimit(4);
+    await Promise.all(batches.map((batch) => limit(async () => {
       const embeddings = await fetchEmbedding(batch.map((entry) => entry.text));
       for (let j = 0; j < batch.length; j++) {
         vectors[batch[j].idx] = embeddings[j];
         cache[batch[j].key] = { hash: batch[j].hash, vector: embeddings[j] };
       }
-    }
+    })));
     await saveEmbeddingCache(rootDir, cache, IDENTIFIER_CACHE_FILE);
   }
 

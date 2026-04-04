@@ -50,7 +50,7 @@ export interface GraphSearchResult {
 }
 
 const GRAPH_FILE = "memory-graph.json";
-const CACHE_DIR = ".mcp_data";
+const CACHE_DIR = ".contextplus";
 const DECAY_LAMBDA = 0.05;
 const SIMILARITY_THRESHOLD = 0.72;
 const STALE_THRESHOLD = 0.15;

@@ -4,23 +4,22 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { mkdir, writeFile } from "fs/promises";
-import { dirname, resolve } from "path";
+import { copyFile, mkdir, readdir, stat, writeFile } from "fs/promises";
+import { dirname, join, resolve } from "path";
 import { z } from "zod";
 import { createEmbeddingTrackerController } from "./core/embedding-tracker.js";
 import { createIdleMonitor, getIdleShutdownMs, getParentPollMs, isBrokenPipeError, runCleanup, startParentMonitor } from "./core/process-lifecycle.js";
 import { getContextTree } from "./tools/context-tree.js";
 import { getFileSkeleton } from "./tools/file-skeleton.js";
-import { ensureMcpDataDir, cancelAllEmbeddings } from "./core/embeddings.js";
-import { semanticCodeSearch, invalidateSearchCache } from "./tools/semantic-search.js";
-import { semanticIdentifierSearch, invalidateIdentifierSearchCache } from "./tools/semantic-identifiers.js";
+import { cancelAllEmbeddings } from "./core/embeddings.js";
+import { unifiedSearch, invalidateSearchCache, invalidateIdentifierSearchCache } from "./tools/search.js";
 import { getBlastRadius } from "./tools/blast-radius.js";
 import { runStaticAnalysis } from "./tools/static-analysis.js";
 import { proposeCommit } from "./tools/propose-commit.js";
 import { listRestorePoints, restorePoint } from "./git/shadow.js";
 import { semanticNavigate } from "./tools/semantic-navigate.js";
 import { getFeatureHub } from "./tools/feature-hub.js";
-import { toolUpsertMemoryNode, toolCreateRelation, toolSearchMemoryGraph, toolPruneStaleLinks, toolAddInterlinkedContext, toolRetrieveWithTraversal } from "./tools/memory-tools.js";
+import { toolUpsertMemoryNode, toolCreateRelation, toolSearchMemoryGraph, toolAddInterlinkedContext, toolRetrieveWithTraversal } from "./tools/memory-tools.js";
 
 type AgentTarget = "claude" | "cursor" | "vscode" | "windsurf" | "opencode";
 
@@ -83,6 +82,53 @@ function parseRunner(args: string[]): "npx" | "bunx" {
   return "npx";
 }
 
+async function migrateFromMcpData(rootDir: string): Promise<void> {
+  const oldDir = join(rootDir, ".mcp_data");
+  const newDir = join(rootDir, ".contextplus");
+  try {
+    await stat(oldDir);
+  } catch {
+    return;
+  }
+  try {
+    await stat(newDir);
+    return;
+  } catch {}
+
+  console.error("Migrating .mcp_data/ → .contextplus/ ...");
+  await mkdir(join(newDir, "backups"), { recursive: true });
+  await mkdir(join(newDir, "hubs"), { recursive: true });
+
+  const entries = await readdir(oldDir, { withFileTypes: true });
+  for (const entry of entries) {
+    if (entry.name === "backups" && entry.isDirectory()) {
+      const backupEntries = await readdir(join(oldDir, "backups"), { withFileTypes: true });
+      for (const be of backupEntries) {
+        const src = join(oldDir, "backups", be.name);
+        const dst = join(newDir, "backups", be.name);
+        if (be.isDirectory()) {
+          await mkdir(dst, { recursive: true });
+          const files = await readdir(src);
+          for (const f of files) {
+            await copyFile(join(src, f), join(dst, f));
+          }
+        } else {
+          await copyFile(src, dst);
+        }
+      }
+    } else if (entry.isFile()) {
+      await copyFile(join(oldDir, entry.name), join(newDir, entry.name));
+    }
+  }
+  console.error("Migration complete. You can safely delete .mcp_data/");
+}
+
+async function ensureContextPlusDir(rootDir: string): Promise<void> {
+  await migrateFromMcpData(rootDir);
+  await mkdir(join(rootDir, ".contextplus", "backups"), { recursive: true });
+  await mkdir(join(rootDir, ".contextplus", "hubs"), { recursive: true });
+}
+
 function buildMcpConfig(runner: "npx" | "bunx") {
   const commandArgs = runner === "npx" ? ["-y", "contextplus"] : ["contextplus"];
   return JSON.stringify(
@@ -139,8 +185,20 @@ async function runInitCommand(args: string[]) {
   const content = target === "opencode" ? buildOpenCodeConfig(runner) : buildMcpConfig(runner);
   await mkdir(dirname(outputPath), { recursive: true });
   await writeFile(outputPath, `${content}\n`, "utf8");
+
+  const contextPlusDir = join(process.cwd(), ".contextplus");
+  await mkdir(join(contextPlusDir, "backups"), { recursive: true });
+  await mkdir(join(contextPlusDir, "hubs"), { recursive: true });
+  const configPath = join(contextPlusDir, "config.json");
+  try {
+    await stat(configPath);
+  } catch {
+    await writeFile(configPath, JSON.stringify({ provider: "ollama", embedModel: "nomic-embed-text", chatModel: "llama3.2" }, null, 2) + "\n");
+  }
+
   console.error(`Context+ initialized for ${target} using ${runner}.`);
   console.error(`Wrote MCP config: ${outputPath}`);
+  console.error(`Created .contextplus/ directory with config.json`);
 }
 
 const server = new McpServer({
@@ -166,7 +224,7 @@ server.resource(
 );
 
 server.tool(
-  "get_context_tree",
+  "tree",
   "Get the structural tree of the project with file headers, function names, classes, enums, and line ranges. " +
   "Automatically reads 2-line headers for file purpose. Dynamic token-aware pruning: " +
   "Level 2 (deep symbols) -> Level 1 (headers only) -> Level 0 (file names only) based on project size.",
@@ -191,35 +249,7 @@ server.tool(
 );
 
 server.tool(
-  "semantic_identifier_search",
-  "Search semantic intent at identifier level (functions, methods, classes, variables) with definition lines and ranked call sites. " +
-  "Uses embeddings over symbol signatures and source context, then returns line-numbered definition/call chains.",
-  {
-    query: z.string().describe("Natural language intent to match identifiers and usages."),
-    top_k: z.number().optional().describe("How many identifiers to return. Default: 5."),
-    top_calls_per_identifier: z.number().optional().describe("How many ranked call sites per identifier. Default: 10."),
-    include_kinds: z.array(z.string()).optional().describe("Optional kinds filter, e.g. [\"function\", \"method\", \"variable\"]."),
-    semantic_weight: z.number().optional().describe("Weight for semantic similarity score. Default: 0.78."),
-    keyword_weight: z.number().optional().describe("Weight for keyword overlap score. Default: 0.22."),
-  },
-  withRequestActivity(async ({ query, top_k, top_calls_per_identifier, include_kinds, semantic_weight, keyword_weight }) => ({
-    content: [{
-      type: "text" as const,
-      text: await semanticIdentifierSearch({
-        rootDir: ROOT_DIR,
-        query,
-        topK: top_k,
-        topCallsPerIdentifier: top_calls_per_identifier,
-        includeKinds: include_kinds,
-        semanticWeight: semantic_weight,
-        keywordWeight: keyword_weight,
-      }),
-    }],
-  }), { useEmbeddingTracker: true }),
-);
-
-server.tool(
-  "get_file_skeleton",
+  "skeleton",
   "Get detailed function signatures, class methods, and type definitions of a specific file WITHOUT reading the full body. " +
   "Shows the API surface: function names, parameters, return types, and line ranges. Perfect for understanding how to use code without loading it all.",
   {
@@ -234,51 +264,47 @@ server.tool(
 );
 
 server.tool(
-  "semantic_code_search",
-  "Search the codebase by MEANING, not just exact variable names. Uses Ollama embeddings over file headers and symbol names. " +
-  "Example: searching 'user authentication' finds files about login, sessions, JWT even if those exact words aren't used, with matched definition lines.",
+  "search",
+  "Search the codebase by MEANING. Modes: 'file' searches file headers/symbols, 'identifier' searches function/class definitions with call chains, " +
+  "'hybrid' (default) runs both and returns combined results. Uses embeddings for semantic matching plus keyword overlap scoring.",
   {
-    query: z.string().describe("Natural language description of what you're looking for. Example: 'how are transactions signed'"),
+    query: z.string().describe("Natural language description of what you're looking for."),
+    mode: z.enum(["file", "identifier", "hybrid"]).optional().describe("Search mode: 'file' for files, 'identifier' for functions/classes, 'hybrid' for both. Default: hybrid."),
     top_k: z.number().optional().describe("Number of matches to return. Default: 5."),
-    semantic_weight: z.number().optional().describe("Weight for embedding similarity in hybrid ranking. Default: 0.72."),
-    keyword_weight: z.number().optional().describe("Weight for keyword overlap in hybrid ranking. Default: 0.28."),
+    top_calls_per_identifier: z.number().optional().describe("How many ranked call sites per identifier (identifier/hybrid mode). Default: 10."),
+    include_kinds: z.array(z.string()).optional().describe("Filter identifier kinds, e.g. [\"function\", \"method\"]. Only for identifier/hybrid mode."),
+    semantic_weight: z.number().optional().describe("Weight for embedding similarity. Default: 0.72."),
+    keyword_weight: z.number().optional().describe("Weight for keyword overlap. Default: 0.28."),
     min_semantic_score: z.number().optional().describe("Minimum semantic score filter. Accepts 0-1 or 0-100."),
     min_keyword_score: z.number().optional().describe("Minimum keyword score filter. Accepts 0-1 or 0-100."),
     min_combined_score: z.number().optional().describe("Minimum final score filter. Accepts 0-1 or 0-100."),
-    require_keyword_match: z.boolean().optional().describe("When true, only return files with keyword overlap."),
-    require_semantic_match: z.boolean().optional().describe("When true, only return files with positive semantic similarity."),
+    require_keyword_match: z.boolean().optional().describe("When true, only return results with keyword overlap."),
+    require_semantic_match: z.boolean().optional().describe("When true, only return results with positive semantic similarity."),
   },
-  withRequestActivity(async ({
-    query,
-    top_k,
-    semantic_weight,
-    keyword_weight,
-    min_semantic_score,
-    min_keyword_score,
-    min_combined_score,
-    require_keyword_match,
-    require_semantic_match,
-  }) => ({
+  withRequestActivity(async (args) => ({
     content: [{
       type: "text" as const,
-      text: await semanticCodeSearch({
+      text: await unifiedSearch({
         rootDir: ROOT_DIR,
-        query,
-        topK: top_k,
-        semanticWeight: semantic_weight,
-        keywordWeight: keyword_weight,
-        minSemanticScore: min_semantic_score,
-        minKeywordScore: min_keyword_score,
-        minCombinedScore: min_combined_score,
-        requireKeywordMatch: require_keyword_match,
-        requireSemanticMatch: require_semantic_match,
+        query: args.query,
+        mode: args.mode,
+        topK: args.top_k,
+        topCallsPerIdentifier: args.top_calls_per_identifier,
+        includeKinds: args.include_kinds,
+        semanticWeight: args.semantic_weight,
+        keywordWeight: args.keyword_weight,
+        minSemanticScore: args.min_semantic_score,
+        minKeywordScore: args.min_keyword_score,
+        minCombinedScore: args.min_combined_score,
+        requireKeywordMatch: args.require_keyword_match,
+        requireSemanticMatch: args.require_semantic_match,
       }),
     }],
   }), { useEmbeddingTracker: true }),
 );
 
 server.tool(
-  "get_blast_radius",
+  "blast_radius",
   "Before deleting or modifying code, check the BLAST RADIUS. Traces every file and line where a specific symbol " +
   "(function, class, variable) is imported or used. Prevents orphaned code. Also warns if usage count is low (candidate for inlining).",
   {
@@ -294,9 +320,9 @@ server.tool(
 );
 
 server.tool(
-  "run_static_analysis",
-  "Run the project's native linter/compiler to find unused variables, dead code, type errors, and syntax issues. " +
-  "Delegates detection to deterministic tools instead of LLM guessing. Supports TypeScript, Python, Rust, Go.",
+  "lint",
+  "Auto-detects and runs project linters (tsc, eslint, ruff, cargo check, go vet). " +
+  "Also checks code skill score: 2-line headers, no inline comments, nesting depth, file length.",
   {
     target_path: z.string().optional().describe("Specific file or folder to lint (relative to root). Omit for full project."),
   },
@@ -309,10 +335,9 @@ server.tool(
 );
 
 server.tool(
-  "propose_commit",
-  "The ONLY way to write code. Validates the code against strict rules before saving: " +
-  "2-line header comments, no inline comments, max nesting depth, max file length. " +
-  "Creates a shadow restore point before writing. REJECTS code that violates formatting rules.",
+  "checkpoint",
+  "Save code with validation. Checks 2-line headers, no inline comments, max nesting depth, max file length. " +
+  "Creates a shadow restore point before writing. Use during long work sessions for safe mid-work saves.",
   {
     file_path: z.string().describe("Where to save the file (relative to project root)."),
     new_content: z.string().describe("The complete file content to save."),
@@ -330,8 +355,8 @@ server.tool(
 );
 
 server.tool(
-  "list_restore_points",
-  "List all shadow restore points created by propose_commit. Each point captures the file state before the AI made changes. " +
+  "checkpoints",
+  "List all shadow restore points created by checkpoint. Each point captures the file state before changes. " +
   "Use this to find a restore point ID for undoing a bad change.",
   {},
   withRequestActivity(async () => {
@@ -346,9 +371,9 @@ server.tool(
 );
 
 server.tool(
-  "undo_change",
-  "Restore files to their state before a specific AI change. Uses the shadow restore point system. " +
-  "Does NOT affect git history. Call list_restore_points first to find the point ID.",
+  "restore",
+  "Restore files to their state before a specific change. Uses the shadow restore point system. " +
+  "Does NOT affect git history. Call checkpoints first to find the point ID.",
   {
     point_id: z.string().describe("The restore point ID (format: rp-timestamp-hash). Get from list_restore_points."),
   },
@@ -368,10 +393,9 @@ server.tool(
 );
 
 server.tool(
-  "semantic_navigate",
-  "Browse the codebase by MEANING, not directory structure. Uses spectral clustering on Ollama embeddings to group " +
-  "semantically related files into labeled clusters. Inspired by Gabriella Gonzalez's semantic navigator. " +
-  "Requires Ollama running with an embedding model and a chat model for labeling.",
+  "cluster",
+  "Browse the codebase by MEANING, not directory structure. Uses spectral clustering on embeddings to group " +
+  "semantically related files into labeled clusters. Requires an embedding model and a chat model for labeling.",
   {
     max_depth: z.number().optional().describe("Maximum nesting depth of clusters. Default: 3."),
     max_clusters: z.number().optional().describe("Maximum sub-clusters per level. Default: 20."),
@@ -385,10 +409,9 @@ server.tool(
 );
 
 server.tool(
-  "get_feature_hub",
-  "Obsidian-style feature hub navigator. Hub files are .md files containing [[path/to/file]] wikilinks that act as a Map of Content. " +
-  "Modes: (1) No args = list all hubs, (2) hub_path or feature_name = show hub with bundled skeletons of all linked files, " +
-  "(3) show_orphans = find files not linked to any hub. Prevents orphaned code and enables graph-based codebase navigation.",
+  "hub",
+  "Feature hub navigator. Hub files are .md files containing [[path/to/file]] wikilinks that act as a Map of Content. " +
+  "No args = list all hubs. hub_path or feature_name = show hub with bundled skeletons. show_orphans = find unlinked files.",
   {
     hub_path: z.string().optional().describe("Path to a specific hub .md file (relative to root)."),
     feature_name: z.string().optional().describe("Feature name to search for. Finds matching hub file automatically."),
@@ -408,9 +431,9 @@ server.tool(
 );
 
 server.tool(
-  "upsert_memory_node",
-  "Create or update a memory node in the linking graph. Nodes represent concepts, files, symbols, or notes with auto-generated embeddings. " +
-  "If a node with the same label and type exists, it updates content and increments access count. Returns the node ID for use in create_relation.",
+  "memory_create",
+  "Create or update a memory node. Nodes represent concepts, files, symbols, or notes with auto-generated embeddings. " +
+  "If a node with the same label and type exists, it updates content. Returns the node ID for use in memory_link.",
   {
     type: z.enum(["concept", "file", "symbol", "note"]).describe("Node type: concept (abstract ideas), file (source files), symbol (functions/classes), note (free-form)."),
     label: z.string().describe("Short identifier for the node. Used for deduplication with type."),
@@ -426,9 +449,9 @@ server.tool(
 );
 
 server.tool(
-  "create_relation",
-  "Create a typed edge between two memory nodes. Supports relation types: relates_to, depends_on, implements, references, similar_to, contains. " +
-  "Edges have weights (0-1) that decay over time via e^(-λt). Duplicate edges update weight instead of creating new ones.",
+  "memory_link",
+  "Create a typed edge between two memory nodes. Supports: relates_to, depends_on, implements, references, similar_to, contains. " +
+  "Edges have weights (0-1) that decay over time. Duplicate edges update weight.",
   {
     source_id: z.string().describe("ID of the source memory node."),
     target_id: z.string().describe("ID of the target memory node."),
@@ -445,9 +468,9 @@ server.tool(
 );
 
 server.tool(
-  "search_memory_graph",
-  "Search the memory graph by meaning with graph traversal. First finds direct matches via embedding similarity, " +
-  "then traverses 1st/2nd-degree neighbors to discover linked context. Returns both direct hits and graph-connected neighbors with relevance scores.",
+  "memory_search",
+  "Search the memory graph by meaning with graph traversal. Finds direct matches via embedding similarity, " +
+  "then traverses neighbors to discover linked context. Returns hits and graph-connected neighbors with relevance scores.",
   {
     query: z.string().describe("Natural language query to search the memory graph."),
     max_depth: z.number().optional().describe("How many hops to traverse from direct matches. Default: 1."),
@@ -464,25 +487,9 @@ server.tool(
 );
 
 server.tool(
-  "prune_stale_links",
-  "Remove stale memory graph edges whose weight has decayed below threshold via e^(-λt) formula. " +
-  "Also removes orphan nodes with no edges, low access count, and >7 days since last access. Keeps the graph lean.",
-  {
-    threshold: z.number().optional().describe("Minimum decayed weight to keep an edge. Default: 0.15. Lower = keep more edges."),
-  },
-  withRequestActivity(async ({ threshold }) => ({
-    content: [{
-      type: "text" as const,
-      text: await toolPruneStaleLinks({ rootDir: ROOT_DIR, threshold }),
-    }],
-  })),
-);
-
-server.tool(
-  "add_interlinked_context",
-  "Bulk-add multiple memory nodes with automatic similarity linking. Computes embeddings for all items, " +
-  "then creates similarity edges between any pair (new-to-new and new-to-existing) with cosine similarity ≥ 0.72. " +
-  "Ideal for importing related concepts, files, or notes at once.",
+  "memory_bulk",
+  "Bulk-add multiple memory nodes with automatic similarity linking. Creates similarity edges between pairs " +
+  "with cosine similarity ≥ 0.72. Ideal for importing related concepts, files, or notes at once.",
   {
     items: z.array(z.object({
       type: z.enum(["concept", "file", "symbol", "note"]),
@@ -501,9 +508,9 @@ server.tool(
 );
 
 server.tool(
-  "retrieve_with_traversal",
-  "Start from a specific memory node and traverse the graph outward. Returns the starting node plus all reachable neighbors " +
-  "within the depth limit, scored by edge weight decay and depth penalty. Use after search_memory_graph to explore a specific node's neighborhood.",
+  "memory_explore",
+  "Start from a memory node and traverse outward. Returns the starting node plus all reachable neighbors " +
+  "within the depth limit, scored by edge weight decay and depth penalty. Use after memory_search to explore a node's neighborhood.",
   {
     start_node_id: z.string().describe("ID of the memory node to start traversal from."),
     max_depth: z.number().optional().describe("Maximum traversal depth from start node. Default: 2."),
@@ -534,7 +541,7 @@ async function main() {
     process.stdout.write(tree + "\n");
     return;
   }
-  await ensureMcpDataDir(ROOT_DIR);
+  await ensureContextPlusDir(ROOT_DIR);
   const trackerController = createEmbeddingTrackerController({
     rootDir: ROOT_DIR,
     mode: process.env.CONTEXTPLUS_EMBED_TRACKER,

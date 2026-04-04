@@ -1,11 +1,12 @@
 // Bundled skeleton view of all files linked from a hub map-of-content
 // FEATURE: Hierarchical context management via feature hub graph
 
-import { resolve, extname } from "path";
-import { readFile, stat } from "fs/promises";
+import { resolve, extname, dirname, relative } from "path";
+import { readFile, stat, writeFile, mkdir } from "fs/promises";
 import { parseHubFile, discoverHubs, findOrphanedFiles, type HubInfo } from "../core/hub.js";
 import { getFileSkeleton } from "./file-skeleton.js";
 import { walkDirectory } from "../core/walker.js";
+import { extractImports } from "../core/parser.js";
 
 export interface FeatureHubOptions {
   rootDir: string;
@@ -131,4 +132,172 @@ export async function getFeatureHub(options: FeatureHubOptions): Promise<string>
   }
 
   return out.join("\n");
+}
+
+interface ImportEdge {
+  from: string;
+  to: string;
+}
+
+function resolveImportPath(importSource: string, fromFile: string, allFiles: Set<string>): string | null {
+  if (!importSource.startsWith(".")) return null;
+
+  const fromDir = dirname(fromFile);
+  const candidates = [
+    resolve(fromDir, importSource),
+    resolve(fromDir, importSource + ".ts"),
+    resolve(fromDir, importSource + ".tsx"),
+    resolve(fromDir, importSource + ".js"),
+    resolve(fromDir, importSource + ".jsx"),
+    resolve(fromDir, importSource.replace(/\.js$/, ".ts")),
+    resolve(fromDir, importSource + "/index.ts"),
+    resolve(fromDir, importSource + "/index.js"),
+  ];
+
+  for (const candidate of candidates) {
+    if (allFiles.has(candidate)) return candidate;
+  }
+  return null;
+}
+
+function findConnectedComponents(edges: ImportEdge[], allNodes: string[]): string[][] {
+  const adj = new Map<string, Set<string>>();
+  for (const node of allNodes) adj.set(node, new Set());
+  for (const edge of edges) {
+    adj.get(edge.from)?.add(edge.to);
+    adj.get(edge.to)?.add(edge.from);
+  }
+
+  const visited = new Set<string>();
+  const components: string[][] = [];
+
+  for (const node of allNodes) {
+    if (visited.has(node)) continue;
+    const component: string[] = [];
+    const stack = [node];
+    while (stack.length > 0) {
+      const current = stack.pop()!;
+      if (visited.has(current)) continue;
+      visited.add(current);
+      component.push(current);
+      for (const neighbor of adj.get(current) ?? []) {
+        if (!visited.has(neighbor)) stack.push(neighbor);
+      }
+    }
+    components.push(component);
+  }
+
+  return components;
+}
+
+function findEntryPoint(component: string[], edges: ImportEdge[]): string {
+  const importedBy = new Map<string, number>();
+  for (const file of component) importedBy.set(file, 0);
+  for (const edge of edges) {
+    if (importedBy.has(edge.to)) {
+      importedBy.set(edge.to, (importedBy.get(edge.to) ?? 0) + 1);
+    }
+  }
+  let maxFile = component[0];
+  let maxCount = 0;
+  for (const [file, count] of importedBy) {
+    if (count > maxCount) { maxFile = file; maxCount = count; }
+  }
+  return maxFile;
+}
+
+function generateHubName(component: string[], entryPoint: string): string {
+  const commonDir = component.reduce((prefix, path) => {
+    const parts = path.split("/");
+    const prefixParts = prefix.split("/");
+    let i = 0;
+    while (i < parts.length && i < prefixParts.length && parts[i] === prefixParts[i]) i++;
+    return parts.slice(0, i).join("/");
+  });
+
+  if (commonDir && commonDir !== ".") {
+    const dirName = commonDir.split("/").pop() ?? "unknown";
+    return dirName.replace(/[^a-zA-Z0-9-_]/g, "-").toLowerCase();
+  }
+
+  const entryName = entryPoint.split("/").pop()?.replace(/\.\w+$/, "") ?? "module";
+  return entryName.replace(/[^a-zA-Z0-9-_]/g, "-").toLowerCase();
+}
+
+export async function autoGenerateHubs(rootDir: string): Promise<string> {
+  const entries = await walkDirectory({ rootDir, depthLimit: 10 });
+  const sourceExts = new Set([".ts", ".tsx", ".js", ".jsx", ".py", ".rs", ".go"]);
+  const sourceFiles = entries.filter((e) => !e.isDirectory && sourceExts.has(extname(e.path)));
+
+  const allFilePaths = new Set(sourceFiles.map((e) => e.path));
+  const allRelPaths = sourceFiles.map((e) => e.relativePath);
+  const edges: ImportEdge[] = [];
+
+  for (const entry of sourceFiles) {
+    try {
+      const content = await readFile(entry.path, "utf-8");
+      const imports = extractImports(content, entry.path);
+
+      for (const imp of imports) {
+        const resolved = resolveImportPath(imp.source, entry.path, allFilePaths);
+        if (resolved) {
+          const fromRel = entry.relativePath;
+          const toRel = relative(rootDir, resolved).replace(/\\/g, "/");
+          edges.push({ from: fromRel, to: toRel });
+        }
+      }
+    } catch {}
+  }
+
+  const components = findConnectedComponents(edges, allRelPaths);
+  const significantComponents = components.filter((c) => c.length >= 3);
+
+  if (significantComponents.length === 0) {
+    return "No significant clusters found (minimum 3 connected files). Import graph too sparse.";
+  }
+
+  const hubDir = resolve(rootDir, ".contextplus", "hubs");
+  await mkdir(hubDir, { recursive: true });
+
+  const generated: string[] = [];
+  const usedNames = new Set<string>();
+  for (const component of significantComponents) {
+    const clusterEdges = edges.filter((e) => component.includes(e.from) && component.includes(e.to));
+    const entryPoint = findEntryPoint(component, clusterEdges);
+    const hubName = generateHubName(component, entryPoint);
+
+    let header = "";
+    try {
+      const content = await readFile(resolve(rootDir, entryPoint), "utf-8");
+      const firstLine = content.split("\n")[0];
+      if (firstLine.startsWith("//") || firstLine.startsWith("#")) {
+        header = firstLine.replace(/^[/#\s]+/, "").trim();
+      }
+    } catch {}
+
+    const hubContent = [
+      `<!-- Auto-generated by Context+ -->`,
+      `# ${header || hubName}`,
+      ``,
+      `Entry point: ${entryPoint}`,
+      ``,
+      `## Files`,
+      ...component.sort().map((f) => `- [[${f}]]`),
+      ``,
+    ].join("\n");
+
+    let finalName = hubName;
+    let counter = 2;
+    while (usedNames.has(finalName)) {
+      finalName = `${hubName}-${counter}`;
+      counter++;
+    }
+    usedNames.add(finalName);
+
+    const hubPath = resolve(hubDir, `${finalName}.md`);
+    await writeFile(hubPath, hubContent);
+    generated.push(`${finalName}.md (${component.length} files, entry: ${entryPoint})`);
+  }
+
+  return `Auto-generated ${generated.length} feature hubs in .contextplus/hubs/:\n\n${generated.map((g) => `  - ${g}`).join("\n")}`;
 }

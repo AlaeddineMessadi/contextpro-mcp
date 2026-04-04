@@ -1,7 +1,7 @@
-// Gitignore-aware recursive directory walker with depth control
-// Returns filtered file paths respecting project ignore patterns
+// Gitignore-aware recursive directory walker with nested ignore support
+// Returns filtered file paths respecting project and per-directory ignore patterns
 
-import { readdir, readFile, stat } from "fs/promises";
+import { readdir, readFile, lstat } from "fs/promises";
 import { join, relative, resolve } from "path";
 import ignore, { type Ignore } from "ignore";
 
@@ -18,6 +18,11 @@ export interface FileEntry {
   depth: number;
 }
 
+interface IgnoreLayer {
+  ig: Ignore;
+  dir: string;
+}
+
 const ALWAYS_IGNORE = new Set([
   "node_modules",
   ".git",
@@ -30,62 +35,83 @@ const ALWAYS_IGNORE = new Set([
   ".next",
   ".nuxt",
   "target",
-  ".mcp_data",
-  ".mcp-shadow-history",
+  ".contextplus",
   "coverage",
   ".cache",
   ".turbo",
   ".parcel-cache",
 ]);
 
-async function loadIgnoreRules(rootDir: string): Promise<Ignore> {
-  const ig = ignore();
+async function loadIgnoreFile(filePath: string): Promise<string | null> {
   try {
-    const content = await readFile(join(rootDir, ".gitignore"), "utf-8");
-    ig.add(content);
+    return await readFile(filePath, "utf-8");
   } catch {
+    return null;
   }
-  return ig;
+}
+
+async function buildLocalLayer(dir: string): Promise<IgnoreLayer | null> {
+  const ig = ignore();
+  let hasRules = false;
+  const gitignoreContent = await loadIgnoreFile(join(dir, ".gitignore"));
+  if (gitignoreContent) { ig.add(gitignoreContent); hasRules = true; }
+  const ctxIgnoreContent = await loadIgnoreFile(join(dir, ".contextplusignore"));
+  if (ctxIgnoreContent) { ig.add(ctxIgnoreContent); hasRules = true; }
+  return hasRules ? { ig, dir } : null;
+}
+
+function isIgnoredByLayers(fullPath: string, isDir: boolean, layers: IgnoreLayer[]): boolean {
+  for (const layer of layers) {
+    const relToLayer = relative(layer.dir, fullPath).replace(/\\/g, "/");
+    if (layer.ig.ignores(relToLayer)) return true;
+    if (isDir && layer.ig.ignores(relToLayer + "/")) return true;
+  }
+  return false;
 }
 
 async function walkRecursive(
   dir: string,
   rootDir: string,
-  ig: Ignore,
+  parentLayers: IgnoreLayer[],
   depth: number,
   maxDepth: number,
   results: FileEntry[],
 ): Promise<void> {
   if (maxDepth > 0 && depth > maxDepth) return;
 
+  const layers = [...parentLayers];
+  const localLayer = await buildLocalLayer(dir);
+  if (localLayer) layers.push(localLayer);
+
   const entries = await readdir(dir, { withFileTypes: true }).catch(() => []);
+
   for (const entry of entries) {
     if (ALWAYS_IGNORE.has(entry.name) || entry.name.startsWith(".")) continue;
 
     const fullPath = join(dir, entry.name);
-    const relPath = relative(rootDir, fullPath).replace(/\\/g, "/");
-    if (ig.ignores(relPath)) continue;
+
+    const stats = await lstat(fullPath).catch(() => null);
+    if (!stats || stats.isSymbolicLink()) continue;
 
     const isDir = entry.isDirectory();
+    if (isIgnoredByLayers(fullPath, isDir, layers)) continue;
+
+    const relPath = relative(rootDir, fullPath).replace(/\\/g, "/");
     results.push({ path: fullPath, relativePath: relPath, isDirectory: isDir, depth });
 
-    if (isDir) await walkRecursive(fullPath, rootDir, ig, depth + 1, maxDepth, results);
+    if (isDir) await walkRecursive(fullPath, rootDir, layers, depth + 1, maxDepth, results);
   }
 }
 
 export async function walkDirectory(options: WalkOptions): Promise<FileEntry[]> {
   const rootDir = resolve(options.rootDir);
   const startDir = options.targetPath ? resolve(rootDir, options.targetPath) : rootDir;
-  const ig = await loadIgnoreRules(rootDir);
   const results: FileEntry[] = [];
 
-  try {
-    await stat(startDir);
-  } catch {
-    return results;
-  }
+  const stats = await lstat(startDir).catch(() => null);
+  if (!stats) return results;
 
-  await walkRecursive(startDir, rootDir, ig, 0, options.depthLimit ?? 0, results);
+  await walkRecursive(startDir, rootDir, [], 0, options.depthLimit ?? 0, results);
   return results;
 }
 

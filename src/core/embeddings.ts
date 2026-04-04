@@ -79,7 +79,7 @@ const EMBED_MODEL = process.env.OLLAMA_EMBED_MODEL ?? "nomic-embed-text";
 const OPENAI_EMBED_MODEL = process.env.CONTEXTPLUS_OPENAI_EMBED_MODEL ?? process.env.OPENAI_EMBED_MODEL ?? "text-embedding-3-small";
 const OPENAI_API_KEY = process.env.CONTEXTPLUS_OPENAI_API_KEY ?? process.env.OPENAI_API_KEY ?? "";
 const OPENAI_BASE_URL = process.env.CONTEXTPLUS_OPENAI_BASE_URL ?? process.env.OPENAI_BASE_URL ?? "https://api.openai.com/v1";
-const CACHE_DIR = ".mcp_data";
+const CACHE_DIR = ".contextplus";
 const ACTIVE_EMBED_MODEL = EMBED_PROVIDER === "openai" ? OPENAI_EMBED_MODEL : EMBED_MODEL;
 const CACHE_FILE = `embeddings-cache-${EMBED_PROVIDER}-${ACTIVE_EMBED_MODEL.replace(/[^a-zA-Z0-9._-]/g, "_")}.json`;
 const MIN_EMBED_BATCH_SIZE = 5;
@@ -461,8 +461,15 @@ export class SearchIndex {
 
     if (uncached.length > 0) {
       const batchSize = getEmbeddingBatchSize();
+      const batches: { idx: number; text: string; hash: string }[][] = [];
       for (let b = 0; b < uncached.length; b += batchSize) {
-        const batch = uncached.slice(b, b + batchSize);
+        batches.push(uncached.slice(b, b + batchSize));
+      }
+
+      const pLimit = (await import("p-limit")).default;
+      const limit = pLimit(4);
+
+      await Promise.all(batches.map((batch) => limit(async () => {
         try {
           const embeddings = await fetchEmbedding(batch.map((u) => u.text));
           for (let j = 0; j < batch.length; j++) {
@@ -482,7 +489,7 @@ export class SearchIndex {
             }
           }
         }
-      }
+      })));
       await saveCache(rootDir, cache);
     }
   }
