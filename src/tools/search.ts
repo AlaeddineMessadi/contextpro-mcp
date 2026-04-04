@@ -3,6 +3,7 @@
 
 import { semanticCodeSearch, invalidateSearchCache, type SemanticSearchOptions } from "./semantic-search.js";
 import { semanticIdentifierSearch, invalidateIdentifierSearchCache, type SemanticIdentifierSearchOptions } from "./semantic-identifiers.js";
+import { quickRefresh } from "./reindex.js";
 
 export { invalidateSearchCache, invalidateIdentifierSearchCache };
 
@@ -25,14 +26,21 @@ export interface UnifiedSearchOptions {
 }
 
 export async function unifiedSearch(options: UnifiedSearchOptions): Promise<string> {
+  const { staleCount, refreshed } = await quickRefresh(options.rootDir).catch(() => ({ staleCount: 0, refreshed: false }));
   const mode = options.mode ?? "hybrid";
+  let staleWarning = "";
+  if (staleCount > 15) {
+    staleWarning = `\n⚠ ${staleCount} files changed since last index. Run reindex for accurate results.\n\n`;
+  } else if (refreshed && staleCount > 0) {
+    staleWarning = `\n(Auto-refreshed ${staleCount} stale files)\n\n`;
+  }
 
   if (mode === "file") {
-    return semanticCodeSearch(options as SemanticSearchOptions);
+    return staleWarning + await semanticCodeSearch(options as SemanticSearchOptions);
   }
 
   if (mode === "identifier") {
-    return semanticIdentifierSearch({
+    return staleWarning + await semanticIdentifierSearch({
       rootDir: options.rootDir,
       query: options.query,
       topK: options.topK,
@@ -67,5 +75,5 @@ export async function unifiedSearch(options: UnifiedSearchOptions): Promise<stri
     }),
   ]);
 
-  return `=== FILE MATCHES ===\n\n${fileResults}\n\n=== IDENTIFIER MATCHES ===\n\n${identifierResults}`;
+  return `${staleWarning}=== FILE MATCHES ===\n\n${fileResults}\n\n=== IDENTIFIER MATCHES ===\n\n${identifierResults}`;
 }

@@ -20,6 +20,12 @@ import { listRestorePoints, restorePoint } from "./git/shadow.js";
 import { semanticNavigate } from "./tools/semantic-navigate.js";
 import { getFeatureHub } from "./tools/feature-hub.js";
 import { toolUpsertMemoryNode, toolCreateRelation, toolSearchMemoryGraph, toolAddInterlinkedContext, toolRetrieveWithTraversal } from "./tools/memory-tools.js";
+import { reindex, quickRefresh } from "./tools/reindex.js";
+import { getStatus } from "./tools/status.js";
+import { getDiff } from "./tools/diff.js";
+import { getRelated } from "./tools/related.js";
+import { getTestMap } from "./tools/test-map.js";
+import { explain } from "./tools/explain.js";
 
 type AgentTarget = "claude" | "cursor" | "vscode" | "windsurf" | "opencode";
 
@@ -521,6 +527,101 @@ server.tool(
     content: [{
       type: "text" as const,
       text: await toolRetrieveWithTraversal({ rootDir: ROOT_DIR, startNodeId: start_node_id, maxDepth: max_depth, edgeFilter: edge_filter }),
+    }],
+  })),
+);
+
+server.tool(
+  "reindex",
+  "Re-walk, re-parse, and re-index project files into the database. Detects changed files via content hash and only re-processes what changed. " +
+  "Use after git pull, branch switch, or external edits. Builds the import graph for related/test_map tools.",
+  {
+    target_path: z.string().optional().describe("Scope reindex to a specific directory (relative to root)."),
+    force: z.boolean().optional().describe("Force re-process all files, ignoring cache. Default: false."),
+  },
+  withRequestActivity(async ({ target_path, force }) => ({
+    content: [{
+      type: "text" as const,
+      text: await reindex({ rootDir: ROOT_DIR, targetPath: target_path, force }),
+    }],
+  })),
+);
+
+server.tool(
+  "status",
+  "Project overview dashboard. Returns file counts, index state, memory graph stats, git branch, uncommitted changes, and recent commits. " +
+  "One call for complete situational awareness at the start of a session.",
+  {},
+  withRequestActivity(async () => ({
+    content: [{
+      type: "text" as const,
+      text: await getStatus({ rootDir: ROOT_DIR }),
+    }],
+  })),
+);
+
+server.tool(
+  "diff",
+  "Structured git diff showing changed files, lines added/removed, and affected symbols. " +
+  "Supports: working tree (default), since a commit, vs a branch, or a specific file.",
+  {
+    since: z.string().optional().describe("Show changes since this commit (e.g. HEAD~3, abc123)."),
+    branch: z.string().optional().describe("Compare current branch against this branch (e.g. main)."),
+    file: z.string().optional().describe("Show diff for a specific file (includes raw diff output)."),
+  },
+  withRequestActivity(async ({ since, branch, file }) => ({
+    content: [{
+      type: "text" as const,
+      text: await getDiff({ rootDir: ROOT_DIR, since, branch, file }),
+    }],
+  })),
+);
+
+server.tool(
+  "related",
+  "Show files related to a given file: what it imports, what imports it, same-directory siblings, test file, and hub membership. " +
+  "Requires reindex to have been run for import graph data.",
+  {
+    file: z.string().describe("File path to find related files for (relative to root)."),
+  },
+  withRequestActivity(async ({ file }) => ({
+    content: [{
+      type: "text" as const,
+      text: await getRelated({ rootDir: ROOT_DIR, file }),
+    }],
+  })),
+);
+
+server.tool(
+  "test_map",
+  "Map source files to their test files using import graph and naming conventions. " +
+  "Modes: specific file, specific symbol, or all uncommitted changed files.",
+  {
+    file: z.string().optional().describe("Source file to find tests for."),
+    symbol: z.string().optional().describe("Symbol name — finds which file defines it, then its tests."),
+    changed: z.boolean().optional().describe("Find tests for all uncommitted changed files."),
+  },
+  withRequestActivity(async ({ file, symbol, changed }) => ({
+    content: [{
+      type: "text" as const,
+      text: await getTestMap({ rootDir: ROOT_DIR, file, symbol, changed }),
+    }],
+  })),
+);
+
+server.tool(
+  "explain",
+  "Extract a specific function/class body with its dependencies, without reading the entire file. " +
+  "Provide symbol name to get its code + called functions. Provide file path for a structural overview.",
+  {
+    symbol: z.string().optional().describe("Function, class, or variable name to explain."),
+    file: z.string().optional().describe("File to explain (overview mode if no symbol given)."),
+    depth: z.number().optional().describe("How many levels of called functions to include. Default: 1. Use 0 for just the symbol."),
+  },
+  withRequestActivity(async ({ symbol, file, depth }) => ({
+    content: [{
+      type: "text" as const,
+      text: await explain({ rootDir: ROOT_DIR, symbol, file, depth }),
     }],
   })),
 );
