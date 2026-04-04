@@ -21,6 +21,7 @@ dist/
 
 # Development
 .mcp_data/
+.contextplus/
 .turbo/
 .wrangler/
 npm-debug.log
