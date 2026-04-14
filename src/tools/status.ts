@@ -8,6 +8,8 @@ import { exec } from "child_process";
 import { promisify } from "util";
 import { extname } from "path";
 import { loadProjectConfig } from "../core/project-config.js";
+import { getIndexState } from "../core/context-metadata.js";
+import { getToolTimingSnapshots } from "../core/tool-metrics.js";
 
 const execAsync = promisify(exec);
 
@@ -30,6 +32,14 @@ export interface StatusSnapshot {
     indexed: number;
     staleRemoved: number;
   };
+  index: {
+    generation: number;
+    lastIndexedAt: string | null;
+    lastReindexAt: string | null;
+    lastReindexDurationMs: number | null;
+    autoHubCount: number | null;
+    state: "empty" | "fresh";
+  };
   memory: {
     nodes: number;
     edges: number;
@@ -38,6 +48,9 @@ export interface StatusSnapshot {
     branch: string;
     uncommitted: number;
     recentCommits: string[];
+  };
+  tools: {
+    timings: ReturnType<typeof getToolTimingSnapshots>;
   };
   warnings: string[];
 }
@@ -81,16 +94,19 @@ export async function getStatusData(options: StatusOptions): Promise<StatusSnaps
   const allFiles = entries.filter((e) => !e.isDirectory);
   const sourceFiles = allFiles.filter((e) => isSupportedFile(e.path));
 
-  const db = await getDB(options.rootDir);
+  const [db, git, config, indexState] = await Promise.all([
+    getDB(options.rootDir),
+    gitInfo(options.rootDir),
+    loadProjectConfig(options.rootDir),
+    getIndexState(options.rootDir),
+  ]);
   const indexedFiles = db.getAllFiles();
   const graphStats = db.getGraphStats();
-  const git = await gitInfo(options.rootDir);
-  const config = await loadProjectConfig(options.rootDir);
-
   const staleCount = indexedFiles.filter((f) => !allFiles.some((e) => e.relativePath === f.path)).length;
   const warnings: string[] = [];
   if (indexedFiles.length === 0) warnings.push("Index is empty. Run reindex to populate the database.");
   else if (staleCount > 5) warnings.push(`${staleCount} files stale or removed. Run reindex to refresh.`);
+
   return {
     repo: {
       root: options.rootDir,
@@ -105,11 +121,22 @@ export async function getStatusData(options: StatusOptions): Promise<StatusSnaps
       indexed: indexedFiles.length,
       staleRemoved: staleCount,
     },
+    index: {
+      generation: indexState.generation,
+      lastIndexedAt: indexState.lastIndexedAt,
+      lastReindexAt: indexState.lastReindexAt,
+      lastReindexDurationMs: indexState.lastReindexDurationMs,
+      autoHubCount: indexState.autoHubCount,
+      state: indexState.state,
+    },
     memory: {
       nodes: graphStats.totalNodes,
       edges: graphStats.totalEdges,
     },
     git,
+    tools: {
+      timings: getToolTimingSnapshots(options.rootDir),
+    },
     warnings,
   };
 }
@@ -136,6 +163,12 @@ export async function getStatus(options: StatusOptions): Promise<string> {
     `Indexed in DB: ${snapshot.files.indexed}`,
     `Stale/removed: ${snapshot.files.staleRemoved}`,
     ``,
+    `--- Index ---`,
+    `Generation: ${snapshot.index.generation}`,
+    `Last indexed: ${snapshot.index.lastIndexedAt ?? "unknown"}`,
+    `Last full reindex: ${snapshot.index.lastReindexAt ?? "unknown"} (${snapshot.index.lastReindexDurationMs ?? 0}ms)`,
+    `Auto hubs: ${snapshot.index.autoHubCount ?? 0}`,
+    ``,
     `--- Memory Graph ---`,
     `Nodes: ${snapshot.memory.nodes}`,
     `Edges: ${snapshot.memory.edges}`,
@@ -146,6 +179,13 @@ export async function getStatus(options: StatusOptions): Promise<string> {
   ];
 
   for (const c of snapshot.git.recentCommits) lines.push(`  ${c}`);
+  if (snapshot.tools.timings.length > 0) {
+    lines.push("");
+    lines.push("--- Tool Timings ---");
+    for (const timing of snapshot.tools.timings.slice(0, 8)) {
+      lines.push(`  ${timing.tool}: avg ${timing.avgMs}ms | last ${timing.lastMs}ms | calls ${timing.calls} | errors ${timing.errors}`);
+    }
+  }
   if (snapshot.warnings.length > 0) {
     lines.push(``);
     for (const warning of snapshot.warnings) lines.push(`⚠ ${warning}`);

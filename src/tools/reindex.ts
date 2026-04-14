@@ -8,6 +8,7 @@ import { readFile, stat } from "fs/promises";
 import { resolve, extname, dirname, relative } from "path";
 import { invalidateSearchCache } from "./semantic-search.js";
 import { invalidateIdentifierSearchCache } from "./semantic-identifiers.js";
+import { autoGenerateHubData } from "./feature-hub.js";
 
 export interface ReindexOptions {
   rootDir: string;
@@ -116,16 +117,28 @@ export async function reindex(options: ReindexOptions): Promise<string> {
   const removed = options.targetPath ? [] : db.getRemovedFiles(currentPaths);
   for (const path of removed) db.deleteFile(path);
 
+  let autoHubCount = 0;
+  if (!options.targetPath) {
+    const hubResult = await autoGenerateHubData(options.rootDir).catch(() => null);
+    autoHubCount = hubResult?.generated.length ?? 0;
+  }
+
+  const duration = Date.now() - start;
+  db.bumpIndexGeneration();
+  db.setMeta("last_reindex_at", String(Date.now()));
+  db.setMeta("last_reindex_duration_ms", String(duration));
+  db.setMeta("last_auto_hub_count", String(autoHubCount));
+
   invalidateSearchCache();
   invalidateIdentifierSearchCache();
 
-  const duration = Date.now() - start;
   const lines = [
     `Reindex complete in ${duration}ms`,
     `  Files: ${files.length} total, ${indexed} indexed, ${skipped} skipped, ${removed.length} removed`,
     `  Symbols: ${totalSymbols} extracted`,
     `  Imports: ${totalImports} resolved`,
   ];
+  if (!options.targetPath) lines.push(`  Auto hubs: ${autoHubCount}`);
   if (options.force) lines.push("  Mode: force (all files re-processed)");
   if (options.targetPath) lines.push(`  Scope: ${options.targetPath}`);
 
@@ -167,9 +180,18 @@ export async function quickRefresh(rootDir: string): Promise<{ staleCount: numbe
         db.upsertSymbols(fileId, flatSymbols.map((s) => ({
           name: s.name, kind: s.kind, lineStart: s.line, lineEnd: s.endLine, signature: s.signature,
         })));
+        const imports = extractImports(content, fullPath);
+        for (const imp of imports) {
+          const targetRel = resolveImportPath(imp.source, path, currentPaths, rootDir);
+          const targetFile = targetRel ? db.getFile(targetRel) : null;
+          db.upsertImport(fileId, imp.source, targetFile?.id ?? null, imp.type, imp.specifiers.length > 0 ? imp.specifiers : undefined);
+        }
       } catch {}
     }
     for (const path of removed) db.deleteFile(path);
+    db.bumpIndexGeneration();
+    db.setMeta("last_reindex_at", String(Date.now()));
+    db.setMeta("last_reindex_duration_ms", "0");
     return { staleCount: totalStale, refreshed: true };
   }
 

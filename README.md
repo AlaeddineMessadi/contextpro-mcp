@@ -13,10 +13,12 @@ https://github.com/user-attachments/assets/a97a451f-c9b4-468d-b036-15b65fc13e79
 | Tool        | Description                                                                                                                                                      |
 | ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `health`    | Startup health for the active repo, including project identity, Node ABI, native storage readiness, and database openability.                                   |
+| `artifact_list` | List recent reusable context artifacts generated for this project so agents can reuse prior repo maps, searches, and task packets.                         |
+| `artifact_read` | Load a previously generated context artifact by ID instead of regenerating the same context packet.                                                        |
 | `repo_map`  | Compact whole-repo outline with important files and top-level symbols. Designed to give agents first-turn orientation with low token usage.                     |
 | `tree`      | Structural AST tree of a project with file headers and symbol ranges (line numbers for functions/classes/methods). Dynamic pruning shrinks output automatically. |
 | `skeleton`  | Function signatures, class methods, and type definitions with line ranges, without reading full bodies. Shows the API surface.                                   |
-| `search`    | Search by meaning with modes: `file` (headers/symbols), `identifier` (functions/classes with call chains), or `hybrid` (both). Uses embeddings + keyword scoring. |
+| `search`    | Search by meaning with modes: `file` (headers/symbols), `identifier` (functions/classes with call chains), or `hybrid` (both). Uses embeddings + keyword scoring and returns trust/freshness metadata in JSON mode. |
 | `resolve_symbol` | Resolve an identifier to the most likely definition with ambiguity scoring and file-context-aware ranking.                                                |
 | `cluster`   | Browse codebase by meaning using spectral clustering. Groups semantically related files into labeled clusters.                                                   |
 
@@ -25,15 +27,15 @@ https://github.com/user-attachments/assets/a97a451f-c9b4-468d-b036-15b65fc13e79
 | Tool           | Description                                                                                                                      |
 | -------------- | -------------------------------------------------------------------------------------------------------------------------------- |
 | `blast_radius` | Trace every file and line where a symbol is imported or used. Prevents orphaned references.                                      |
-| `status`       | Project overview dashboard with repo identity, index counts, memory graph stats, and git state.                                 |
+| `status`       | Project overview dashboard with repo identity, index generations, memory graph stats, git state, and recent per-tool timing stats. |
 | `diff`         | Structured git diff summary with changed files, line counts, and affected symbols.                                               |
 | `related`      | Show related files via imports, importers, sibling files, tests, and hubs.                                                      |
 | `test_map`     | Map a source file or symbol to likely tests.                                                                                     |
 | `explain`      | Extract one symbol body and its immediate call dependencies without loading an entire file.                                      |
-| `task_pack`    | Assemble the minimum useful working set for a task: ranked files, tests, diffs, memory, and risks.                             |
-| `change_impact`| Estimate what could break if files or symbols change, including related files and tests.                                        |
-| `edit_scope`   | Identify the smallest likely safe edit set for a task.                                                                           |
-| `decision_brief` | Compress a subsystem into a short decision-oriented brief with ranked files, symbols, tests, and memory.                      |
+| `task_pack`    | Assemble the minimum useful working set for a task: ranked files, tests, diffs, memory, risks, and reusable artifact ids.      |
+| `change_impact`| Estimate what could break if files or symbols change, using resolver-aware evidence, related files, tests, churn, and reasons. |
+| `edit_scope`   | Identify the smallest likely safe edit set for a task, with confidence and artifact ids in JSON mode.                           |
+| `decision_brief` | Compress a subsystem into a short decision-oriented brief with ranked files, symbols, tests, hubs, memory, and artifact ids. |
 | `lint`         | Auto-detects and runs project linters (tsc, eslint, ruff, cargo check, go vet). Plus skill score checking for code quality.      |
 
 ### Code Ops
@@ -236,11 +238,12 @@ Three layers built with TypeScript over stdio using the Model Context Protocol S
 
 **Core** (`src/core/`) - Multi-language AST parsing (tree-sitter, 43 extensions), nested gitignore-aware traversal with `.contextplusignore` support, multi-provider vector embeddings with parallel batching, SQLite + sqlite-vec storage, wikilink hub graph, in-memory property graph with decay scoring, import extraction for dependency graphs.
 
-**Tools** (`src/tools/`) - 31 MCP tools exposing startup diagnostics, structural discovery, task planning, operational memory, and change analysis.
-
 **Git** (`src/git/`) - Shadow restore point system for undo without touching git history.
 
-**Data** (`.contextplus/`) - Project-scoped directory created on startup. Contains `index.db` (SQLite with vector search), `config.json`, `hubs/` (auto-generated feature hubs), and `backups/` (shadow restore points). Each project gets its own isolated `.contextplus/` directory — no cross-project data sharing.
+**Tools** (`src/tools/`) - 33 MCP tools exposing startup diagnostics, structural discovery, task planning, reusable artifacts, operational memory, and change analysis.
+Agent-facing JSON tools include repo identity, freshness, confidence, evidence, ambiguities, and stable artifact IDs for reuse across turns.
+
+**Data** (`.contextplus/`) - Project-scoped directory created on startup. Contains `index.db` (SQLite with vector search), `config.json`, `artifacts/` (reusable JSON context packets), `hubs/` (auto-generated feature hubs), and `backups/` (shadow restore points). Each project gets its own isolated `.contextplus/` directory — no cross-project data sharing.
 
 ## Config
 

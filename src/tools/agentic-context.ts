@@ -10,11 +10,23 @@ import { createPromotedPattern, listPromotedPatterns, listRegisteredWorkspaces, 
 import { unifiedSearchData } from "./search.js";
 import { walkDirectory } from "../core/walker.js";
 import { discoverHubs, parseHubFile } from "../core/hub.js";
-import { basename, join } from "path";
+import { basename, dirname, join } from "path";
+import { persistArtifact } from "../core/artifacts.js";
+import { buildFreshnessMetadata, buildTrustMetadata, getIndexState } from "../core/context-metadata.js";
+import { resolveSymbolData } from "./resolve-symbol.js";
 
 const execAsync = promisify(exec);
 
 type OutputFormat = "text" | "json";
+
+interface AgentRepoMetadata {
+  root: string;
+  projectId: string | null;
+  clientId: string | null;
+  fingerprint: string | null;
+  staleFiles: number;
+  indexGeneration: number;
+}
 
 export interface TaskPackOptions {
   rootDir: string;
@@ -89,8 +101,65 @@ function parseMetadata(raw: string): Record<string, string> {
   }
 }
 
+function parseJsonArray(raw: string | null): string[] {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.map((value) => String(value)) : [];
+  } catch {
+    return [];
+  }
+}
+
 function unique<T>(items: T[]): T[] {
   return Array.from(new Set(items));
+}
+
+function upsertRanked<T extends { path: string; score: number; kind: string }>(map: Map<string, T>, value: T): void {
+  const existing = map.get(value.path);
+  if (!existing || value.score > existing.score) map.set(value.path, value);
+}
+
+function normalizeConfidence(score: number): number {
+  return Math.max(0.1, Math.min(0.99, Number(score.toFixed(2))));
+}
+
+function buildRepoMetadata(input: {
+  rootDir: string;
+  projectId?: string | null;
+  clientId?: string | null;
+  fingerprint?: string | null;
+  staleFiles: number;
+  indexGeneration: number;
+}): AgentRepoMetadata {
+  return {
+    root: input.rootDir,
+    projectId: input.projectId ?? null,
+    clientId: input.clientId ?? null,
+    fingerprint: input.fingerprint ?? null,
+    staleFiles: input.staleFiles,
+    indexGeneration: input.indexGeneration,
+  };
+}
+
+async function persistAgentArtifact<T>(input: {
+  rootDir: string;
+  kind: string;
+  key: string;
+  repo: AgentRepoMetadata;
+  payload: T;
+  metadata?: Record<string, string>;
+}) {
+  return persistArtifact({
+    rootDir: input.rootDir,
+    kind: input.kind,
+    key: input.key,
+    repoFingerprint: input.repo.fingerprint,
+    projectId: input.repo.projectId,
+    clientId: input.repo.clientId,
+    metadata: input.metadata,
+    payload: input.payload,
+  });
 }
 
 function inferProjectSummary(task: string, filePaths: string[]): string {
@@ -208,6 +277,18 @@ async function findTextDependents(rootDir: string, filePath: string, symbolNames
   return unique(matches);
 }
 
+async function scanExactMentions(rootDir: string, candidateFiles: string[], symbolNames: string[]): Promise<string[]> {
+  if (candidateFiles.length === 0 || symbolNames.length === 0) return [];
+  const matches: string[] = [];
+  for (const candidate of candidateFiles) {
+    try {
+      const content = await readFile(join(rootDir, candidate), "utf-8");
+      if (symbolNames.some((symbol) => content.includes(symbol))) matches.push(candidate);
+    } catch {}
+  }
+  return unique(matches);
+}
+
 function formatMaybeJson(format: OutputFormat | undefined, value: unknown, textRenderer: () => string): string {
   if (format === "json") return JSON.stringify(value, null, 2);
   return textRenderer();
@@ -250,12 +331,13 @@ export async function buildTaskPack(options: TaskPackOptions): Promise<string> {
     query: options.task,
     mode: "hybrid",
     topK: maxFiles,
+    persistArtifact: false,
   });
   const fileResults = search.files?.results ?? [];
   const identifierResults = search.identifiers?.results ?? [];
   const topFiles = fileResults.slice(0, maxFiles).map((item) => ({
     path: item.path,
-    reason: "Top semantic and structural match",
+    reason: `Top semantic and structural match (${Math.round(item.semanticScore)} semantic / ${Math.round(item.keywordScore)} keyword)`,
     score: item.score / 100,
     symbols: item.matchedSymbols,
   }));
@@ -270,14 +352,36 @@ export async function buildTaskPack(options: TaskPackOptions): Promise<string> {
     ...(tests.length === 0 ? ["No nearby tests found for top-ranked files"] : []),
     ...(search.freshness.warning ? [search.freshness.warning] : []),
   ];
-  const payload = {
-    repo: {
-      root: search.repo.root,
-      projectId: search.repo.projectId,
-      clientId: search.repo.clientId,
-      fingerprint: search.repo.fingerprint,
-      staleFiles: search.freshness.staleCount,
-    },
+  const repo = buildRepoMetadata({
+    rootDir: search.repo.root,
+    projectId: search.repo.projectId,
+    clientId: search.repo.clientId,
+    fingerprint: search.repo.fingerprint,
+    staleFiles: search.freshness.staleCount,
+    indexGeneration: search.freshness.indexGeneration,
+  });
+  const evidence = [
+    ...search.trust.evidence,
+    `${topFiles.length} ranked task files`,
+    ...(tests.length > 0 ? [`${tests.length} nearby tests`] : []),
+    ...(recentDiffs.length > 0 ? [`${recentDiffs.length} recent diffs`] : []),
+    ...(memory.length > 0 ? [`${memory.length} project memory hits`] : []),
+  ];
+  const ambiguities = [
+    ...search.trust.ambiguities,
+    ...(topFiles.length === 0 ? ["task pack could not rank any files"] : []),
+    ...(topFiles.length > 1 && Math.abs((topFiles[0]?.score ?? 0) - (topFiles[1]?.score ?? 0)) < 0.06 ? ["top task files are close in score"] : []),
+  ];
+  const partial = {
+    repo,
+    freshness: search.freshness,
+    trust: buildTrustMetadata({
+      baseConfidence: topFiles.length > 0 ? 0.79 : 0.34,
+      freshness: search.freshness,
+      evidence,
+      ambiguities,
+      artifact: null,
+    }),
     summary: inferProjectSummary(options.task, filePaths),
     files: topFiles,
     tests,
@@ -285,14 +389,41 @@ export async function buildTaskPack(options: TaskPackOptions): Promise<string> {
     memory,
     risks,
   };
+  const artifact = await persistAgentArtifact({
+    rootDir: options.rootDir,
+    kind: "task_pack",
+    key: JSON.stringify({
+      task: options.task,
+      maxFiles,
+      includeTests: options.includeTests !== false,
+      includeRecentDiffs: options.includeRecentDiffs !== false,
+      includeMemory: options.includeMemory !== false,
+    }),
+    repo,
+    payload: partial,
+    metadata: {
+      task: options.task,
+    },
+  });
+  const payload = {
+    ...partial,
+    trust: buildTrustMetadata({
+      baseConfidence: topFiles.length > 0 ? 0.79 : 0.34,
+      freshness: search.freshness,
+      evidence,
+      ambiguities,
+      artifact,
+    }),
+  };
   return formatMaybeJson(options.format, payload, () => {
     const lines = [
       `Task Pack: ${options.task}`,
       `Repo: ${search.repo.projectId ?? "unknown"} | Root: ${search.repo.root}`,
+      artifact ? `Artifact: ${artifact.id}` : "",
       `Summary: ${payload.summary}`,
       "",
       "Files:",
-    ];
+    ].filter(Boolean);
     for (const file of payload.files) {
       lines.push(`  ${file.path} (${Math.round(file.score * 100)}%) - ${file.reason}`);
       if (file.symbols.length > 0) lines.push(`    Symbols: ${file.symbols.join(", ")}`);
@@ -322,43 +453,84 @@ export async function buildTaskPack(options: TaskPackOptions): Promise<string> {
 }
 
 export async function buildChangeImpact(options: ChangeImpactOptions): Promise<string> {
-  const inputFiles = unique([...(options.files ?? []), ...(await resolveFilesFromSymbols(options.rootDir, options.symbols))]);
+  const resolvedSymbols = await Promise.all((options.symbols ?? []).map(async (symbol) => ({
+    symbol,
+    resolution: await resolveSymbolData({
+      rootDir: options.rootDir,
+      symbolName: symbol,
+      limit: 5,
+    }).catch(() => null),
+  })));
+  const resolvedFiles = resolvedSymbols
+    .map((item) => item.resolution?.bestMatch?.path)
+    .filter((path): path is string => Boolean(path));
+  const fallbackFiles = await resolveFilesFromSymbols(options.rootDir, options.symbols);
+  const inputFiles = unique([...(options.files ?? []), ...resolvedFiles, ...fallbackFiles]);
   const db = await getDB(options.rootDir);
   const indexedFiles = db.getAllFiles();
-  const affected = new Map<string, { path: string; kind: string; score: number }>();
+  const indexState = await getIndexState(options.rootDir);
+  const freshness = buildFreshnessMetadata(indexState, {
+    staleCount: 0,
+    refreshed: false,
+    warning: inputFiles.length === 0 ? "No files resolved for impact analysis." : null,
+  });
+  const affected = new Map<string, { path: string; kind: string; score: number; reason: string }>();
   const reasons: string[] = [];
   const targetTests = options.includeTests === false ? [] : await findTestsForFiles(options.rootDir, inputFiles);
+  const publicSurface = unique([
+    ...(options.symbols ?? []),
+    ...resolvedSymbols.map((item) => item.resolution?.bestMatch?.name).filter((name): name is string => Boolean(name)),
+  ]);
 
   for (const file of inputFiles) {
     const dbFile = db.getFile(file);
     if (!dbFile) continue;
     const importers = db.getImportersOf(dbFile.id);
     const imports = db.getImportsFrom(dbFile.id);
+    const fileSymbols = unique(db.getSymbolsByFile(dbFile.id).map((symbol) => symbol.name)).slice(0, 8);
+    const relevantSymbols = unique([...(options.symbols ?? []), ...fileSymbols]);
     if (importers.length > 0) reasons.push(`${file} has ${importers.length} importers`);
     for (const importer of importers) {
       const source = indexedFiles.find((candidate) => candidate.id === importer.source_file_id);
       if (!source) continue;
-      affected.set(source.path, {
+      const importedSymbols = parseJsonArray(importer.symbols_imported);
+      const symbolOverlap = importedSymbols.filter((symbol) => relevantSymbols.includes(symbol));
+      upsertRanked(affected, {
         path: source.path,
-        kind: /\.test\.\w+$|\.spec\.\w+$|\.demo\.\w+$/.test(source.path) ? "test_importer" : "importer",
-        score: Math.min(0.95, 0.55 + importers.length * 0.08),
+        kind: /\.test\.\w+$|\.spec\.\w+$|\.demo\.\w+$/.test(source.path)
+          ? "test_importer"
+          : symbolOverlap.length > 0
+            ? "symbol_importer"
+            : "importer",
+        score: Math.min(0.96, symbolOverlap.length > 0 ? 0.9 : 0.72 + importers.length * 0.04),
+        reason: symbolOverlap.length > 0
+          ? `Imports ${symbolOverlap.join(", ")} from ${file}`
+          : `Imports ${file}`,
       });
     }
     for (const imp of imports) {
       const target = indexedFiles.find((candidate) => candidate.id === imp.target_file_id);
       if (!target) continue;
-      affected.set(target.path, {
+      upsertRanked(affected, {
         path: target.path,
         kind: "dependency",
         score: 0.42,
+        reason: `${file} depends on ${target.path}`,
       });
     }
-    const textDependents = await findTextDependents(options.rootDir, file, options.symbols ?? []);
-    for (const dependent of textDependents) {
-      affected.set(dependent, {
+    const candidateMentionFiles = unique([
+      ...importers.map((importer) => indexedFiles.find((candidate) => candidate.id === importer.source_file_id)?.path ?? "").filter(Boolean),
+      ...targetTests.map((test) => test.path),
+      ...indexedFiles.filter((candidate) => dirname(candidate.path) === dirname(file)).map((candidate) => candidate.path),
+    ]);
+    const exactMentions = await scanExactMentions(options.rootDir, candidateMentionFiles, relevantSymbols);
+    for (const dependent of exactMentions) {
+      if (dependent === file) continue;
+      upsertRanked(affected, {
         path: dependent,
-        kind: /\.test\.\w+$|\.spec\.\w+$|\.demo\.\w+$/.test(dependent) ? "text_test_match" : "text_match",
-        score: 0.48,
+        kind: /\.test\.\w+$|\.spec\.\w+$|\.demo\.\w+$/.test(dependent) ? "symbol_test_match" : "symbol_reference",
+        score: /\.test\.\w+$|\.spec\.\w+$|\.demo\.\w+$/.test(dependent) ? 0.78 : 0.58,
+        reason: `Exact mention of ${relevantSymbols.find((symbol) => symbol && exactMentions.includes(dependent)) ? "target symbol" : "target file context"}`,
       });
     }
   }
@@ -368,27 +540,88 @@ export async function buildChangeImpact(options: ChangeImpactOptions): Promise<s
   const totalChurn = options.includeRecentChurn === false ? 0 : riskDetails.reduce((sum, detail) => sum + detail.churn, 0);
   if (targetTests.length === 0) reasons.push("No nearby regression tests found");
   if (totalChurn > 0) reasons.push(`Recent churn count: ${totalChurn}`);
-  const riskScore = Math.min(0.99, 0.25 + totalImporters * 0.08 + (targetTests.length === 0 ? 0.15 : 0) + Math.min(totalChurn, 10) * 0.03);
-  const payload = {
+  const fanOut = totalImporters;
+  const blastRadius = affected.size;
+  const riskScore = Math.min(0.99, 0.28 + fanOut * 0.07 + (targetTests.length === 0 ? 0.14 : 0) + Math.min(totalChurn, 10) * 0.025 + Math.min(blastRadius, 12) * 0.015);
+  const config = await loadProjectConfig(options.rootDir);
+  const repo = buildRepoMetadata({
+    rootDir: options.rootDir,
+    projectId: config?.projectId ?? null,
+    clientId: config?.clientId ?? null,
+    fingerprint: config?.repoFingerprint ?? null,
+    staleFiles: 0,
+    indexGeneration: freshness.indexGeneration,
+  });
+  const evidence = [
+    ...resolvedSymbols
+      .filter((item) => item.resolution?.bestMatch)
+      .map((item) => `${item.symbol} resolved to ${item.resolution?.bestMatch?.path}`),
+    ...(fanOut > 0 ? [`${fanOut} direct importers`] : []),
+    ...(targetTests.length > 0 ? [`${targetTests.length} nearby tests`] : []),
+    ...(blastRadius > 0 ? [`${blastRadius} structurally related files`] : []),
+  ];
+  const ambiguities = [
+    ...resolvedSymbols
+      .filter((item) => item.resolution?.ambiguous)
+      .map((item) => `${item.symbol} resolved ambiguously`),
+    ...(inputFiles.length === 0 ? ["no files resolved for impact analysis"] : []),
+  ];
+  const partial = {
+    repo,
+    freshness,
+    trust: buildTrustMetadata({
+      baseConfidence: inputFiles.length > 0 ? 0.76 : 0.24,
+      freshness,
+      evidence,
+      ambiguities,
+      artifact: null,
+    }),
     riskScore,
     impactSummary: inputFiles.length > 0
-      ? `Changes may affect ${affected.size} related files around ${inputFiles.join(", ")}.`
+      ? `Changes may affect ${affected.size} structurally related files around ${inputFiles.join(", ")}.`
       : "No files resolved for impact analysis.",
     affectedFiles: [...affected.values()].sort((a, b) => b.score - a.score),
     affectedTests: targetTests,
-    publicSurface: unique(options.symbols ?? []),
+    publicSurface,
     reasons: unique(reasons),
+  };
+  const artifact = await persistAgentArtifact({
+    rootDir: options.rootDir,
+    kind: "change_impact",
+    key: JSON.stringify({
+      files: options.files ?? [],
+      symbols: options.symbols ?? [],
+      includeTests: options.includeTests !== false,
+      includeRecentChurn: options.includeRecentChurn !== false,
+    }),
+    repo,
+    payload: partial,
+    metadata: {
+      files: inputFiles.join(","),
+      symbols: publicSurface.join(","),
+    },
+  });
+  const payload = {
+    ...partial,
+    trust: buildTrustMetadata({
+      baseConfidence: inputFiles.length > 0 ? 0.76 : 0.24,
+      freshness,
+      evidence,
+      ambiguities,
+      artifact,
+    }),
   };
   return formatMaybeJson(options.format, payload, () => {
     const lines = [
       `Change Impact`,
       `Risk Score: ${Math.round(payload.riskScore * 100)}%`,
+      artifact ? `Artifact: ${artifact.id}` : "",
       `Summary: ${payload.impactSummary}`,
       "",
       "Affected Files:",
-    ];
+    ].filter(Boolean);
     for (const file of payload.affectedFiles.slice(0, 12)) {
-      lines.push(`  ${file.path} [${file.kind}] (${Math.round(file.score * 100)}%)`);
+      lines.push(`  ${file.path} [${file.kind}] (${Math.round(file.score * 100)}%) - ${file.reason}`);
     }
     if (payload.affectedTests.length > 0) {
       lines.push("");
@@ -413,6 +646,7 @@ export async function buildEditScope(options: EditScopeOptions): Promise<string>
     query: options.task,
     mode: "hybrid",
     topK: Math.max(maxFiles, 5),
+    persistArtifact: false,
   });
   const recommendedScope = search.files?.results.slice(0, options.preferSmallestScope === false ? maxFiles : Math.min(maxFiles, 3)).map((file) => ({
     path: file.path,
@@ -432,7 +666,33 @@ export async function buildEditScope(options: EditScopeOptions): Promise<string>
     action: "review_only",
     confidence: Math.min(0.85, 0.35 + item.score / 100),
   })).filter((item) => !recommendedScope.some((recommended) => recommended.path === item.path)) ?? [];
-  const payload = {
+  const repo = buildRepoMetadata({
+    rootDir: search.repo.root,
+    projectId: search.repo.projectId,
+    clientId: search.repo.clientId,
+    fingerprint: search.repo.fingerprint,
+    staleFiles: search.freshness.staleCount,
+    indexGeneration: search.freshness.indexGeneration,
+  });
+  const evidence = [
+    ...search.trust.evidence,
+    `${recommendedScope.length} recommended files in edit scope`,
+    ...(tests.length > 0 ? [`${tests.length} nearby tests considered`] : []),
+  ];
+  const ambiguities = [
+    ...search.trust.ambiguities,
+    ...(recommendedScope.length === 0 ? ["edit scope could not recommend source files"] : []),
+  ];
+  const partial = {
+    repo,
+    freshness: search.freshness,
+    trust: buildTrustMetadata({
+      baseConfidence: recommendedScope.length > 0 ? 0.78 : 0.31,
+      freshness: search.freshness,
+      evidence,
+      ambiguities,
+      artifact: null,
+    }),
     recommendedScope,
     optionalScope,
     scopeRationale: [
@@ -440,12 +700,37 @@ export async function buildEditScope(options: EditScopeOptions): Promise<string>
       tests.length > 0 ? "Nearby tests were included because they are the cheapest validation surface." : "No nearby tests were detected, so only source files are recommended.",
     ],
   };
+  const artifact = await persistAgentArtifact({
+    rootDir: options.rootDir,
+    kind: "edit_scope",
+    key: JSON.stringify({
+      task: options.task,
+      maxFiles,
+      preferSmallestScope: options.preferSmallestScope !== false,
+    }),
+    repo,
+    payload: partial,
+    metadata: {
+      task: options.task,
+    },
+  });
+  const payload = {
+    ...partial,
+    trust: buildTrustMetadata({
+      baseConfidence: recommendedScope.length > 0 ? 0.78 : 0.31,
+      freshness: search.freshness,
+      evidence,
+      ambiguities,
+      artifact,
+    }),
+  };
   return formatMaybeJson(options.format, payload, () => {
     const lines = [
       `Edit Scope: ${options.task}`,
+      artifact ? `Artifact: ${artifact.id}` : "",
       "",
       "Recommended:",
-    ];
+    ].filter(Boolean);
     for (const item of recommendedScope) lines.push(`  ${item.path} [${item.action}] (${Math.round(item.confidence * 100)}%)`);
     if (optionalScope.length > 0) {
       lines.push("");
@@ -465,6 +750,7 @@ export async function buildDecisionBrief(options: DecisionBriefOptions): Promise
     query: options.query,
     mode: "hybrid",
     topK: 5,
+    persistArtifact: false,
   });
   const filesToReadFirst = search.files?.results.slice(0, 4).map((item) => item.path) ?? [];
   const memory = options.includeMemory === false ? [] : await getProjectMemoryHits(options.rootDir, options.query, 3);
@@ -474,7 +760,34 @@ export async function buildDecisionBrief(options: DecisionBriefOptions): Promise
     ...(tests.length === 0 ? ["Which regression path validates this subsystem today?"] : []),
     ...(search.identifiers?.results.slice(0, 2).map((item) => `What behavior around ${item.name} is relied on by ${item.totalCalls} call sites?`) ?? []),
   ];
-  const payload = {
+  const repo = buildRepoMetadata({
+    rootDir: search.repo.root,
+    projectId: search.repo.projectId,
+    clientId: search.repo.clientId,
+    fingerprint: search.repo.fingerprint,
+    staleFiles: search.freshness.staleCount,
+    indexGeneration: search.freshness.indexGeneration,
+  });
+  const evidence = [
+    ...search.trust.evidence,
+    `${filesToReadFirst.length} files to read first`,
+    ...(hubs.length > 0 ? [`${hubs.length} linked hubs`] : []),
+    ...(memory.length > 0 ? [`${memory.length} memory hits`] : []),
+  ];
+  const ambiguities = [
+    ...search.trust.ambiguities,
+    ...(filesToReadFirst.length === 0 ? ["decision brief did not rank any files"] : []),
+  ];
+  const partial = {
+    repo,
+    freshness: search.freshness,
+    trust: buildTrustMetadata({
+      baseConfidence: filesToReadFirst.length > 0 ? 0.8 : 0.29,
+      freshness: search.freshness,
+      evidence,
+      ambiguities,
+      artifact: null,
+    }),
     summary: inferProjectSummary(options.query, filesToReadFirst),
     topSymbols: search.identifiers?.results.slice(0, 5).map((item) => item.name) ?? [],
     filesToReadFirst,
@@ -484,14 +797,40 @@ export async function buildDecisionBrief(options: DecisionBriefOptions): Promise
     tests: tests.slice(0, 5),
     openQuestions,
   };
+  const artifact = await persistAgentArtifact({
+    rootDir: options.rootDir,
+    kind: "decision_brief",
+    key: JSON.stringify({
+      query: options.query,
+      includeHubs: options.includeHubs !== false,
+      includeMemory: options.includeMemory !== false,
+      includeTests: options.includeTests !== false,
+    }),
+    repo,
+    payload: partial,
+    metadata: {
+      query: options.query,
+    },
+  });
+  const payload = {
+    ...partial,
+    trust: buildTrustMetadata({
+      baseConfidence: filesToReadFirst.length > 0 ? 0.8 : 0.29,
+      freshness: search.freshness,
+      evidence,
+      ambiguities,
+      artifact,
+    }),
+  };
   return formatMaybeJson(options.format, payload, () => {
     const lines = [
       `Decision Brief: ${options.query}`,
+      artifact ? `Artifact: ${artifact.id}` : "",
       `Summary: ${payload.summary}`,
       "",
       `Files To Read First: ${payload.filesToReadFirst.join(", ") || "(none)"}`,
       `Top Symbols: ${payload.topSymbols.join(", ") || "(none)"}`,
-    ];
+    ].filter(Boolean);
     if (payload.hubs.length > 0) lines.push(`Hubs: ${payload.hubs.join(", ")}`);
     if (payload.tests.length > 0) {
       lines.push("");

@@ -15,6 +15,11 @@ export interface FeatureHubOptions {
   showOrphans?: boolean;
 }
 
+export interface AutoHubResult {
+  generated: string[];
+  message: string;
+}
+
 async function fileExists(p: string): Promise<boolean> {
   try {
     await stat(p);
@@ -40,7 +45,14 @@ export async function getFeatureHub(options: FeatureHubOptions): Promise<string>
   const out: string[] = [];
 
   if (!options.hubPath && !options.featureName && !showOrphans) {
-    const hubs = await discoverHubs(rootDir);
+    let hubs = await discoverHubs(rootDir);
+    if (hubs.length === 0) {
+      const generated = await autoGenerateHubData(rootDir);
+      hubs = await discoverHubs(rootDir);
+      if (hubs.length === 0) {
+        return generated.message;
+      }
+    }
     if (hubs.length === 0) {
       return "No hub files found. Create a .md file with [[path/to/file]] links to establish a feature hub.";
     }
@@ -224,7 +236,7 @@ function generateHubName(component: string[], entryPoint: string): string {
   return entryName.replace(/[^a-zA-Z0-9-_]/g, "-").toLowerCase();
 }
 
-export async function autoGenerateHubs(rootDir: string): Promise<string> {
+export async function autoGenerateHubData(rootDir: string): Promise<AutoHubResult> {
   const entries = await walkDirectory({ rootDir, depthLimit: 10 });
   const sourceExts = new Set([".ts", ".tsx", ".js", ".jsx", ".py", ".rs", ".go"]);
   const sourceFiles = entries.filter((e) => !e.isDirectory && sourceExts.has(extname(e.path)));
@@ -253,7 +265,10 @@ export async function autoGenerateHubs(rootDir: string): Promise<string> {
   const significantComponents = components.filter((c) => c.length >= 3);
 
   if (significantComponents.length === 0) {
-    return "No significant clusters found (minimum 3 connected files). Import graph too sparse.";
+    return {
+      generated: [],
+      message: "No significant clusters found (minimum 3 connected files). Import graph too sparse.",
+    };
   }
 
   const hubDir = resolve(rootDir, ".contextplus", "hubs");
@@ -299,5 +314,13 @@ export async function autoGenerateHubs(rootDir: string): Promise<string> {
     generated.push(`${finalName}.md (${component.length} files, entry: ${entryPoint})`);
   }
 
-  return `Auto-generated ${generated.length} feature hubs in .contextplus/hubs/:\n\n${generated.map((g) => `  - ${g}`).join("\n")}`;
+  return {
+    generated,
+    message: `Auto-generated ${generated.length} feature hubs in .contextplus/hubs/:\n\n${generated.map((g) => `  - ${g}`).join("\n")}`,
+  };
+}
+
+export async function autoGenerateHubs(rootDir: string): Promise<string> {
+  const result = await autoGenerateHubData(rootDir);
+  return result.message;
 }

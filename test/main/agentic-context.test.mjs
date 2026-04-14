@@ -96,6 +96,8 @@ describe("agentic-context", () => {
     }));
 
     assert.equal(taskPack.repo.projectId, "auth-fixture");
+    assert.ok(taskPack.trust.artifact.id.startsWith("task_pack-"));
+    assert.ok(taskPack.freshness.indexGeneration >= 1);
     assert.ok(taskPack.files.some((file) => file.path.includes("session.ts")));
     assert.ok(taskPack.tests.some((test) => test.path.includes("session.test.ts")));
 
@@ -105,7 +107,9 @@ describe("agentic-context", () => {
       format: "json",
     }));
 
+    assert.ok(impact.trust.artifact.id.startsWith("change_impact-"));
     assert.ok(impact.affectedFiles.some((file) => file.path.includes("middleware.ts")));
+    assert.ok(impact.affectedFiles.every((file) => file.kind !== "text_match"));
     assert.ok(Array.isArray(impact.affectedTests));
   });
 

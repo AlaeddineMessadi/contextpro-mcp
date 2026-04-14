@@ -3,6 +3,9 @@
 
 import { resolve } from "path";
 import { getDB, type FileRow, type SymbolRow } from "../core/db.js";
+import { loadProjectConfig } from "../core/project-config.js";
+import { persistArtifact } from "../core/artifacts.js";
+import { buildFreshnessMetadata, buildTrustMetadata, getIndexState, type TrustMetadata, type FreshnessMetadata } from "../core/context-metadata.js";
 
 export interface RepoMapOptions {
   rootDir: string;
@@ -34,12 +37,17 @@ export interface RepoMapData {
   repo: {
     root: string;
     targetPath: string | null;
+    projectId: string | null;
+    clientId: string | null;
+    fingerprint: string | null;
   };
   summary: {
     totalIndexedFiles: number;
     returnedFiles: number;
     includeSignatures: boolean;
   };
+  freshness: FreshnessMetadata;
+  trust: TrustMetadata;
   files: RepoMapFileEntry[];
 }
 
@@ -49,9 +57,18 @@ function estimateTokens(text: string): number {
   return Math.ceil(text.length / CHARS_PER_TOKEN);
 }
 
+function fileRoleBoost(path: string): number {
+  if (path === "src/index.ts") return 20;
+  if (/\/(index|main|app|server|cli)\.[a-z]+$/i.test(path)) return 12;
+  if (path.startsWith("src/tools/")) return 8;
+  if (path.startsWith("src/core/")) return -2;
+  if (path.startsWith("test/") || path.startsWith("demo/") || path.includes(".test.") || path.includes(".spec.")) return -8;
+  return 0;
+}
+
 function scoreFileImportance(dbFile: FileRow, symbols: SymbolRow[], importsFromCount: number, importedByCount: number): number {
   const topLevelCount = symbols.filter((symbol) => symbol.parent_symbol_id === null).length;
-  return importedByCount * 4 + importsFromCount * 2 + topLevelCount * 1.5 + Math.min(dbFile.symbol_count, 20) * 0.5;
+  return importedByCount * 4 + importsFromCount * 2 + topLevelCount * 1.25 + Math.min(dbFile.symbol_count, 20) * 0.25 + fileRoleBoost(dbFile.path);
 }
 
 function formatSymbolLine(symbol: RepoMapFileEntry["symbols"][number], includeSignatures: boolean): string {
@@ -63,7 +80,11 @@ function formatSymbolLine(symbol: RepoMapFileEntry["symbols"][number], includeSi
 }
 
 export async function getRepoMapData(options: RepoMapOptions): Promise<RepoMapData> {
-  const db = await getDB(options.rootDir);
+  const [db, config, indexState] = await Promise.all([
+    getDB(options.rootDir),
+    loadProjectConfig(options.rootDir),
+    getIndexState(options.rootDir),
+  ]);
   const allFiles = db.getAllFiles()
     .filter((file) => !options.targetPath || file.path.startsWith(options.targetPath));
 
@@ -97,17 +118,70 @@ export async function getRepoMapData(options: RepoMapOptions): Promise<RepoMapDa
     .sort((left, right) => right.importance - left.importance || left.path.localeCompare(right.path))
     .slice(0, options.maxFiles ?? 40);
 
-  return {
+  const freshness = buildFreshnessMetadata(indexState, {
+    staleCount: 0,
+    refreshed: false,
+    warning: indexState.state === "empty" ? "Index is empty. Run reindex to populate the repository map." : null,
+  });
+  const evidence = [
+    `${allFiles.length} indexed files available`,
+    `${files.length} high-importance files returned`,
+    ...(indexState.autoHubCount && indexState.autoHubCount > 0 ? [`${indexState.autoHubCount} auto-generated hubs available`] : []),
+  ];
+  const ambiguities = [
+    ...(files.length === 0 ? ["no indexed source files available"] : []),
+    ...(files.length > 1 && Math.abs(files[0].importance - files[1].importance) < 4 ? ["top repo map entries are close in importance"] : []),
+  ];
+  const partial: RepoMapData = {
     repo: {
       root: resolve(options.rootDir),
       targetPath: options.targetPath ?? null,
+      projectId: config?.projectId ?? null,
+      clientId: config?.clientId ?? null,
+      fingerprint: config?.repoFingerprint ?? null,
     },
     summary: {
       totalIndexedFiles: allFiles.length,
       returnedFiles: files.length,
       includeSignatures: options.includeSignatures !== false,
     },
+    freshness,
+    trust: buildTrustMetadata({
+      baseConfidence: files.length > 0 ? 0.77 : 0.28,
+      freshness,
+      evidence,
+      ambiguities,
+      artifact: null,
+    }),
     files,
+  };
+  const artifact = await persistArtifact({
+    rootDir: options.rootDir,
+    kind: "repo_map",
+    key: JSON.stringify({
+      targetPath: options.targetPath ?? null,
+      includeSignatures: options.includeSignatures !== false,
+      maxFiles: options.maxFiles ?? 40,
+      maxSymbolsPerFile: options.maxSymbolsPerFile ?? 8,
+    }),
+    repoFingerprint: partial.repo.fingerprint,
+    projectId: partial.repo.projectId,
+    clientId: partial.repo.clientId,
+    metadata: {
+      targetPath: options.targetPath ?? "",
+    },
+    payload: partial,
+  });
+
+  return {
+    ...partial,
+    trust: buildTrustMetadata({
+      baseConfidence: files.length > 0 ? 0.77 : 0.28,
+      freshness,
+      evidence,
+      ambiguities,
+      artifact,
+    }),
   };
 }
 
@@ -123,8 +197,9 @@ export async function getRepoMap(options: RepoMapOptions): Promise<string> {
     `=== Repo Map ===`,
     `Root: ${data.repo.root}`,
     `Indexed files: ${data.summary.totalIndexedFiles} | Returned: ${data.summary.returnedFiles}`,
+    data.trust.artifact ? `Artifact: ${data.trust.artifact.id}` : "",
     "",
-  ];
+  ].filter(Boolean);
 
   for (const file of data.files) {
     lines.push(`${file.path}${file.header ? ` | ${file.header}` : ""}`);

@@ -73,17 +73,24 @@ export async function parseHubFile(hubPath: string): Promise<HubInfo> {
 
 export async function discoverHubs(rootDir: string): Promise<string[]> {
   const hubs: string[] = [];
-  const skip = new Set(["node_modules", ".git", "build", "dist", ".contextplus"]);
+  const skip = new Set(["node_modules", ".git", "build", "dist"]);
 
   async function walk(dir: string): Promise<void> {
     const entries = await readdir(dir, { withFileTypes: true });
     for (const entry of entries) {
-      if (skip.has(entry.name)) continue;
       const full = join(dir, entry.name);
+      const rel = relative(rootDir, full).replace(/\\/g, "/");
 
       if (entry.isDirectory()) {
+        const isContextPlusRoot = rel === ".contextplus";
+        const isAutoHubDir = rel === ".contextplus/hubs";
+        if (skip.has(entry.name) && !isContextPlusRoot && !isAutoHubDir) continue;
+        if (entry.name.startsWith(".") && !isContextPlusRoot && !isAutoHubDir) continue;
         await walk(full);
-      } else if (entry.name.endsWith(".md")) {
+        continue;
+      }
+
+      if (entry.name.endsWith(".md")) {
         const content = await readFile(full, "utf-8");
         if (WIKILINK_RE.test(content)) {
           hubs.push(relative(rootDir, full).replace(/\\/g, "/"));

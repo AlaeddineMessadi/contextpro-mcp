@@ -3,6 +3,9 @@
 
 import { dirname, resolve } from "path";
 import { getDB, type FileRow, type SymbolRow } from "../core/db.js";
+import { loadProjectConfig } from "../core/project-config.js";
+import { persistArtifact } from "../core/artifacts.js";
+import { buildFreshnessMetadata, buildTrustMetadata, getIndexState, type FreshnessMetadata, type TrustMetadata } from "../core/context-metadata.js";
 
 export interface ResolveSymbolOptions {
   rootDir: string;
@@ -29,11 +32,16 @@ export interface ResolveSymbolData {
   repo: {
     root: string;
     fileContext: string | null;
+    projectId: string | null;
+    clientId: string | null;
+    fingerprint: string | null;
   };
   query: {
     symbolName: string;
     kind: string | null;
   };
+  freshness: FreshnessMetadata;
+  trust: TrustMetadata;
   bestMatch: ResolvedSymbolCandidate | null;
   ambiguous: boolean;
   candidates: ResolvedSymbolCandidate[];
@@ -101,7 +109,11 @@ function resolveParentName(symbol: SymbolRow, siblings: SymbolRow[]): string | n
 }
 
 export async function resolveSymbolData(options: ResolveSymbolOptions): Promise<ResolveSymbolData> {
-  const db = await getDB(options.rootDir);
+  const [db, config, indexState] = await Promise.all([
+    getDB(options.rootDir),
+    loadProjectConfig(options.rootDir),
+    getIndexState(options.rootDir),
+  ]);
   const allFiles = db.getAllFiles();
   const filesById = new Map<number, FileRow>(allFiles.map((file) => [file.id, file]));
   const currentFile = options.fileContext ? db.getFile(options.fileContext) : null;
@@ -149,19 +161,72 @@ export async function resolveSymbolData(options: ResolveSymbolOptions): Promise<
   const limited = ranked.slice(0, options.limit ?? 8);
   const bestMatch = limited[0] ?? null;
   const ambiguous = limited.length > 1 && bestMatch !== null && (bestMatch.score - limited[1].score) < 20;
-
-  return {
+  const freshness = buildFreshnessMetadata(indexState, {
+    staleCount: 0,
+    refreshed: false,
+    warning: indexState.state === "empty" ? "Index is empty. Run reindex before resolving symbols." : null,
+  });
+  const evidence = [
+    ...(bestMatch ? [`best candidate ${bestMatch.path}:L${bestMatch.line}`] : []),
+    ...(currentFile ? [`file context ${currentFile.path}`] : []),
+    ...(importedFileIds.size > 0 ? [`${importedFileIds.size} directly imported files considered`] : []),
+  ];
+  const ambiguities = [
+    ...(limited.length === 0 ? ["no symbol candidates found"] : []),
+    ...(ambiguous ? ["top symbol candidates are close in score"] : []),
+  ];
+  const partial: ResolveSymbolData = {
     repo: {
       root: resolve(options.rootDir),
       fileContext: options.fileContext ?? null,
+      projectId: config?.projectId ?? null,
+      clientId: config?.clientId ?? null,
+      fingerprint: config?.repoFingerprint ?? null,
     },
     query: {
       symbolName: options.symbolName,
       kind: options.kind ?? null,
     },
+    freshness,
+    trust: buildTrustMetadata({
+      baseConfidence: bestMatch ? (ambiguous ? 0.62 : 0.84) : 0.24,
+      freshness,
+      evidence,
+      ambiguities,
+      artifact: null,
+    }),
     bestMatch,
     ambiguous,
     candidates: limited,
+  };
+  const artifact = await persistArtifact({
+    rootDir: options.rootDir,
+    kind: "resolve_symbol",
+    key: JSON.stringify({
+      symbolName: options.symbolName,
+      fileContext: options.fileContext ?? null,
+      kind: options.kind ?? null,
+      limit: options.limit ?? 8,
+    }),
+    repoFingerprint: partial.repo.fingerprint,
+    projectId: partial.repo.projectId,
+    clientId: partial.repo.clientId,
+    metadata: {
+      symbolName: options.symbolName,
+      kind: options.kind ?? "",
+    },
+    payload: partial,
+  });
+
+  return {
+    ...partial,
+    trust: buildTrustMetadata({
+      baseConfidence: bestMatch ? (ambiguous ? 0.62 : 0.84) : 0.24,
+      freshness,
+      evidence,
+      ambiguities,
+      artifact,
+    }),
   };
 }
 
@@ -180,8 +245,9 @@ export async function resolveSymbol(options: ResolveSymbolOptions): Promise<stri
     `=== Resolve Symbol: ${options.symbolName} ===`,
     `File Context: ${data.repo.fileContext ?? "none"}`,
     `Ambiguous: ${data.ambiguous ? "yes" : "no"}`,
+    data.trust.artifact ? `Artifact: ${data.trust.artifact.id}` : "",
     "",
-  ];
+  ].filter(Boolean);
 
   for (const candidate of data.candidates) {
     lines.push(`${candidate.kind}: ${candidate.path} L${candidate.line}${candidate.endLine && candidate.endLine > candidate.line ? `-L${candidate.endLine}` : ""}`);

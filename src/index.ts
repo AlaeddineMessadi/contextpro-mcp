@@ -32,6 +32,8 @@ import { ensureProjectConfig, registerWorkspace, verifyProjectContext } from "./
 import { buildTaskPack, buildChangeImpact, buildEditScope, buildDecisionBrief, recordTaskMemory, getWorkspaceContext, promotePattern } from "./tools/agentic-context.js";
 import { formatStartupHealthReport, runStartupHealthCheck } from "./core/startup-health.js";
 import { formatDoctorReport, runDoctor } from "./core/doctor.js";
+import { listArtifacts, readArtifact } from "./core/artifacts.js";
+import { recordToolTiming } from "./core/tool-metrics.js";
 
 type AgentTarget = "claude" | "cursor" | "vscode" | "windsurf" | "opencode";
 
@@ -137,13 +139,21 @@ const ROOT_DIR = parsedCliArgs.rootDir;
 
 function withRequestActivity<TArgs, TResult>(
   handler: (args: TArgs) => Promise<TResult>,
-  options?: { useEmbeddingTracker?: boolean },
+  options?: { useEmbeddingTracker?: boolean; toolName?: string },
 ): (args: TArgs) => Promise<TResult> {
   return async (args: TArgs): Promise<TResult> => {
+    const started = Date.now();
     noteServerActivity();
     if (options?.useEmbeddingTracker) ensureTrackerRunning();
-    await verifyProjectContext(ROOT_DIR);
-    return handler(args);
+    try {
+      await verifyProjectContext(ROOT_DIR);
+      const result = await handler(args);
+      recordToolTiming(ROOT_DIR, options?.toolName ?? "unknown", Date.now() - started, "ok");
+      return result;
+    } catch (error) {
+      recordToolTiming(ROOT_DIR, options?.toolName ?? "unknown", Date.now() - started, "error");
+      throw error;
+    }
   };
 }
 
@@ -329,15 +339,54 @@ server.tool(
     format: z.enum(["text", "json"]).optional().describe("Return plain text or structured JSON. Default: text."),
   },
   async ({ format }) => {
+    const started = Date.now();
     noteServerActivity();
-    const report = await runStartupHealthCheck(ROOT_DIR);
+    try {
+      const report = await runStartupHealthCheck(ROOT_DIR);
+      recordToolTiming(ROOT_DIR, "health", Date.now() - started, "ok");
+      return {
+        content: [{
+          type: "text" as const,
+          text: format === "json" ? JSON.stringify(report, null, 2) : formatStartupHealthReport(report),
+        }],
+      };
+    } catch (error) {
+      recordToolTiming(ROOT_DIR, "health", Date.now() - started, "error");
+      throw error;
+    }
+  },
+);
+
+server.tool(
+  "artifact_read",
+  "Load a previously generated context artifact by ID so agents can reuse earlier task packets, repo maps, and decisions without regenerating them.",
+  {
+    artifact_id: z.string().describe("Artifact ID returned by repo_map, search, task_pack, change_impact, edit_scope, or decision_brief."),
+  },
+  withRequestActivity(async ({ artifact_id }) => {
+    const artifact = await readArtifact(ROOT_DIR, artifact_id);
     return {
       content: [{
         type: "text" as const,
-        text: format === "json" ? JSON.stringify(report, null, 2) : formatStartupHealthReport(report),
+        text: artifact ? JSON.stringify(artifact, null, 2) : JSON.stringify({ error: `Artifact not found: ${artifact_id}` }, null, 2),
       }],
     };
+  }, { toolName: "artifact_read" }),
+);
+
+server.tool(
+  "artifact_list",
+  "List recent reusable context artifacts generated for this project. Use it to discover cached repo maps, task packs, and impact summaries.",
+  {
+    kind: z.string().optional().describe("Optional artifact kind filter, e.g. repo_map, search, task_pack."),
+    limit: z.number().optional().describe("Maximum artifacts to return. Default: 20."),
   },
+  withRequestActivity(async ({ kind, limit }) => ({
+    content: [{
+      type: "text" as const,
+      text: JSON.stringify(await listArtifacts(ROOT_DIR, kind, limit), null, 2),
+    }],
+  }), { toolName: "artifact_list" }),
 );
 
 server.tool(
@@ -364,7 +413,7 @@ server.tool(
         format,
       }),
     }],
-  })),
+  }), { toolName: "repo_map" }),
 );
 
 server.tool(
@@ -389,7 +438,7 @@ server.tool(
         format,
       }),
     }],
-  })),
+  }), { toolName: "resolve_symbol" }),
 );
 
 server.tool(
@@ -414,7 +463,7 @@ server.tool(
         maxTokens: max_tokens,
       }),
     }],
-  })),
+  }), { toolName: "tree" }),
 );
 
 server.tool(
@@ -429,7 +478,7 @@ server.tool(
       type: "text" as const,
       text: await getFileSkeleton({ rootDir: ROOT_DIR, filePath: file_path }),
     }],
-  })),
+  }), { toolName: "skeleton" }),
 );
 
 server.tool(
@@ -471,7 +520,7 @@ server.tool(
         requireSemanticMatch: args.require_semantic_match,
       }),
     }],
-  }), { useEmbeddingTracker: true }),
+  }), { useEmbeddingTracker: true, toolName: "search" }),
 );
 
 server.tool(
@@ -487,7 +536,7 @@ server.tool(
       type: "text" as const,
       text: await getBlastRadius({ rootDir: ROOT_DIR, symbolName: symbol_name, fileContext: file_context }),
     }],
-  })),
+  }), { toolName: "blast_radius" }),
 );
 
 server.tool(
@@ -502,7 +551,7 @@ server.tool(
       type: "text" as const,
       text: await runStaticAnalysis({ rootDir: ROOT_DIR, targetPath: target_path }),
     }],
-  })),
+  }), { toolName: "lint" }),
 );
 
 server.tool(
@@ -522,7 +571,7 @@ server.tool(
         text: await proposeCommit({ rootDir: ROOT_DIR, filePath: file_path, newContent: new_content }),
       }],
     };
-  }),
+  }, { toolName: "checkpoint" }),
 );
 
 server.tool(
@@ -538,7 +587,7 @@ server.tool(
       `${p.id} | ${new Date(p.timestamp).toISOString()} | ${p.files.join(", ")} | ${p.message}`,
     );
     return { content: [{ type: "text" as const, text: `Restore Points (${points.length}):\n\n${lines.join("\n")}` }] };
-  }),
+  }, { toolName: "checkpoints" }),
 );
 
 server.tool(
@@ -560,7 +609,7 @@ server.tool(
           : "No files were restored. The backup may be empty.",
       }],
     };
-  }),
+  }, { toolName: "restore" }),
 );
 
 server.tool(
@@ -576,7 +625,7 @@ server.tool(
       type: "text" as const,
       text: await semanticNavigate({ rootDir: ROOT_DIR, maxDepth: max_depth, maxClusters: max_clusters }),
     }],
-  })),
+  }), { toolName: "cluster" }),
 );
 
 server.tool(
@@ -598,7 +647,7 @@ server.tool(
         showOrphans: show_orphans,
       }),
     }],
-  })),
+  }), { toolName: "hub" }),
 );
 
 server.tool(
@@ -712,7 +761,7 @@ server.tool(
       type: "text" as const,
       text: await reindex({ rootDir: ROOT_DIR, targetPath: target_path, force }),
     }],
-  })),
+  }), { toolName: "reindex" }),
 );
 
 server.tool(
@@ -727,7 +776,7 @@ server.tool(
       type: "text" as const,
       text: await getStatus({ rootDir: ROOT_DIR, format }),
     }],
-  })),
+  }), { toolName: "status" }),
 );
 
 server.tool(
@@ -759,7 +808,7 @@ server.tool(
       type: "text" as const,
       text: await getRelated({ rootDir: ROOT_DIR, file }),
     }],
-  })),
+  }), { toolName: "related" }),
 );
 
 server.tool(
@@ -776,7 +825,7 @@ server.tool(
       type: "text" as const,
       text: await getTestMap({ rootDir: ROOT_DIR, file, symbol, changed }),
     }],
-  })),
+  }), { toolName: "test_map" }),
 );
 
 server.tool(
@@ -793,7 +842,7 @@ server.tool(
       type: "text" as const,
       text: await explain({ rootDir: ROOT_DIR, symbol, file, depth }),
     }],
-  })),
+  }), { toolName: "explain" }),
 );
 
 server.tool(
@@ -820,7 +869,7 @@ server.tool(
         format,
       }),
     }],
-  }), { useEmbeddingTracker: true }),
+  }), { useEmbeddingTracker: true, toolName: "task_pack" }),
 );
 
 server.tool(
@@ -845,7 +894,7 @@ server.tool(
         format,
       }),
     }],
-  })),
+  }), { toolName: "change_impact" }),
 );
 
 server.tool(
@@ -868,7 +917,7 @@ server.tool(
         format,
       }),
     }],
-  }), { useEmbeddingTracker: true }),
+  }), { useEmbeddingTracker: true, toolName: "edit_scope" }),
 );
 
 server.tool(
@@ -893,7 +942,7 @@ server.tool(
         format,
       }),
     }],
-  }), { useEmbeddingTracker: true }),
+  }), { useEmbeddingTracker: true, toolName: "decision_brief" }),
 );
 
 server.tool(
@@ -922,7 +971,7 @@ server.tool(
         format,
       }),
     }],
-  }), { useEmbeddingTracker: true }),
+  }), { useEmbeddingTracker: true, toolName: "memory_record_task" }),
 );
 
 server.tool(
@@ -944,7 +993,7 @@ server.tool(
         format,
       }),
     }],
-  })),
+  }), { toolName: "workspace_context" }),
 );
 
 server.tool(
@@ -969,7 +1018,7 @@ server.tool(
         format,
       }),
     }],
-  })),
+  }), { toolName: "promote_pattern" }),
 );
 
 async function main() {

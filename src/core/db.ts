@@ -650,6 +650,22 @@ export class ContextPlusDB {
     return { totalNodes: nodes.n, totalEdges: edges.n };
   }
 
+  getLatestIndexedAt(): number | null {
+    const row = this.db.prepare("SELECT MAX(last_indexed_at) as value FROM files").get() as { value: number | null };
+    return row?.value ?? null;
+  }
+
+  getIndexGeneration(): number {
+    const value = Number(this.getMeta("index_generation") ?? "0");
+    return Number.isFinite(value) ? value : 0;
+  }
+
+  bumpIndexGeneration(): number {
+    const next = this.getIndexGeneration() + 1;
+    this.setMeta("index_generation", String(next));
+    return next;
+  }
+
   getMeta(key: string): string | null {
     const row = this.db.prepare("SELECT value FROM meta WHERE key = ?").get(key) as { value: string } | undefined;
     return row?.value ?? null;
