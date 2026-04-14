@@ -3,16 +3,18 @@
 
 import { resolve, extname, dirname, relative } from "path";
 import { readFile, stat, writeFile, mkdir } from "fs/promises";
-import { parseHubFile, discoverHubs, findOrphanedFiles, type HubInfo } from "../core/hub.js";
+import { parseHubFile, discoverHubs, findOrphanedFiles, extractFeatureTag } from "../core/hub.js";
 import { getFileSkeleton } from "./file-skeleton.js";
 import { walkDirectory } from "../core/walker.js";
 import { extractImports } from "../core/parser.js";
+import { chatCompletion, extractJsonBlock, hasConfiguredChatModel } from "../core/chat-model.js";
 
 export interface FeatureHubOptions {
   rootDir: string;
   hubPath?: string;
   featureName?: string;
   showOrphans?: boolean;
+  query?: string;
 }
 
 export interface AutoHubResult {
@@ -56,11 +58,36 @@ export async function getFeatureHub(options: FeatureHubOptions): Promise<string>
     if (hubs.length === 0) {
       return "No hub files found. Create a .md file with [[path/to/file]] links to establish a feature hub.";
     }
-    out.push(`Feature Hubs (${hubs.length}):`);
-    out.push("");
-    for (const h of hubs) {
-      const info = await parseHubFile(resolve(rootDir, h));
-      out.push(`  ${h} | ${info.title} | ${info.links.length} links`);
+
+    const hubInfos = await Promise.all(
+      hubs.map(async (h) => ({ path: h, info: await parseHubFile(resolve(rootDir, h)) })),
+    );
+
+    if (options.query) {
+      const q = options.query.toLowerCase();
+      const scored = hubInfos.map(({ path, info }) => {
+        const title = info.title.toLowerCase();
+        const pathLower = path.toLowerCase();
+        const linkNames = info.links.map((l) => l.target.toLowerCase()).join(" ");
+        let score = 0;
+        if (title.includes(q)) score += 3;
+        if (pathLower.includes(q)) score += 2;
+        if (linkNames.includes(q)) score += 1;
+        return { path, info, score };
+      });
+      scored.sort((a, b) => b.score - a.score);
+      out.push(`Feature Hubs matching "${options.query}" (${hubs.length} total):`);
+      out.push("");
+      for (const { path, info, score } of scored) {
+        const marker = score > 0 ? "★" : "·";
+        out.push(`  ${marker} ${path} | ${info.title} | ${info.links.length} links`);
+      }
+    } else {
+      out.push(`Feature Hubs (${hubs.length}):`);
+      out.push("");
+      for (const { path, info } of hubInfos) {
+        out.push(`  ${path} | ${info.title} | ${info.links.length} links`);
+      }
     }
     return out.join("\n");
   }
@@ -226,14 +253,58 @@ function generateHubName(component: string[], entryPoint: string): string {
     while (i < parts.length && i < prefixParts.length && parts[i] === prefixParts[i]) i++;
     return parts.slice(0, i).join("/");
   });
+  const genericDirs = new Set(["src", "test", "tests", "lib", "app", "server", "client"]);
+  const commonDirParts = commonDir.split("/").filter(Boolean).filter((part) => !genericDirs.has(part));
+  const entryName = entryPoint.split("/").pop()?.replace(/\.\w+$/, "") ?? "module";
+  const base = commonDirParts.at(-1) ?? entryName;
+  return base.replace(/[^a-zA-Z0-9-_]/g, "-").toLowerCase();
+}
 
-  if (commonDir && commonDir !== ".") {
-    const dirName = commonDir.split("/").pop() ?? "unknown";
-    return dirName.replace(/[^a-zA-Z0-9-_]/g, "-").toLowerCase();
+function humanizeSlug(slug: string): string {
+  return slug
+    .split(/[-_]+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+async function deriveHubLabel(
+  rootDir: string,
+  component: string[],
+  entryPoint: string,
+  entryHeader: string,
+): Promise<{ slug: string; title: string }> {
+  const heuristicSlug = generateHubName(component, entryPoint);
+  const heuristicTitle = humanizeSlug(heuristicSlug);
+  if (!(await hasConfiguredChatModel(rootDir))) {
+    return { slug: heuristicSlug, title: entryHeader || heuristicTitle };
   }
 
-  const entryName = entryPoint.split("/").pop()?.replace(/\.\w+$/, "") ?? "module";
-  return entryName.replace(/[^a-zA-Z0-9-_]/g, "-").toLowerCase();
+  const prompt = [
+    "Create a short feature-hub title and slug for this code cluster.",
+    "The slug must be lowercase kebab-case and descriptive.",
+    "Avoid generic names like src, utils, module, core, or feature.",
+    "Return JSON only: {\"slug\":\"...\",\"title\":\"...\"}.",
+    `Entry point: ${entryPoint}`,
+    `Entry header: ${entryHeader || "(none)"}`,
+    "Files:",
+    ...component.slice(0, 12).map((file) => `- ${file}`),
+  ].join("\n");
+
+  try {
+    const raw = await chatCompletion(rootDir, prompt);
+    const json = extractJsonBlock(raw);
+    if (!json) return { slug: heuristicSlug, title: entryHeader || heuristicTitle };
+    const parsed = JSON.parse(json) as { slug?: string; title?: string };
+    const slug = (parsed.slug ?? heuristicSlug).toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "") || heuristicSlug;
+    const title = (parsed.title ?? entryHeader ?? heuristicTitle).trim() || heuristicTitle;
+    if (slug === "src" || slug === "module" || slug === "feature") {
+      return { slug: heuristicSlug, title };
+    }
+    return { slug, title };
+  } catch {
+    return { slug: heuristicSlug, title: entryHeader || heuristicTitle };
+  }
 }
 
 export async function autoGenerateHubData(rootDir: string): Promise<AutoHubResult> {
@@ -279,20 +350,23 @@ export async function autoGenerateHubData(rootDir: string): Promise<AutoHubResul
   for (const component of significantComponents) {
     const clusterEdges = edges.filter((e) => component.includes(e.from) && component.includes(e.to));
     const entryPoint = findEntryPoint(component, clusterEdges);
-    const hubName = generateHubName(component, entryPoint);
 
     let header = "";
     try {
       const content = await readFile(resolve(rootDir, entryPoint), "utf-8");
-      const firstLine = content.split("\n")[0];
-      if (firstLine.startsWith("//") || firstLine.startsWith("#")) {
-        header = firstLine.replace(/^[/#\s]+/, "").trim();
+      header = extractFeatureTag(content) ?? "";
+      if (!header) {
+        const firstLine = content.split("\n")[0];
+        if (firstLine.startsWith("//") || firstLine.startsWith("#")) {
+          header = firstLine.replace(/^[/#\s]+/, "").trim();
+        }
       }
     } catch {}
+    const derivedLabel = await deriveHubLabel(rootDir, component, entryPoint, header);
 
     const hubContent = [
       `<!-- Auto-generated by Context+ -->`,
-      `# ${header || hubName}`,
+      `# ${derivedLabel.title}`,
       ``,
       `Entry point: ${entryPoint}`,
       ``,
@@ -301,10 +375,10 @@ export async function autoGenerateHubData(rootDir: string): Promise<AutoHubResul
       ``,
     ].join("\n");
 
-    let finalName = hubName;
+    let finalName = derivedLabel.slug;
     let counter = 2;
     while (usedNames.has(finalName)) {
-      finalName = `${hubName}-${counter}`;
+      finalName = `${derivedLabel.slug}-${counter}`;
       counter++;
     }
     usedNames.add(finalName);

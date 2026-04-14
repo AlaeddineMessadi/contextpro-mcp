@@ -3,14 +3,10 @@
 
 import { createHash } from "crypto";
 import { mkdir } from "fs/promises";
-import { createRequire } from "module";
 import { join, resolve } from "path";
+import { loadNativeStorageBindings } from "./db-native.js";
 
 type DatabaseType = import("better-sqlite3").Database;
-type BetterSqlite3Constructor = new (path: string, options?: unknown) => DatabaseType;
-type SqliteVecModule = { load: (db: DatabaseType) => void };
-
-const requireFromHere = createRequire(import.meta.url);
 
 export interface FileRow {
   id: number;
@@ -110,115 +106,24 @@ export interface ImportRow {
   symbols_imported: string | null;
 }
 
-export interface NativeStorageDiagnostic {
-  code: string;
-  message: string;
-  remediation: string[];
+export interface CallSiteRow {
+  id: number;
+  file_id: number;
+  callee: string;
+  line: number;
+  context: string;
 }
 
-export interface NativeStorageProbe {
-  ok: boolean;
-  runtime: {
-    nodeVersion: string;
-    nodeAbi: string;
-  };
-  diagnostic?: NativeStorageDiagnostic;
-}
+// Re-export native storage types and helpers so callers keep a single import point
+export type { NativeStorageDiagnostic, NativeStorageProbe } from "./db-native.js";
+export { describeNativeStorageError, probeNativeStorage } from "./db-native.js";
 
-const SCHEMA_VERSION = "1";
+const SCHEMA_VERSION = "3";
 const DECAY_LAMBDA = 0.05;
 const STALE_EDGE_THRESHOLD = 0.15;
 const STALE_NODE_DAYS = 7;
 const STALE_NODE_MIN_ACCESS = 2;
 const PRUNE_INTERVAL_HOURS = 24;
-
-let nativeStorageBindings: { Database: BetterSqlite3Constructor; sqliteVec: SqliteVecModule } | null = null;
-
-function normalizeBetterSqliteModule(candidate: unknown): BetterSqlite3Constructor {
-  if (typeof candidate === "function") return candidate as BetterSqlite3Constructor;
-  if (candidate && typeof (candidate as { default?: unknown }).default === "function") {
-    return (candidate as { default: BetterSqlite3Constructor }).default;
-  }
-  throw new Error("better-sqlite3 did not expose a database constructor.");
-}
-
-function normalizeSqliteVecModule(candidate: unknown): SqliteVecModule {
-  const maybeModule = candidate && typeof (candidate as SqliteVecModule).load === "function"
-    ? candidate as SqliteVecModule
-    : (candidate as { default?: SqliteVecModule } | null)?.default;
-  if (maybeModule && typeof maybeModule.load === "function") return maybeModule;
-  throw new Error("sqlite-vec did not expose a load(db) function.");
-}
-
-export function describeNativeStorageError(error: unknown): NativeStorageDiagnostic {
-  const message = error instanceof Error ? error.message : String(error);
-  const remediation = [
-    `Run npm install in the Context+ repo to restore native dependencies.`,
-    `Rebuild better-sqlite3 with the same Node runtime that launches Context+ (${process.execPath}).`,
-    `Restart the MCP host after fixing native dependencies so it respawns the server cleanly.`,
-  ];
-
-  if (message.includes("Cannot find module") || message.includes("Could not locate the bindings file")) {
-    return {
-      code: "native_module_missing",
-      message,
-      remediation,
-    };
-  }
-
-  if (message.includes("NODE_MODULE_VERSION") || message.includes("compiled against a different Node.js version")) {
-    return {
-      code: "native_module_abi_mismatch",
-      message,
-      remediation,
-    };
-  }
-
-  return {
-    code: "native_module_error",
-    message,
-    remediation,
-  };
-}
-
-function loadNativeStorageBindings(): { Database: BetterSqlite3Constructor; sqliteVec: SqliteVecModule } {
-  if (nativeStorageBindings) return nativeStorageBindings;
-  try {
-    const betterSqlite = normalizeBetterSqliteModule(requireFromHere("better-sqlite3"));
-    const sqliteVec = normalizeSqliteVecModule(requireFromHere("sqlite-vec"));
-    nativeStorageBindings = { Database: betterSqlite, sqliteVec };
-    return nativeStorageBindings;
-  } catch (error) {
-    const diagnostic = describeNativeStorageError(error);
-    throw new Error(`Context+ native storage unavailable [${diagnostic.code}]: ${diagnostic.message}\n${diagnostic.remediation.join("\n")}`);
-  }
-}
-
-export function probeNativeStorage(): NativeStorageProbe {
-  try {
-    const { Database, sqliteVec } = loadNativeStorageBindings();
-    const db = new Database(":memory:");
-    sqliteVec.load(db);
-    db.prepare("SELECT 1").get();
-    db.close();
-    return {
-      ok: true,
-      runtime: {
-        nodeVersion: process.version,
-        nodeAbi: process.versions.modules ?? "unknown",
-      },
-    };
-  } catch (error) {
-    return {
-      ok: false,
-      runtime: {
-        nodeVersion: process.version,
-        nodeAbi: process.versions.modules ?? "unknown",
-      },
-      diagnostic: describeNativeStorageError(error),
-    };
-  }
-}
 
 const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS files (
@@ -260,7 +165,7 @@ CREATE TABLE IF NOT EXISTS memory_edges (
   id TEXT PRIMARY KEY,
   source TEXT NOT NULL REFERENCES memory_nodes(id) ON DELETE CASCADE,
   target TEXT NOT NULL REFERENCES memory_nodes(id) ON DELETE CASCADE,
-  relation TEXT NOT NULL CHECK(relation IN ('relates_to', 'depends_on', 'implements', 'references', 'similar_to', 'contains')),
+  relation TEXT NOT NULL CHECK(relation IN ('relates_to', 'depends_on', 'implements', 'references', 'similar_to', 'contains', 'resolved_by', 'contradicts')),
   weight REAL DEFAULT 1.0,
   created_at INTEGER NOT NULL,
   metadata TEXT DEFAULT '{}'
@@ -283,6 +188,16 @@ CREATE TABLE IF NOT EXISTS meta (
   key TEXT PRIMARY KEY,
   value TEXT
 );
+
+CREATE TABLE IF NOT EXISTS call_sites (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  file_id INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
+  callee TEXT NOT NULL,
+  line INTEGER NOT NULL,
+  context TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_call_sites_file ON call_sites(file_id);
+CREATE INDEX IF NOT EXISTS idx_call_sites_callee ON call_sites(callee);
 `;
 
 function generateId(prefix: string): string {
@@ -296,19 +211,6 @@ export function hashContent(content: string): string {
 function vecToBuffer(vec: number[] | Float32Array): Buffer {
   const f32 = vec instanceof Float32Array ? vec : new Float32Array(vec);
   return Buffer.from(f32.buffer, f32.byteOffset, f32.byteLength);
-}
-
-function cosine(a: number[], b: number[]): number {
-  const len = Math.min(a.length, b.length);
-  if (len === 0) return 0;
-  let dot = 0, normA = 0, normB = 0;
-  for (let i = 0; i < len; i++) {
-    dot += a[i] * b[i];
-    normA += a[i] * a[i];
-    normB += b[i] * b[i];
-  }
-  const denom = Math.sqrt(normA) * Math.sqrt(normB);
-  return denom === 0 ? 0 : dot / denom;
 }
 
 export class ContextPlusDB {
@@ -326,6 +228,7 @@ export class ContextPlusDB {
     this.db.pragma("foreign_keys = ON");
     this.db.exec(SCHEMA_SQL);
     this.initMeta();
+    this.runMigrations();
     this.ensureVecTables();
   }
 
@@ -334,6 +237,43 @@ export class ContextPlusDB {
     if (!existing) {
       this.db.prepare("INSERT INTO meta (key, value) VALUES ('schema_version', ?)").run(SCHEMA_VERSION);
     }
+  }
+
+  private runMigrations(): void {
+    const current = (this.db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get() as { value: string } | undefined)?.value ?? "1";
+    if (current === SCHEMA_VERSION) return;
+    if (current < "2") {
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS memory_edges_new (
+          id TEXT PRIMARY KEY,
+          source TEXT NOT NULL REFERENCES memory_nodes(id) ON DELETE CASCADE,
+          target TEXT NOT NULL REFERENCES memory_nodes(id) ON DELETE CASCADE,
+          relation TEXT NOT NULL CHECK(relation IN ('relates_to', 'depends_on', 'implements', 'references', 'similar_to', 'contains', 'resolved_by', 'contradicts')),
+          weight REAL DEFAULT 1.0,
+          created_at INTEGER NOT NULL,
+          metadata TEXT DEFAULT '{}'
+        );
+        INSERT OR IGNORE INTO memory_edges_new SELECT * FROM memory_edges;
+        DROP TABLE memory_edges;
+        ALTER TABLE memory_edges_new RENAME TO memory_edges;
+        CREATE INDEX IF NOT EXISTS idx_edges_source ON memory_edges(source);
+        CREATE INDEX IF NOT EXISTS idx_edges_target ON memory_edges(target);
+      `);
+    }
+    if (current < "3") {
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS call_sites (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          file_id INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
+          callee TEXT NOT NULL,
+          line INTEGER NOT NULL,
+          context TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_call_sites_file ON call_sites(file_id);
+        CREATE INDEX IF NOT EXISTS idx_call_sites_callee ON call_sites(callee);
+      `);
+    }
+    this.db.prepare("INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', ?)").run(SCHEMA_VERSION);
   }
 
   private ensureVecTables(): void {
@@ -359,6 +299,13 @@ export class ContextPlusDB {
   private ensureVecDimension(dim: number): void {
     if (this.vecDimension === dim) return;
     if (this.vecDimension !== null && this.vecDimension !== dim) {
+      // Warn loudly: changing embedding dimension requires dropping all cached vectors.
+      // This happens when switching embedding models (e.g. nomic-embed-text 768 → text-embedding-3-small 1536).
+      // Agents relying on semantic search will see empty results until re-indexing completes.
+      process.stderr.write(
+        `[contextplus/db] WARNING: embedding dimension changed from ${this.vecDimension} to ${dim}. ` +
+        `All cached embeddings are being cleared. Run reindex to rebuild them.\n`,
+      );
       this.db.exec("DROP TABLE IF EXISTS embeddings");
       this.db.exec("DROP TABLE IF EXISTS memory_embeddings");
     }
@@ -381,6 +328,10 @@ export class ContextPlusDB {
 
   getFile(path: string): FileRow | null {
     return (this.db.prepare("SELECT * FROM files WHERE path = ?").get(path) as FileRow) ?? null;
+  }
+
+  getFileById(id: number): FileRow | null {
+    return (this.db.prepare("SELECT * FROM files WHERE id = ?").get(id) as FileRow) ?? null;
   }
 
   getAllFiles(): FileRow[] {
@@ -444,13 +395,13 @@ export class ContextPlusDB {
   searchEmbeddings(queryVector: number[] | Float32Array, topK: number, sourceType?: string): EmbeddingMatch[] {
     if (!this.vecDimension) return [];
     const buf = vecToBuffer(queryVector);
-    let sql = "SELECT rowid, source_type, source_id, content_hash, distance FROM embeddings WHERE vector MATCH ? ORDER BY distance LIMIT ?";
-    const params: (Buffer | string | number)[] = [buf, topK * 3];
-
-    const raw = this.db.prepare(sql).all(...params) as { rowid: number; source_type: string; source_id: string; content_hash: string; distance: number }[];
-
-    const filtered = sourceType ? raw.filter(r => r.source_type === sourceType) : raw;
-    return filtered.slice(0, topK).map(r => ({
+    const sql = sourceType
+      ? "SELECT rowid, source_type, source_id, content_hash, distance FROM embeddings WHERE vector MATCH ? AND source_type = ? ORDER BY distance LIMIT ?"
+      : "SELECT rowid, source_type, source_id, content_hash, distance FROM embeddings WHERE vector MATCH ? ORDER BY distance LIMIT ?";
+    const raw = sourceType
+      ? this.db.prepare(sql).all(buf, sourceType, topK) as { rowid: number; source_type: string; source_id: string; content_hash: string; distance: number }[]
+      : this.db.prepare(sql).all(buf, topK) as { rowid: number; source_type: string; source_id: string; content_hash: string; distance: number }[];
+    return raw.map(r => ({
       rowid: r.rowid,
       sourceType: r.source_type,
       sourceId: r.source_id,
@@ -563,29 +514,41 @@ export class ContextPlusDB {
 
     for (let d = 0; d < maxDepth; d++) {
       const nextFrontier: typeof frontier = [];
-      for (const current of frontier) {
-        let edgeSql = "SELECT * FROM memory_edges WHERE source = ? OR target = ?";
-        const edges = this.db.prepare(edgeSql).all(current.id, current.id) as MemoryEdgeRow[];
+      const pendingNeighbors: Array<{ neighborId: string; edge: MemoryEdgeRow; current: typeof frontier[number] }> = [];
 
+      for (const current of frontier) {
+        const edges = this.db.prepare("SELECT * FROM memory_edges WHERE source = ? OR target = ?")
+          .all(current.id, current.id) as MemoryEdgeRow[];
         for (const edge of edges) {
           if (edgeFilter && !edgeFilter.includes(edge.relation)) continue;
           const neighborId = edge.source === current.id ? edge.target : edge.source;
           if (visited.has(neighborId)) continue;
           visited.add(neighborId);
-
-          const daysSince = (Date.now() - edge.created_at) / 86_400_000;
-          const decayed = edge.weight * Math.exp(-DECAY_LAMBDA * daysSince);
-          const depthPenalty = 1 / (d + 2);
-          const score = decayed * depthPenalty;
-
-          const node = this.db.prepare("SELECT * FROM memory_nodes WHERE id = ?").get(neighborId) as MemoryNodeRow | undefined;
-          if (node) {
-            const pathRelations = [...current.pathRelations, edge.relation];
-            results.push({ node, depth: d + 1, pathRelations, relevanceScore: score });
-            nextFrontier.push({ id: neighborId, depth: d + 1, pathRelations, score });
-          }
+          pendingNeighbors.push({ neighborId, edge, current });
         }
       }
+
+      if (pendingNeighbors.length === 0) break;
+
+      const ids = pendingNeighbors.map((p) => p.neighborId);
+      const placeholders = ids.map(() => "?").join(", ");
+      const nodeMap = new Map<string, MemoryNodeRow>(
+        (this.db.prepare(`SELECT * FROM memory_nodes WHERE id IN (${placeholders})`).all(...ids) as MemoryNodeRow[])
+          .map((n) => [n.id, n]),
+      );
+
+      const now = Date.now();
+      for (const { neighborId, edge, current } of pendingNeighbors) {
+        const node = nodeMap.get(neighborId);
+        if (!node) continue;
+        const daysSince = (now - edge.created_at) / 86_400_000;
+        const decayed = edge.weight * Math.exp(-DECAY_LAMBDA * daysSince);
+        const score = decayed * (1 / (d + 2));
+        const pathRelations = [...current.pathRelations, edge.relation];
+        results.push({ node, depth: d + 1, pathRelations, relevanceScore: score });
+        nextFrontier.push({ id: neighborId, depth: d + 1, pathRelations, score });
+      }
+
       frontier = nextFrontier;
     }
 
@@ -594,16 +557,13 @@ export class ContextPlusDB {
 
   pruneStaleEdges(threshold: number = STALE_EDGE_THRESHOLD): { edgesRemoved: number; nodesRemoved: number } {
     const now = Date.now();
-    const edges = this.db.prepare("SELECT * FROM memory_edges").all() as MemoryEdgeRow[];
-    let edgesRemoved = 0;
+    const edges = this.db.prepare("SELECT id, weight, created_at FROM memory_edges").all() as Pick<MemoryEdgeRow, "id" | "weight" | "created_at">[];
+    const staleEdgeIds: string[] = [];
 
     for (const edge of edges) {
       const daysSince = (now - edge.created_at) / 86_400_000;
       const decayed = edge.weight * Math.exp(-DECAY_LAMBDA * daysSince);
-      if (decayed < threshold) {
-        this.db.prepare("DELETE FROM memory_edges WHERE id = ?").run(edge.id);
-        edgesRemoved++;
-      }
+      if (decayed < threshold) staleEdgeIds.push(edge.id);
     }
 
     const orphans = this.db.prepare(`
@@ -614,12 +574,17 @@ export class ContextPlusDB {
       AND last_accessed < ?
     `).all(STALE_NODE_MIN_ACCESS, now - STALE_NODE_DAYS * 86_400_000) as { id: string }[];
 
-    for (const orphan of orphans) {
-      this.deleteMemoryNode(orphan.id);
-    }
+    const prune = this.db.transaction(() => {
+      if (staleEdgeIds.length > 0) {
+        const placeholders = staleEdgeIds.map(() => "?").join(", ");
+        this.db.prepare(`DELETE FROM memory_edges WHERE id IN (${placeholders})`).run(...staleEdgeIds);
+      }
+      for (const orphan of orphans) this.deleteMemoryNode(orphan.id);
+      this.setMeta("last_prune", String(now));
+    });
+    prune();
 
-    this.setMeta("last_prune", String(now));
-    return { edgesRemoved, nodesRemoved: orphans.length };
+    return { edgesRemoved: staleEdgeIds.length, nodesRemoved: orphans.length };
   }
 
   ensureGraphFresh(): void {
@@ -642,6 +607,23 @@ export class ContextPlusDB {
 
   getImportersOf(fileId: number): ImportRow[] {
     return this.db.prepare("SELECT * FROM imports WHERE target_file_id = ?").all(fileId) as ImportRow[];
+  }
+
+  upsertCallSites(fileId: number, sites: Array<{ callee: string; line: number; context: string }>): void {
+    this.db.prepare("DELETE FROM call_sites WHERE file_id = ?").run(fileId);
+    const insert = this.db.prepare("INSERT INTO call_sites (file_id, callee, line, context) VALUES (?, ?, ?, ?)");
+    const tx = this.db.transaction((rows: typeof sites) => {
+      for (const s of rows) insert.run(fileId, s.callee, s.line, s.context);
+    });
+    tx(sites);
+  }
+
+  getCallSitesByFile(fileId: number): CallSiteRow[] {
+    return this.db.prepare("SELECT * FROM call_sites WHERE file_id = ?").all(fileId) as CallSiteRow[];
+  }
+
+  getCallersOf(callee: string): CallSiteRow[] {
+    return this.db.prepare("SELECT * FROM call_sites WHERE callee = ?").all(callee) as CallSiteRow[];
   }
 
   getGraphStats(): { totalNodes: number; totalEdges: number } {

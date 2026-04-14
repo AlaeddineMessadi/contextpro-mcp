@@ -7,6 +7,8 @@ import { quickRefresh } from "./reindex.js";
 import { loadProjectConfig } from "../core/project-config.js";
 import { persistArtifact } from "../core/artifacts.js";
 import { buildFreshnessMetadata, buildTrustMetadata, getIndexState, type FreshnessMetadata, type TrustMetadata } from "../core/context-metadata.js";
+import { getDB } from "../core/db.js";
+import type { SearchResult } from "../core/embeddings.js";
 
 export { invalidateSearchCache, invalidateIdentifierSearchCache };
 
@@ -77,11 +79,102 @@ function buildAmbiguities(input: {
   ];
 }
 
+function extractIdentifierHints(query: string): string[] {
+  const rawTokens = query.match(/\b[A-Za-z_][A-Za-z0-9_]*\b/g) ?? [];
+  const unique = new Map<string, string>();
+  const queryTrimmed = query.trim();
+  for (const token of rawTokens) {
+    if (token.length < 3) continue;
+    const looksIdentifier = /[A-Z_]/.test(token) || rawTokens.length === 1 || queryTrimmed === token;
+    if (!looksIdentifier) continue;
+    unique.set(token.toLowerCase(), token);
+  }
+  return [...unique.values()];
+}
+
+function formatLineRange(line: number, endLine: number | null): string {
+  return endLine && endLine > line ? `L${line}-L${endLine}` : `L${line}`;
+}
+
+async function applyExactSymbolFileBoosts(
+  rootDir: string,
+  query: string,
+  files: SemanticCodeSearchData | undefined,
+  topK: number | undefined,
+): Promise<SemanticCodeSearchData | undefined> {
+  if (!files || files.results.length === 0) return files;
+  const hints = extractIdentifierHints(query);
+  if (hints.length === 0) return files;
+
+  const db = await getDB(rootDir);
+  const exactSymbols = hints.flatMap((hint) =>
+    db.searchSymbolsByName(hint).filter((symbol) => symbol.name.toLowerCase() === hint.toLowerCase())
+  );
+  if (exactSymbols.length === 0) return files;
+
+  const exactPaths = new Set<string>();
+  const symbolLocationsByPath = new Map<string, string[]>();
+  const symbolsByPath = new Map<string, string[]>();
+  const allFiles = db.getAllFiles();
+
+  for (const symbol of exactSymbols) {
+    const file = allFiles.find((candidate) => candidate.id === symbol.file_id);
+    if (!file) continue;
+    exactPaths.add(file.path);
+    const existingSymbols = symbolsByPath.get(file.path) ?? [];
+    if (!existingSymbols.includes(symbol.name)) existingSymbols.push(symbol.name);
+    symbolsByPath.set(file.path, existingSymbols);
+    const existingLocations = symbolLocationsByPath.get(file.path) ?? [];
+    existingLocations.push(`${symbol.name}@${formatLineRange(symbol.line_start, symbol.line_end)}`);
+    symbolLocationsByPath.set(file.path, existingLocations);
+  }
+
+  const boosted: SearchResult[] = files.results.map((result) => {
+    const matchedExactSymbols = (symbolsByPath.get(result.path) ?? []).filter((name) =>
+      result.matchedSymbols.includes(name) || exactPaths.has(result.path)
+    );
+    const exactPathBoost = exactPaths.has(result.path) ? 25 : 0;
+    const exactSymbolBoost = matchedExactSymbols.length > 0 ? 12 : 0;
+    if (exactPathBoost === 0 && exactSymbolBoost === 0) return result;
+    return {
+      ...result,
+      score: Math.min(100, Math.round((result.score + exactPathBoost + exactSymbolBoost) * 10) / 10),
+      keywordScore: Math.min(100, Math.round(Math.max(result.keywordScore, matchedExactSymbols.length > 0 ? 96 : result.keywordScore) * 10) / 10),
+      matchedSymbols: [...new Set([...matchedExactSymbols, ...result.matchedSymbols])],
+      matchedSymbolLocations: [...new Set([...(symbolLocationsByPath.get(result.path) ?? []), ...result.matchedSymbolLocations])],
+    };
+  });
+
+  const missingExactFiles = [...exactPaths].filter((path) => !boosted.some((result) => result.path === path));
+  for (const path of missingExactFiles) {
+    const dbFile = db.getFile(path);
+    boosted.push({
+      path,
+      score: 99.9,
+      semanticScore: 0,
+      keywordScore: 100,
+      header: dbFile?.header ?? "",
+      matchedSymbols: symbolsByPath.get(path) ?? [],
+      matchedSymbolLocations: symbolLocationsByPath.get(path) ?? [],
+    });
+  }
+
+  return {
+    ...files,
+    results: boosted
+      .sort((left, right) => right.score - left.score || right.keywordScore - left.keywordScore || left.path.localeCompare(right.path))
+      .slice(0, topK ?? boosted.length),
+  };
+}
+
 export async function unifiedSearchData(options: UnifiedSearchOptions): Promise<UnifiedSearchData> {
-  const { staleCount, refreshed } = await quickRefresh(options.rootDir).catch(() => ({ staleCount: 0, refreshed: false }));
+  const refreshState = await quickRefresh(options.rootDir).catch(() => ({ staleCount: 0, refreshed: false, indexingTimedOut: false }));
+  const { staleCount, refreshed } = refreshState;
   const mode = options.mode ?? "hybrid";
   let staleWarning: string | null = null;
-  if (staleCount > 15) {
+  if (refreshState.indexingTimedOut) {
+    staleWarning = "Indexing is still in progress. Wait for it to finish before trusting search results.";
+  } else if (staleCount > 15) {
     staleWarning = `${staleCount} files changed since last index. Run reindex for accurate results.`;
   } else if (refreshed && staleCount > 0) {
     staleWarning = `Auto-refreshed ${staleCount} stale files.`;
@@ -143,6 +236,7 @@ export async function unifiedSearchData(options: UnifiedSearchOptions): Promise<
       }),
     ]);
   }
+  files = await applyExactSymbolFileBoosts(options.rootDir, options.query, files, options.topK);
 
   const evidence = buildEvidence({ mode, files, identifiers, freshness });
   const ambiguities = buildAmbiguities({ files, identifiers });
@@ -197,6 +291,21 @@ export async function unifiedSearchData(options: UnifiedSearchOptions): Promise<
   };
 }
 
+function qualityLabel(topScore: number): string {
+  if (topScore >= 75) return "high";
+  if (topScore >= 45) return "medium";
+  return "low";
+}
+
+function buildQualityBanner(data: UnifiedSearchData): string {
+  const topFileScore = data.files?.results[0]?.score ?? 0;
+  const topIdScore = data.identifiers?.results[0]?.score ?? 0;
+  const topScore = Math.max(topFileScore, topIdScore);
+  if (topScore === 0) return "";
+  const label = qualityLabel(topScore);
+  return `Confidence: ${label} (top score: ${Math.round(topScore)}%)\n\n`;
+}
+
 export async function unifiedSearch(options: UnifiedSearchOptions): Promise<string> {
   const data = await unifiedSearchData({
     ...options,
@@ -207,11 +316,12 @@ export async function unifiedSearch(options: UnifiedSearchOptions): Promise<stri
   }
 
   const warning = data.freshness.warning ? `\n⚠ ${data.freshness.warning}\n\n` : "";
+  const quality = buildQualityBanner(data);
   if (data.mode === "file") {
-    return warning + await semanticCodeSearch(options as SemanticSearchOptions);
+    return warning + quality + await semanticCodeSearch(options as SemanticSearchOptions);
   }
   if (data.mode === "identifier") {
-    return warning + await semanticIdentifierSearch({
+    return warning + quality + await semanticIdentifierSearch({
       rootDir: options.rootDir,
       query: options.query,
       topK: options.topK,
@@ -221,7 +331,7 @@ export async function unifiedSearch(options: UnifiedSearchOptions): Promise<stri
       keywordWeight: options.keywordWeight,
     });
   }
-  return `${warning}=== FILE MATCHES ===\n\n${await semanticCodeSearch(options as SemanticSearchOptions)}\n\n=== IDENTIFIER MATCHES ===\n\n${await semanticIdentifierSearch({
+  return `${warning}${quality}=== FILE MATCHES ===\n\n${await semanticCodeSearch(options as SemanticSearchOptions)}\n\n=== IDENTIFIER MATCHES ===\n\n${await semanticIdentifierSearch({
     rootDir: options.rootDir,
     query: options.query,
     topK: options.topK,

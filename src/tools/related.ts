@@ -45,11 +45,14 @@ export async function getRelated(options: RelatedOptions): Promise<string> {
   const lines: string[] = [`=== Related to: ${options.file} ===`, ""];
 
   if (file) {
+    const allDbFiles = db.getAllFiles();
+    const fileById = new Map(allDbFiles.map((f) => [f.id, f]));
+
     const importsFrom = db.getImportsFrom(file.id);
     if (importsFrom.length > 0) {
       lines.push("Imports:");
       for (const imp of importsFrom) {
-        const targetFile = imp.target_file_id ? db.getAllFiles().find((f) => f.id === imp.target_file_id) : null;
+        const targetFile = imp.target_file_id ? fileById.get(imp.target_file_id) : null;
         lines.push(`  → ${targetFile?.path ?? imp.target_path}${imp.symbols_imported ? ` (${JSON.parse(imp.symbols_imported).join(", ")})` : ""}`);
       }
       lines.push("");
@@ -58,9 +61,8 @@ export async function getRelated(options: RelatedOptions): Promise<string> {
     const importers = db.getImportersOf(file.id);
     if (importers.length > 0) {
       lines.push("Imported by:");
-      const importerFiles = db.getAllFiles();
       for (const imp of importers) {
-        const sourceFile = importerFiles.find((f) => f.id === imp.source_file_id);
+        const sourceFile = fileById.get(imp.source_file_id);
         if (sourceFile) lines.push(`  ← ${sourceFile.path}`);
       }
       lines.push("");

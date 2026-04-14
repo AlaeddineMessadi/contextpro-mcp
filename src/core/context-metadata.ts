@@ -3,15 +3,21 @@
 
 import { getDB } from "./db.js";
 import type { ArtifactReference } from "./artifacts.js";
+import { walkDirectory } from "./walker.js";
+import { isSupportedFile } from "./parser.js";
 
 export interface IndexState {
   generation: number;
   indexedFiles: number;
+  sourceFiles: number;
+  missingIndexedFiles: number;
+  removedIndexedFiles: number;
   lastIndexedAt: string | null;
   lastReindexAt: string | null;
   lastReindexDurationMs: number | null;
   autoHubCount: number | null;
-  state: "empty" | "fresh";
+  indexStartedAt: string | null;
+  state: "empty" | "indexing" | "stale" | "fresh";
 }
 
 export interface FreshnessMetadata {
@@ -24,7 +30,7 @@ export interface FreshnessMetadata {
   lastReindexAt: string | null;
   lastReindexDurationMs: number | null;
   autoHubCount: number | null;
-  indexState: "empty" | "fresh" | "stale" | "refreshed";
+  indexState: "empty" | "indexing" | "fresh" | "stale" | "refreshed";
 }
 
 export interface TrustMetadata {
@@ -53,14 +59,33 @@ export async function getIndexState(rootDir: string): Promise<IndexState> {
   const db = await getDB(rootDir);
   const latestIndexedAt = db.getLatestIndexedAt();
   const indexedFiles = db.getAllFiles().length;
+  const indexedPaths = new Set(db.getAllFiles().map((file) => file.path));
+  const entries = await walkDirectory({ rootDir, depthLimit: 0 });
+  const sourceEntries = entries.filter((entry) => !entry.isDirectory && isSupportedFile(entry.path));
+  const sourcePaths = new Set(sourceEntries.map((entry) => entry.relativePath));
+  const missingIndexedFiles = sourceEntries.filter((entry) => !indexedPaths.has(entry.relativePath)).length;
+  const removedIndexedFiles = db.getRemovedFiles(sourcePaths).length;
+  const generation = db.getIndexGeneration();
+  const activeStatus = db.getMeta("index_status");
+  const state = indexedFiles === 0
+    ? "empty"
+    : activeStatus === "indexing"
+      ? "indexing"
+      : generation === 0 || missingIndexedFiles > 0 || removedIndexedFiles > 0 || sourceEntries.length !== indexedFiles
+        ? "stale"
+        : "fresh";
   return {
-    generation: db.getIndexGeneration(),
+    generation,
     indexedFiles,
+    sourceFiles: sourceEntries.length,
+    missingIndexedFiles,
+    removedIndexedFiles,
     lastIndexedAt: toIso(latestIndexedAt),
     lastReindexAt: toIso(parseNumber(db.getMeta("last_reindex_at"))),
     lastReindexDurationMs: parseNumber(db.getMeta("last_reindex_duration_ms")),
     autoHubCount: parseNumber(db.getMeta("last_auto_hub_count")),
-    state: indexedFiles === 0 ? "empty" : "fresh",
+    indexStartedAt: toIso(parseNumber(db.getMeta("index_started_at"))),
+    state,
   };
 }
 
@@ -70,9 +95,11 @@ export function buildFreshnessMetadata(
 ): FreshnessMetadata {
   const indexStateLabel = indexState.state === "empty"
     ? "empty"
-    : input.staleCount > 0
-      ? input.refreshed ? "refreshed" : "stale"
-      : "fresh";
+    : indexState.state === "indexing"
+      ? "indexing"
+      : input.staleCount > 0 || indexState.state === "stale"
+        ? input.refreshed ? "refreshed" : "stale"
+        : "fresh";
   return {
     staleCount: input.staleCount,
     refreshed: input.refreshed,
@@ -100,6 +127,7 @@ export function buildTrustMetadata(input: {
   confidence += Math.min(evidence.length, 4) * 0.04;
   confidence -= Math.min(ambiguities.length, 3) * 0.08;
   if (input.freshness.indexState === "empty") confidence -= 0.25;
+  if (input.freshness.indexState === "indexing") confidence -= 0.14;
   if (input.freshness.indexState === "stale") confidence -= 0.18;
   if (input.freshness.indexState === "refreshed") confidence -= 0.08;
   if (input.freshness.warning) confidence -= 0.03;

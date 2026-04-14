@@ -4,13 +4,6 @@
 import { fetchEmbedding } from "../core/embeddings.js";
 import { getDB, type MemoryNodeInput, type MemoryNodeRow, type TraversalResult } from "../core/db.js";
 import { type ContextScope, loadProjectConfig } from "../core/project-config.js";
-import {
-  addInterlinkedContext as legacyAddInterlinkedContext,
-  createRelation as legacyCreateRelation,
-  getGraphStats as legacyGetGraphStats,
-  retrieveWithTraversal as legacyRetrieveWithTraversal,
-  upsertNode as legacyUpsertNode,
-} from "../core/memory-graph.js";
 
 export interface UpsertMemoryNodeOptions {
   rootDir: string;
@@ -25,7 +18,7 @@ export interface CreateRelationOptions {
   rootDir: string;
   sourceId: string;
   targetId: string;
-  relation: "relates_to" | "depends_on" | "implements" | "references" | "similar_to" | "contains";
+  relation: "relates_to" | "depends_on" | "implements" | "references" | "similar_to" | "contains" | "resolved_by" | "contradicts";
   weight?: number;
   metadata?: Record<string, string>;
 }
@@ -35,7 +28,7 @@ export interface SearchMemoryGraphOptions {
   query: string;
   maxDepth?: number;
   topK?: number;
-  edgeFilter?: Array<"relates_to" | "depends_on" | "implements" | "references" | "similar_to" | "contains">;
+  edgeFilter?: Array<"relates_to" | "depends_on" | "implements" | "references" | "similar_to" | "contains" | "resolved_by" | "contradicts">;
   scope?: ContextScope;
 }
 
@@ -55,7 +48,14 @@ export interface RetrieveWithTraversalOptions {
   rootDir: string;
   startNodeId: string;
   maxDepth?: number;
-  edgeFilter?: Array<"relates_to" | "depends_on" | "implements" | "references" | "similar_to" | "contains">;
+  edgeFilter?: Array<"relates_to" | "depends_on" | "implements" | "references" | "similar_to" | "contains" | "resolved_by" | "contradicts">;
+}
+
+export interface ListMemoryNodesOptions {
+  rootDir: string;
+  scope?: ContextScope;
+  kind?: string;
+  limit?: number;
 }
 
 function cosine(a: number[], b: number[]): number {
@@ -106,24 +106,36 @@ async function buildScopedMetadata(rootDir: string, metadata: Record<string, str
   };
 }
 
-async function scopeMatches(rootDir: string, node: MemoryNodeRow, requestedScope: ContextScope): Promise<boolean> {
+interface ResolvedProjectConfig {
+  projectId: string;
+  clientId: string;
+  sessionId: string;
+}
+
+async function resolveProjectConfig(rootDir: string): Promise<ResolvedProjectConfig> {
   const config = await loadProjectConfig(rootDir);
+  return {
+    projectId: config?.projectId ?? "",
+    clientId: config?.clientId ?? "",
+    sessionId: process.env.CONTEXTPLUS_SESSION_ID ?? "",
+  };
+}
+
+function scopeMatchesSync(node: MemoryNodeRow, requestedScope: ContextScope, resolved: ResolvedProjectConfig): boolean {
   const metadata = parseMetadata(node.metadata);
   const nodeScope = scopeForNode(node);
-  const currentProjectId = config?.projectId ?? "";
-  const currentClientId = config?.clientId ?? "";
-  const currentSessionId = process.env.CONTEXTPLUS_SESSION_ID ?? "";
+  const { projectId, clientId, sessionId } = resolved;
 
   if (requestedScope === "global") return nodeScope === "global";
   if (requestedScope === "client") {
-    return (nodeScope === "client" && metadata.client_id === currentClientId) || nodeScope === "global";
+    return (nodeScope === "client" && metadata.client_id === clientId) || nodeScope === "global";
   }
   if (requestedScope === "session") {
     if (nodeScope !== "session") return false;
-    if (currentSessionId.length === 0) return metadata.project_id === currentProjectId;
-    return metadata.project_id === currentProjectId && metadata.session_id === currentSessionId;
+    if (sessionId.length === 0) return metadata.project_id === projectId;
+    return metadata.project_id === projectId && metadata.session_id === sessionId;
   }
-  return nodeScope === "project" && metadata.project_id === currentProjectId;
+  return nodeScope === "project" && metadata.project_id === projectId;
 }
 
 function formatTraversalResult(result: TraversalResult): string {
@@ -139,7 +151,12 @@ function formatTraversalResult(result: TraversalResult): string {
 export async function toolUpsertMemoryNode(options: UpsertMemoryNodeOptions): Promise<string> {
   const db = await getDB(options.rootDir);
   const metadata = await buildScopedMetadata(options.rootDir, options.metadata, options.scope);
-  const [embedding] = await fetchEmbedding(`${options.label} ${options.content}`);
+  let embedding: number[] = [];
+  try {
+    [embedding] = await fetchEmbedding(`${options.label} ${options.content}`);
+  } catch {
+    // Embedding provider unavailable — store without vector; keyword search still works.
+  }
   const node = {
     type: options.type,
     label: options.label,
@@ -147,12 +164,11 @@ export async function toolUpsertMemoryNode(options: UpsertMemoryNodeOptions): Pr
     metadata,
   } satisfies MemoryNodeInput;
   const id = db.upsertMemoryNode(node, embedding);
-  const legacyNode = await legacyUpsertNode(options.rootDir, options.type, options.label, options.content, metadata);
   db.ensureGraphFresh();
   const stats = db.getGraphStats();
   return [
     `✅ Memory node upserted: ${options.label}`,
-    `  ID: ${legacyNode.id} | DB: ${id}`,
+    `  ID: ${id}`,
     `  Type: ${options.type}`,
     `  Scope: ${metadata.scope}`,
     `\nGraph: ${stats.totalNodes} nodes, ${stats.totalEdges} edges`,
@@ -172,16 +188,7 @@ export async function toolCreateRelation(options: CreateRelationOptions): Promis
     });
   } catch {}
   if (!edgeId) {
-    const legacyEdge = await legacyCreateRelation(
-      options.rootDir,
-      options.sourceId,
-      options.targetId,
-      options.relation,
-      options.weight,
-      options.metadata,
-    );
-    if (!legacyEdge) return `❌ Failed: one or both node IDs not found (source: ${options.sourceId}, target: ${options.targetId})`;
-    edgeId = legacyEdge.id;
+    return `❌ Failed: one or both node IDs not found (source: ${options.sourceId}, target: ${options.targetId})`;
   }
   db.ensureGraphFresh();
   const stats = db.getGraphStats();
@@ -196,13 +203,20 @@ export async function toolCreateRelation(options: CreateRelationOptions): Promis
 export async function toolSearchMemoryGraph(options: SearchMemoryGraphOptions): Promise<string> {
   const db = await getDB(options.rootDir);
   db.ensureGraphFresh();
-  const [queryVector] = await fetchEmbedding(options.query);
+  db.pruneStaleEdges();
+  let queryVector: number[] = [];
+  try {
+    [queryVector] = await fetchEmbedding(options.query);
+  } catch {
+    // Embedding provider unavailable — fall back to returning empty results.
+  }
   const requestedScope = options.scope ?? "project";
+  const resolved = await resolveProjectConfig(options.rootDir);
   const directHits = db.searchMemoryNodes(queryVector, Math.max((options.topK ?? 5) * 8, 20));
   const filteredDirect: TraversalResult[] = [];
 
   for (const hit of directHits) {
-    if (!(await scopeMatches(options.rootDir, hit.node, requestedScope))) continue;
+    if (!scopeMatchesSync(hit.node, requestedScope, resolved)) continue;
     filteredDirect.push({
       node: hit.node,
       depth: 0,
@@ -223,7 +237,7 @@ export async function toolSearchMemoryGraph(options: SearchMemoryGraphOptions): 
     const traversed = db.getNeighbors(hit.node.id, options.maxDepth ?? 1, options.edgeFilter);
     for (const traversal of traversed) {
       if (seen.has(traversal.node.id)) continue;
-      if (!(await scopeMatches(options.rootDir, traversal.node, requestedScope))) continue;
+      if (!scopeMatchesSync(traversal.node, requestedScope, resolved)) continue;
       seen.add(traversal.node.id);
       neighborResults.push(traversal);
     }
@@ -265,7 +279,12 @@ export async function toolAddInterlinkedContext(options: AddInterlinkedContextOp
 
   for (let i = 0; i < options.items.length; i++) {
     const item = options.items[i];
-    const [embedding] = await fetchEmbedding(`${item.label} ${item.content}`);
+    let embedding: number[] = [];
+    try {
+      [embedding] = await fetchEmbedding(`${item.label} ${item.content}`);
+    } catch {
+      // Embedding provider unavailable — store without vector; keyword search still works.
+    }
     const id = db.upsertMemoryNode({
       type: item.type,
       label: item.label,
@@ -297,7 +316,6 @@ export async function toolAddInterlinkedContext(options: AddInterlinkedContextOp
       }
     }
   }
-  await legacyAddInterlinkedContext(options.rootDir, options.items, options.autoLink !== false);
 
   const sections = [
     `✅ Added ${nodes.length} interlinked nodes`,
@@ -317,24 +335,71 @@ export async function toolAddInterlinkedContext(options: AddInterlinkedContextOp
   return sections.join("\n");
 }
 
+export interface DeleteMemoryNodeOptions {
+  rootDir: string;
+  nodeId: string;
+}
+
+export async function toolDeleteMemoryNode(options: DeleteMemoryNodeOptions): Promise<string> {
+  const db = await getDB(options.rootDir);
+  const node = db.getMemoryNode(options.nodeId);
+  if (!node) return `❌ Node not found: ${options.nodeId}`;
+  const label = node.label;
+  db.deleteMemoryNode(options.nodeId);
+  db.ensureGraphFresh();
+  const stats = db.getGraphStats();
+  return [
+    `🗑️ Memory node deleted: ${label}`,
+    `  ID: ${options.nodeId}`,
+    `\nGraph: ${stats.totalNodes} nodes, ${stats.totalEdges} edges`,
+  ].join("\n");
+}
+
 export async function toolRetrieveWithTraversal(options: RetrieveWithTraversalOptions): Promise<string> {
   const db = await getDB(options.rootDir);
   db.ensureGraphFresh();
-  let results = db.getNeighbors(options.startNodeId, options.maxDepth ?? 2, options.edgeFilter);
-  if (results.length === 0) {
-    const legacyResults = await legacyRetrieveWithTraversal(options.rootDir, options.startNodeId, options.maxDepth ?? 2, options.edgeFilter);
-    if (legacyResults.length === 0) return `❌ Node not found: ${options.startNodeId}`;
-    return [
-      `Traversal from: ${legacyResults[0].node.label} (depth limit: ${options.maxDepth ?? 2})\n`,
-      ...legacyResults.map((result) => [
-        `  [${result.node.type}] ${result.node.label} (depth: ${result.depth}, score: ${Math.round(result.relevanceScore * 1000) / 10})`,
-        `    Content: ${result.node.content.slice(0, 120)}${result.node.content.length > 120 ? "..." : ""}`,
-        result.pathRelations.length > 0 ? `    Path: ${result.pathRelations.join(" -> ")}` : "",
-        `    ID: ${result.node.id} | Accessed: ${result.node.accessCount}x`,
-      ].filter(Boolean).join("\n")),
-    ].join("\n");
-  }
+  db.pruneStaleEdges();
+  const results = db.getNeighbors(options.startNodeId, options.maxDepth ?? 2, options.edgeFilter);
+  if (results.length === 0) return `❌ Node not found: ${options.startNodeId}`;
   const sections = [`Traversal from: ${results[0].node.label} (depth limit: ${options.maxDepth ?? 2})\n`];
   for (const result of results) sections.push(formatTraversalResult(result));
   return sections.join("\n");
+}
+
+export async function toolListMemoryNodes(options: ListMemoryNodesOptions): Promise<string> {
+  const db = await getDB(options.rootDir);
+  const resolved = await resolveProjectConfig(options.rootDir);
+  const requestedScope = options.scope ?? "project";
+  const limit = Math.min(options.limit ?? 20, 100);
+
+  const all = db.listMemoryNodes();
+  const filtered = all.filter((node) => {
+    if (!scopeMatchesSync(node, requestedScope, resolved)) return false;
+    if (options.kind) {
+      const metadata = parseMetadata(node.metadata);
+      const recordKind = metadata.record_kind ?? node.type;
+      if (recordKind !== options.kind && node.type !== options.kind) return false;
+    }
+    return true;
+  }).slice(0, limit);
+
+  if (filtered.length === 0) {
+    return `No memory nodes found (scope: ${requestedScope}${options.kind ? `, kind: ${options.kind}` : ""}).`;
+  }
+
+  const stats = db.getGraphStats();
+  const lines = [
+    `Memory Nodes (${filtered.length} of ${all.length} total | scope: ${requestedScope}${options.kind ? ` | kind: ${options.kind}` : ""})`,
+    `Graph: ${stats.totalNodes} nodes, ${stats.totalEdges} edges`,
+    "",
+  ];
+  for (const node of filtered) {
+    const metadata = parseMetadata(node.metadata);
+    const recordKind = metadata.record_kind ?? node.type;
+    const age = Math.round((Date.now() - node.created_at) / (1000 * 60 * 60 * 24));
+    lines.push(`  [${recordKind}] ${node.label}`);
+    lines.push(`    ID: ${node.id} | Accessed: ${node.access_count}x | Age: ${age}d`);
+    lines.push(`    ${node.content.slice(0, 100)}${node.content.length > 100 ? "..." : ""}`);
+  }
+  return lines.join("\n");
 }

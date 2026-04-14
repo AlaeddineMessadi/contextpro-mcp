@@ -12,6 +12,7 @@ describe("agent workflow metadata", () => {
   beforeEach(async () => {
     fixtureRoot = await mkdtemp(join(tmpdir(), "contextplus-agent-flow-"));
     await mkdir(join(fixtureRoot, "src", "auth"), { recursive: true });
+    await mkdir(join(fixtureRoot, "src", "tools"), { recursive: true });
 
     await writeFile(
       join(fixtureRoot, "src", "auth", "session.ts"),
@@ -44,6 +45,28 @@ describe("agent workflow metadata", () => {
         "import { authMiddleware } from './auth/middleware';",
         "export function run() {",
         "  return authMiddleware();",
+        "}",
+        "",
+      ].join("\n"),
+    );
+    await writeFile(
+      join(fixtureRoot, "src", "tools", "status.ts"),
+      [
+        "// Status data collection for freshness checks",
+        "// FEATURE: status workflow ranking fixture",
+        "export function getStatusData() {",
+        "  return 'fresh';",
+        "}",
+        "",
+      ].join("\n"),
+    );
+    await writeFile(
+      join(fixtureRoot, "src", "tools", "project.ts"),
+      [
+        "// Project type detector for unrelated ranking noise",
+        "// FEATURE: status workflow ranking fixture",
+        "export function detectProjectType() {",
+        "  return 'ts';",
         "}",
         "",
       ].join("\n"),
@@ -120,5 +143,74 @@ describe("agent workflow metadata", () => {
     const status = await statusMod.getStatusData({ rootDir: fixtureRoot, format: "json" });
     assert.ok(status.tools.timings.some((timing) => timing.tool === "search"));
     assert.ok(status.index.autoHubCount >= 1);
+  });
+
+  it("keeps artifact manifest readable under concurrent writes", async () => {
+    const artifactsMod = await import("../../build/core/artifacts.js");
+    const writes = await Promise.all(
+      Array.from({ length: 6 }, (_, index) => artifactsMod.persistArtifact({
+        rootDir: fixtureRoot,
+        kind: "search",
+        key: JSON.stringify({ index }),
+        repoFingerprint: "fixture",
+        projectId: "agent-flow-fixture",
+        payload: { index },
+      })),
+    );
+    const listed = await artifactsMod.listArtifacts(fixtureRoot, "search", 20);
+    for (const ref of writes) {
+      assert.ok(listed.some((artifact) => artifact.id === ref.id));
+      const stored = await artifactsMod.readArtifact(fixtureRoot, ref.id);
+      assert.equal(stored?.payload.index !== undefined, true);
+    }
+  });
+
+  it("marks status stale when new supported files exist after indexing", async () => {
+    const projectMod = await import("../../build/core/project-config.js");
+    await projectMod.ensureProjectConfig({
+      rootDir: fixtureRoot,
+      projectId: "agent-flow-fixture",
+      sessionSource: "codex",
+    });
+
+    const reindexMod = await import("../../build/tools/reindex.js");
+    await reindexMod.reindex({ rootDir: fixtureRoot, force: true });
+    await writeFile(
+      join(fixtureRoot, "src", "auth", "late.ts"),
+      [
+        "// Late file added after index creation",
+        "// FEATURE: stale index detection fixture",
+        "export const late = true;",
+        "",
+      ].join("\n"),
+    );
+
+    const statusMod = await import("../../build/tools/status.js");
+    const status = await statusMod.getStatusData({ rootDir: fixtureRoot, format: "json" });
+    assert.equal(status.index.state, "stale");
+    assert.equal(status.index.missingIndexedFiles, 1);
+  });
+
+  it("hard-boosts exact symbol intent in search results", async () => {
+    const projectMod = await import("../../build/core/project-config.js");
+    await projectMod.ensureProjectConfig({
+      rootDir: fixtureRoot,
+      projectId: "agent-flow-fixture",
+      sessionSource: "codex",
+    });
+
+    const reindexMod = await import("../../build/tools/reindex.js");
+    await reindexMod.reindex({ rootDir: fixtureRoot, force: true });
+
+    const searchMod = await import("../../build/tools/search.js");
+    const search = await searchMod.unifiedSearchData({
+      rootDir: fixtureRoot,
+      query: "getStatusData",
+      mode: "hybrid",
+      persistArtifact: false,
+    });
+
+    assert.equal(search.identifiers.results[0].name, "getStatusData");
+    assert.equal(search.files.results[0].path, "src/tools/status.ts");
   });
 });

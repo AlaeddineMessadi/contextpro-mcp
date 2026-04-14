@@ -164,7 +164,13 @@ export async function resolveSymbolData(options: ResolveSymbolOptions): Promise<
   const freshness = buildFreshnessMetadata(indexState, {
     staleCount: 0,
     refreshed: false,
-    warning: indexState.state === "empty" ? "Index is empty. Run reindex before resolving symbols." : null,
+    warning: indexState.state === "empty"
+      ? "Index is empty. Run reindex before resolving symbols."
+      : indexState.state === "indexing"
+        ? "Indexing is still in progress. Wait for completion before trusting symbol resolution."
+        : indexState.state === "stale"
+          ? "Index is stale relative to the workspace. Run reindex before trusting symbol resolution."
+          : null,
   });
   const evidence = [
     ...(bestMatch ? [`best candidate ${bestMatch.path}:L${bestMatch.line}`] : []),

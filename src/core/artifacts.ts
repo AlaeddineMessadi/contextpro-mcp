@@ -2,7 +2,7 @@
 // FEATURE: Artifact cache — stable IDs for low-token reuse across MCP turns
 
 import { createHash } from "crypto";
-import { mkdir, readFile, writeFile } from "fs/promises";
+import { mkdir, open, readFile, readdir, unlink, writeFile } from "fs/promises";
 import { join, resolve } from "path";
 
 export interface ArtifactReference {
@@ -40,6 +40,9 @@ interface PersistArtifactOptions<T = unknown> {
 
 const ARTIFACT_DIR = ".contextplus/artifacts";
 const MANIFEST_FILE = "manifest.json";
+const MANIFEST_LOCK_FILE = "manifest.lock";
+const LOCK_RETRY_MS = 40;
+const LOCK_TIMEOUT_MS = 5_000;
 
 async function readJsonFile<T>(path: string, fallback: T): Promise<T> {
   try {
@@ -57,12 +60,90 @@ function manifestPath(rootDir: string): string {
   return join(artifactBaseDir(rootDir), MANIFEST_FILE);
 }
 
+function manifestLockPath(rootDir: string): string {
+  return join(artifactBaseDir(rootDir), MANIFEST_LOCK_FILE);
+}
+
 function buildArtifactId(kind: string, key: string, repoFingerprint?: string | null): string {
   const hash = createHash("sha256")
     .update(`${kind}|${repoFingerprint ?? "no-fingerprint"}|${key}`)
     .digest("hex")
     .slice(0, 14);
   return `${kind}-${hash}`;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolveSleep) => setTimeout(resolveSleep, ms));
+}
+
+async function withManifestLock<T>(rootDir: string, fn: () => Promise<T>): Promise<T> {
+  const baseDir = artifactBaseDir(rootDir);
+  await mkdir(baseDir, { recursive: true });
+  const lockPath = manifestLockPath(rootDir);
+  const deadline = Date.now() + LOCK_TIMEOUT_MS;
+
+  while (true) {
+    try {
+      const handle = await open(lockPath, "wx");
+      try {
+        await handle.writeFile(JSON.stringify({ pid: process.pid, acquiredAt: new Date().toISOString() }) + "\n", "utf-8");
+        return await fn();
+      } finally {
+        await handle.close().catch(() => undefined);
+        await unlink(lockPath).catch(() => undefined);
+      }
+    } catch (error) {
+      if (Date.now() >= deadline) throw error;
+      await sleep(LOCK_RETRY_MS);
+    }
+  }
+}
+
+async function scanArtifactsOnDisk(rootDir: string): Promise<ArtifactReference[]> {
+  const baseDir = artifactBaseDir(rootDir);
+  try {
+    const entries = await readdir(baseDir, { withFileTypes: true });
+    const artifacts: ArtifactReference[] = [];
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      const kindDir = join(baseDir, entry.name);
+      const files = await readdir(kindDir, { withFileTypes: true }).catch(() => []);
+      for (const file of files) {
+        if (!file.isFile() || !file.name.endsWith(".json")) continue;
+        const fullPath = join(kindDir, file.name);
+        const parsed = await readJsonFile<StoredArtifact | null>(fullPath, null);
+        if (!parsed?.id || !parsed.kind || !parsed.key) continue;
+        artifacts.push({
+          id: parsed.id,
+          kind: parsed.kind,
+          key: parsed.key,
+          path: fullPath,
+          createdAt: parsed.createdAt,
+          updatedAt: parsed.updatedAt,
+        });
+      }
+    }
+    return artifacts.sort((left, right) => right.updatedAt.localeCompare(left.updatedAt) || left.id.localeCompare(right.id));
+  } catch {
+    return [];
+  }
+}
+
+async function loadManifestWithRepair(rootDir: string): Promise<ArtifactManifest> {
+  const manifest = await readJsonFile<ArtifactManifest>(manifestPath(rootDir), { artifacts: [] });
+  const existing = manifest.artifacts.filter((artifact) => Boolean(artifact?.id && artifact?.path));
+  const diskArtifacts = await scanArtifactsOnDisk(rootDir);
+  const merged = new Map<string, ArtifactReference>();
+
+  for (const artifact of existing) merged.set(artifact.id, artifact);
+  for (const artifact of diskArtifacts) {
+    const current = merged.get(artifact.id);
+    if (!current || artifact.updatedAt > current.updatedAt) merged.set(artifact.id, artifact);
+  }
+
+  return {
+    artifacts: [...merged.values()].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt) || left.id.localeCompare(right.id)),
+  };
 }
 
 export async function persistArtifact<T>(options: PersistArtifactOptions<T>): Promise<ArtifactReference> {
@@ -90,7 +171,6 @@ export async function persistArtifact<T>(options: PersistArtifactOptions<T>): Pr
   await mkdir(kindDir, { recursive: true });
   await writeFile(artifactFile, JSON.stringify(record, null, 2) + "\n", "utf-8");
 
-  const manifest = await readJsonFile<ArtifactManifest>(manifestPath(options.rootDir), { artifacts: [] });
   const nextRef: ArtifactReference = {
     id: record.id,
     kind: record.kind,
@@ -99,22 +179,33 @@ export async function persistArtifact<T>(options: PersistArtifactOptions<T>): Pr
     createdAt: record.createdAt,
     updatedAt: record.updatedAt,
   };
-  const filtered = manifest.artifacts.filter((artifact) => artifact.id !== id);
-  filtered.unshift(nextRef);
-  await mkdir(baseDir, { recursive: true });
-  await writeFile(manifestPath(options.rootDir), JSON.stringify({ artifacts: filtered }, null, 2) + "\n", "utf-8");
+
+  await withManifestLock(options.rootDir, async () => {
+    const manifest = await loadManifestWithRepair(options.rootDir);
+    const filtered = manifest.artifacts.filter((artifact) => artifact.id !== id);
+    filtered.unshift(nextRef);
+    await mkdir(baseDir, { recursive: true });
+    await writeFile(manifestPath(options.rootDir), JSON.stringify({ artifacts: filtered }, null, 2) + "\n", "utf-8");
+  });
+
   return nextRef;
 }
 
 export async function readArtifact<T = unknown>(rootDir: string, artifactId: string): Promise<StoredArtifact<T> | null> {
-  const manifest = await readJsonFile<ArtifactManifest>(manifestPath(rootDir), { artifacts: [] });
+  const manifest = await loadManifestWithRepair(rootDir);
   const ref = manifest.artifacts.find((artifact) => artifact.id === artifactId);
-  if (!ref) return null;
-  return readJsonFile<StoredArtifact<T> | null>(ref.path, null);
+  if (ref) {
+    const record = await readJsonFile<StoredArtifact<T> | null>(ref.path, null);
+    if (record) return record;
+  }
+
+  const fallback = (await scanArtifactsOnDisk(rootDir)).find((artifact) => artifact.id === artifactId);
+  if (!fallback) return null;
+  return readJsonFile<StoredArtifact<T> | null>(fallback.path, null);
 }
 
 export async function listArtifacts(rootDir: string, kind?: string, limit: number = 20): Promise<ArtifactReference[]> {
-  const manifest = await readJsonFile<ArtifactManifest>(manifestPath(rootDir), { artifacts: [] });
+  const manifest = await loadManifestWithRepair(rootDir);
   return manifest.artifacts
     .filter((artifact) => !kind || artifact.kind === kind)
     .slice(0, Math.max(1, limit));

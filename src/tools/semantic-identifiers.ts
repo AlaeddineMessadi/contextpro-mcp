@@ -110,6 +110,17 @@ function splitTerms(text: string): string[] {
     .filter((token) => token.length > 1);
 }
 
+function extractIdentifierHints(query: string): Set<string> {
+  const rawTokens = query.match(/\b[A-Za-z_][A-Za-z0-9_]*\b/g) ?? [];
+  const queryTrimmed = query.trim();
+  return new Set(
+    rawTokens
+      .filter((token) => token.length >= 3)
+      .filter((token) => /[A-Z_]/.test(token) || rawTokens.length === 1 || queryTrimmed === token)
+      .map((token) => token.toLowerCase()),
+  );
+}
+
 function cosine(a: number[], b: number[]): number {
   let dot = 0;
   let normA = 0;
@@ -272,10 +283,14 @@ async function buildIdentifierIndex(rootDir: string): Promise<IdentifierIndex> {
     const pLimit = (await import("p-limit")).default;
     const limit = pLimit(4);
     await Promise.all(batches.map((batch) => limit(async () => {
-      const embeddings = await fetchEmbedding(batch.map((entry) => entry.text));
-      for (let j = 0; j < batch.length; j++) {
-        vectors[batch[j].idx] = embeddings[j];
-        cache[batch[j].key] = { hash: batch[j].hash, vector: embeddings[j] };
+      try {
+        const embeddings = await fetchEmbedding(batch.map((entry) => entry.text));
+        for (let j = 0; j < batch.length; j++) {
+          vectors[batch[j].idx] = embeddings[j];
+          cache[batch[j].key] = { hash: batch[j].hash, vector: embeddings[j] };
+        }
+      } catch {
+        // Embedding provider unavailable — leave vectors sparse; keyword search still works.
       }
     })));
     await saveEmbeddingCache(rootDir, cache, IDENTIFIER_CACHE_FILE);
@@ -351,9 +366,13 @@ async function rankCallSites(
     const batchSize = getEmbeddingBatchSize();
     for (let i = 0; i < uncached.length; i += batchSize) {
       const batch = uncached.slice(i, i + batchSize);
-      const embeddings = await fetchEmbedding(batch.map((item) => item.text));
-      for (let j = 0; j < batch.length; j++) {
-        cache[batch[j].key] = { hash: batch[j].hash, vector: embeddings[j] };
+      try {
+        const embeddings = await fetchEmbedding(batch.map((item) => item.text));
+        for (let j = 0; j < batch.length; j++) {
+          cache[batch[j].key] = { hash: batch[j].hash, vector: embeddings[j] };
+        }
+      } catch {
+        // Embedding provider unavailable — call sites will rank by keyword score only.
       }
     }
   }
@@ -388,22 +407,35 @@ export async function semanticIdentifierSearchResults(options: SemanticIdentifie
   const index = await buildIdentifierIndex(options.rootDir);
   if (index.docs.length === 0) return { query: options.query, results: [] };
 
-  const [queryVec] = await fetchEmbedding(options.query);
+  let queryVec: number[];
+  try {
+    [queryVec] = await fetchEmbedding(options.query);
+  } catch {
+    queryVec = [];
+  }
   const queryTerms = new Set(splitTerms(options.query));
+  const identifierHints = extractIdentifierHints(options.query);
 
   const scored: RankedIdentifier[] = [];
   for (let i = 0; i < index.docs.length; i++) {
     const doc = index.docs[i];
     if (includeKinds && !includeKinds.has(doc.kind.toLowerCase())) continue;
 
-    const semanticScore = Math.max(cosine(queryVec, index.vectors[i]), 0);
+    const semanticScore = index.vectors[i] && queryVec.length > 0 ? Math.max(cosine(queryVec, index.vectors[i]), 0) : 0;
     const keywordScore = getKeywordCoverage(queryTerms, `${doc.name} ${doc.signature} ${doc.path} ${doc.header}`);
     const totalWeight = semanticWeight + keywordWeight;
+    const exactIdentifierBoost = identifierHints.has(doc.name.toLowerCase()) ? 0.35 : 0;
     const score = totalWeight > 0
       ? clamp01((semanticWeight * semanticScore + keywordWeight * keywordScore) / totalWeight)
       : semanticScore;
+    const boostedScore = clamp01(score + exactIdentifierBoost);
 
-    scored.push({ doc, semanticScore, keywordScore, score });
+    scored.push({
+      doc,
+      semanticScore,
+      keywordScore: identifierHints.has(doc.name.toLowerCase()) ? Math.max(keywordScore, 0.98) : keywordScore,
+      score: boostedScore,
+    });
   }
 
   if (scored.length === 0) return { query: options.query, results: [] };

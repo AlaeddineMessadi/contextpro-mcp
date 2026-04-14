@@ -34,11 +34,15 @@ export interface StatusSnapshot {
   };
   index: {
     generation: number;
+    sourceFiles: number;
+    missingIndexedFiles: number;
+    removedIndexedFiles: number;
     lastIndexedAt: string | null;
     lastReindexAt: string | null;
     lastReindexDurationMs: number | null;
     autoHubCount: number | null;
-    state: "empty" | "fresh";
+    indexStartedAt: string | null;
+    state: "empty" | "indexing" | "stale" | "fresh";
   };
   memory: {
     nodes: number;
@@ -104,8 +108,12 @@ export async function getStatusData(options: StatusOptions): Promise<StatusSnaps
   const graphStats = db.getGraphStats();
   const staleCount = indexedFiles.filter((f) => !allFiles.some((e) => e.relativePath === f.path)).length;
   const warnings: string[] = [];
-  if (indexedFiles.length === 0) warnings.push("Index is empty. Run reindex to populate the database.");
-  else if (staleCount > 5) warnings.push(`${staleCount} files stale or removed. Run reindex to refresh.`);
+  if (indexState.state === "empty") warnings.push("Index is empty. Run reindex to populate the database.");
+  if (indexState.state === "indexing") warnings.push("Indexing is currently in progress. Waiting for completion is safer than reading partial state.");
+  if (indexState.generation === 0 && indexedFiles.length > 0) warnings.push("Index generation is still 0, so the index cannot be treated as fresh.");
+  if (indexState.missingIndexedFiles > 0) warnings.push(`${indexState.missingIndexedFiles} supported source files are not indexed yet.`);
+  if (indexState.removedIndexedFiles > 0 || staleCount > 0) warnings.push(`${Math.max(indexState.removedIndexedFiles, staleCount)} indexed files no longer match the current workspace.`);
+  if (indexState.state === "stale" && warnings.length === 0) warnings.push("Index is stale. Run reindex to refresh.");
 
   return {
     repo: {
@@ -123,10 +131,14 @@ export async function getStatusData(options: StatusOptions): Promise<StatusSnaps
     },
     index: {
       generation: indexState.generation,
+      sourceFiles: indexState.sourceFiles,
+      missingIndexedFiles: indexState.missingIndexedFiles,
+      removedIndexedFiles: indexState.removedIndexedFiles,
       lastIndexedAt: indexState.lastIndexedAt,
       lastReindexAt: indexState.lastReindexAt,
       lastReindexDurationMs: indexState.lastReindexDurationMs,
       autoHubCount: indexState.autoHubCount,
+      indexStartedAt: indexState.indexStartedAt,
       state: indexState.state,
     },
     memory: {
@@ -164,8 +176,10 @@ export async function getStatus(options: StatusOptions): Promise<string> {
     `Stale/removed: ${snapshot.files.staleRemoved}`,
     ``,
     `--- Index ---`,
-    `Generation: ${snapshot.index.generation}`,
+    `Generation: ${snapshot.index.generation} | State: ${snapshot.index.state}`,
+    `Source files: ${snapshot.index.sourceFiles} | Missing indexed: ${snapshot.index.missingIndexedFiles} | Removed indexed: ${snapshot.index.removedIndexedFiles}`,
     `Last indexed: ${snapshot.index.lastIndexedAt ?? "unknown"}`,
+    `Index started: ${snapshot.index.indexStartedAt ?? "unknown"}`,
     `Last full reindex: ${snapshot.index.lastReindexAt ?? "unknown"} (${snapshot.index.lastReindexDurationMs ?? 0}ms)`,
     `Auto hubs: ${snapshot.index.autoHubCount ?? 0}`,
     ``,

@@ -495,6 +495,33 @@ export function extractImports(content: string, filePath: string): ImportDeclara
   return imports;
 }
 
+export interface CallSite {
+  callee: string;
+  line: number;
+  context: string;
+}
+
+export function extractCallSites(content: string): CallSite[] {
+  const lines = content.split("\n");
+  const sites: CallSite[] = [];
+  const callPattern = /\b([a-zA-Z_$][a-zA-Z0-9_$]*)\s*\(/g;
+  const definitionPattern = /(?:function|class|interface|enum|type|const|let|var|def|fn|func|pub)\s+[a-zA-Z_$]/;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (definitionPattern.test(line)) continue;
+    callPattern.lastIndex = 0;
+    let match: RegExpExecArray | null;
+    const seen = new Set<string>();
+    while ((match = callPattern.exec(line)) !== null) {
+      const callee = match[1];
+      if (seen.has(callee)) continue;
+      seen.add(callee);
+      sites.push({ callee, line: i + 1, context: line.trim().substring(0, 120) });
+    }
+  }
+  return sites;
+}
+
 export function flattenSymbols(symbols: CodeSymbol[], parentName?: string): SymbolLocation[] {
   const out: SymbolLocation[] = [];
   for (const sym of symbols) {

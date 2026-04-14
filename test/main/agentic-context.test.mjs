@@ -16,6 +16,27 @@ describe("agentic-context", () => {
     await mkdir(join(fixtureRoot, "src", "auth"), { recursive: true });
     await mkdir(join(fixtureRoot, "test", "auth"), { recursive: true });
     await writeFile(
+      join(fixtureRoot, "README.md"),
+      [
+        "# Auth Session Refresh Race Condition",
+        "",
+        "This doc explains how to fix the auth session refresh race condition and session lock bug.",
+        "",
+      ].join("\n"),
+    );
+    await writeFile(
+      join(fixtureRoot, "package.json"),
+      JSON.stringify({
+        name: "auth-fixture",
+        type: "module",
+        scripts: {
+          test: "node --test test/main/*.test.mjs",
+          build: "tsc",
+          lint: "eslint .",
+        },
+      }, null, 2) + "\n",
+    );
+    await writeFile(
       join(fixtureRoot, "src", "auth", "session.ts"),
       [
         "// Auth session refresh logic for concurrency-safe token reuse",
@@ -99,6 +120,7 @@ describe("agentic-context", () => {
     assert.ok(taskPack.trust.artifact.id.startsWith("task_pack-"));
     assert.ok(taskPack.freshness.indexGeneration >= 1);
     assert.ok(taskPack.files.some((file) => file.path.includes("session.ts")));
+    assert.notEqual(taskPack.files[0].path, "README.md");
     assert.ok(taskPack.tests.some((test) => test.path.includes("session.test.ts")));
 
     const impact = JSON.parse(await agenticMod.buildChangeImpact({
@@ -111,6 +133,37 @@ describe("agentic-context", () => {
     assert.ok(impact.affectedFiles.some((file) => file.path.includes("middleware.ts")));
     assert.ok(impact.affectedFiles.every((file) => file.kind !== "text_match"));
     assert.ok(Array.isArray(impact.affectedTests));
+  });
+
+  it("builds edit scope and validation with code-first ranking", async () => {
+    const projectMod = await import("../../build/core/project-config.js");
+    await projectMod.ensureProjectConfig({
+      rootDir: fixtureRoot,
+      projectId: "auth-fixture",
+      clientId: "demo-client",
+      sessionSource: "codex",
+    });
+
+    const reindexMod = await import("../../build/tools/reindex.js");
+    await reindexMod.reindex({ rootDir: fixtureRoot, force: true });
+
+    const agenticMod = await import("../../build/tools/agentic-context.js");
+    const editScope = JSON.parse(await agenticMod.buildEditScope({
+      rootDir: fixtureRoot,
+      task: "fix auth session refresh race condition",
+      format: "json",
+    }));
+    assert.ok(editScope.recommendedScope.some((item) => item.path === "src/auth/session.ts"));
+    assert.ok(editScope.recommendedScope.every((item) => item.path !== "README.md"));
+
+    const validation = JSON.parse(await agenticMod.buildValidateScope({
+      rootDir: fixtureRoot,
+      task: "fix auth session refresh race condition",
+      format: "json",
+    }));
+    assert.ok(validation.tests.some((test) => test.path === "test/auth/session.test.ts"));
+    assert.ok(validation.checks.some((check) => check.command.includes("npm run test -- test/auth/session.test.ts")));
+    assert.ok(validation.checks.some((check) => check.command === "npm run build"));
   });
 
   it("records task memory and promotes patterns", async () => {

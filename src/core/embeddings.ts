@@ -477,14 +477,16 @@ export class SearchIndex {
             cache[docs[batch[j].idx].path] = { hash: batch[j].hash, vector: embeddings[j] };
           }
         } catch (error) {
-          if (!isContextLengthError(error)) throw error;
+          if (!isContextLengthError(error)) {
+            // Embedding provider unavailable — leave vectors sparse; keyword search still works.
+            return;
+          }
           for (const item of batch) {
             try {
               const [vector] = await fetchEmbedding(item.text);
               this.vectors[item.idx] = vector;
               cache[docs[item.idx].path] = { hash: item.hash, vector };
-            } catch (itemError) {
-              if (!isContextLengthError(itemError)) throw itemError;
+            } catch {
               delete cache[docs[item.idx].path];
             }
           }
@@ -496,7 +498,12 @@ export class SearchIndex {
 
   async search(query: string, optionsOrTopK?: number | SearchQueryOptions): Promise<SearchResult[]> {
     const options = resolveSearchOptions(optionsOrTopK);
-    const [queryVec] = await fetchEmbedding(query);
+    let queryVec: number[];
+    try {
+      [queryVec] = await fetchEmbedding(query);
+    } catch {
+      queryVec = [];
+    }
     const queryTerms = new Set(splitCamelCase(query));
     const scores: {
       idx: number;

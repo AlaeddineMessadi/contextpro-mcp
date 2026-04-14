@@ -6,37 +6,37 @@ ai agents are not allowed to change this file's content without human approval, 
 
 ## v1
 
-- [ ] rename tools for better meaning
-  - [ ] rename semantic_navigate to cluster
-  - [ ] rename get_context_tree to tree
-  - [ ] rename semantic_identifier_search and semantic_code_search (merged) to search
-  - [ ] rename get_feature_hub to find_hub and change its functionality to return rankings or relevant hubs based on a search query with options for semantic or keyword search or both
-    - [ ] add parameter to search for data in hubs by semantic meaning or keyword match or both
-    - [ ] add parameter optionality so if no parameters are provided, it returns context of all hubs in the project
-  - [ ] rename get_file_skeleton to skeleton
-  - [ ] rename get_blast_radius to blast_radius
-  - [ ] rename run_static_analysis to lint
-    - [ ] add skill checking - every file has no comments than top 2 lines, and other checks in the instructions file and return a skill score for each file and the project overall with files and lines that need fixing
-  - [ ] rename propose_commit to checkpoint and change its functionality to create a local undoable commit that agent can create during long worksessions mid work - uses shadow checkpoints or git whichever is better
-  - [ ] rename list_restore_points to restore_points
-  - [ ] rename undo_change to restore and change its functionality to restore to a specific commit point
-  - [ ] rename upsert_memory_node to create_memory
-  - [ ] rename search_memory_graph to search_memory
-  - [ ] rename retrieve_with_traversal to explore_memory
-  - [ ] create delete_memory tool that deletes nodes or relationships in the memory graph
-  - [ ] prune_stale_links tool should be removed as i want it to be done automatically by the system when any memory tools are called and before graph is accessed
-  - [ ] add_interlinked_context to bulk_memory
-- [ ] merge semantic_identifier_search and semantic_code_search into one tool called search with a parameter for search type (e.g. "identifier" vs "file" or "hybrid" - which uses both regex and semantic search and returns 2 separate lists of results)
-  - [ ] add options for filtering by semantic meaning or normal search or both
-  - [ ] use a vector database for storing embeddings and searching instead of doing it in memory for better performance and scalability
-- [ ] create a new memory system that uses a graph database and md files and vector database for storing memories
-  - [ ] add tool for updating memories with new information that updates the embeddings depending on the changes made to the content and the agent should use this instead of directly updating the content in the file
-  - [ ] update other tools to use the new memory system too, alongside with tools that save nodes and edges automatically and creates embeddings automatically when a new node or edge is created or deleted
-- [ ] create a new tool called init that initializes the project by creating a context tree and .contextplus folder
-  - [ ] use .contextplus/hubs for feature hubs
-  - [ ] use .contextplus/embeddings for storing file and symbol embeddings
-  - [ ] use .contextplus/config for configuration files
-  - [ ] use .contextplus/memories for memory graph data
+- [x] rename tools for better meaning
+  - [x] rename semantic_navigate to cluster
+  - [x] rename get_context_tree to tree
+  - [x] rename semantic_identifier_search and semantic_code_search (merged) to search
+  - [x] rename get_feature_hub to find_hub and change its functionality to return rankings or relevant hubs based on a search query with options for semantic or keyword search or both
+    - [x] add parameter to search for data in hubs by semantic meaning or keyword match or both
+    - [x] add parameter optionality so if no parameters are provided, it returns context of all hubs in the project
+  - [x] rename get_file_skeleton to skeleton
+  - [x] rename get_blast_radius to blast_radius
+  - [x] rename run_static_analysis to lint
+    - [x] add skill checking - every file has no comments than top 2 lines, and other checks in the instructions file and return a skill score for each file and the project overall with files and lines that need fixing
+  - [x] rename propose_commit to checkpoint and change its functionality to create a local undoable commit that agent can create during long worksessions mid work - uses shadow checkpoints or git whichever is better
+  - [x] rename list_restore_points to restore_points
+  - [x] rename undo_change to restore and change its functionality to restore to a specific commit point
+  - [x] rename upsert_memory_node to create_memory
+  - [x] rename search_memory_graph to search_memory
+  - [x] rename retrieve_with_traversal to explore_memory
+  - [x] create delete_memory tool that deletes nodes or relationships in the memory graph
+  - [x] prune_stale_links tool should be removed as i want it to be done automatically by the system when any memory tools are called and before graph is accessed
+  - [x] add_interlinked_context to bulk_memory
+- [x] merge semantic_identifier_search and semantic_code_search into one tool called search with a parameter for search type (e.g. "identifier" vs "file" or "hybrid" - which uses both regex and semantic search and returns 2 separate lists of results)
+  - [x] add options for filtering by semantic meaning or normal search or both
+  - [x] use a vector database for storing embeddings and searching instead of doing it in memory for better performance and scalability
+- [x] create a new memory system that uses a graph database and md files and vector database for storing memories
+  - [x] add tool for updating memories with new information that updates the embeddings depending on the changes made to the content and the agent should use this instead of directly updating the content in the file
+  - [x] update other tools to use the new memory system too, alongside with tools that save nodes and edges automatically and creates embeddings automatically when a new node or edge is created or deleted
+- [x] create a new tool called init that initializes the project by creating a context tree and .contextplus folder
+  - [x] use .contextplus/hubs for feature hubs
+  - [x] use .contextplus/embeddings for storing file and symbol embeddings
+  - [x] use .contextplus/config for configuration files
+  - [x] use .contextplus/memories for memory graph data
 
 ---
 

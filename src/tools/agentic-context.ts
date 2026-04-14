@@ -8,12 +8,20 @@ import { fetchEmbedding } from "../core/embeddings.js";
 import { getDB, type MemoryNodeInput, type MemoryNodeRow } from "../core/db.js";
 import { createPromotedPattern, listPromotedPatterns, listRegisteredWorkspaces, loadProjectConfig } from "../core/project-config.js";
 import { unifiedSearchData } from "./search.js";
-import { walkDirectory } from "../core/walker.js";
-import { discoverHubs, parseHubFile } from "../core/hub.js";
-import { basename, dirname, join } from "path";
+import { dirname, join } from "path";
 import { persistArtifact } from "../core/artifacts.js";
 import { buildFreshnessMetadata, buildTrustMetadata, getIndexState } from "../core/context-metadata.js";
 import { resolveSymbolData } from "./resolve-symbol.js";
+import {
+  unique, parseMetadata, parseJsonArray,
+  findTestsForFiles, getRecentDiffSummary, getProjectMemoryHits,
+  resolveFilesFromSymbols, findTextDependents, scanExactMentions, fileRisk, hubMatchesForFiles,
+} from "./retrieval-helpers.js";
+import {
+  type PlanningFileCandidate,
+  buildExactIdentifierPathSet, rerankPlanningFiles, maybeChatRerankPlanningFiles, upsertRanked,
+  detectCodeChangeIntent, extractIdentifierHints, isDocumentationPath, isHubPath, isSourcePath, isTestPath, splitQueryTerms, clamp01,
+} from "./planning-helpers.js";
 
 const execAsync = promisify(exec);
 
@@ -32,6 +40,7 @@ export interface TaskPackOptions {
   rootDir: string;
   task: string;
   maxFiles?: number;
+  maxMemory?: number;
   includeTests?: boolean;
   includeRecentDiffs?: boolean;
   includeMemory?: boolean;
@@ -61,6 +70,14 @@ export interface DecisionBriefOptions {
   includeHubs?: boolean;
   includeMemory?: boolean;
   includeTests?: boolean;
+  maxMemory?: number;
+  format?: OutputFormat;
+}
+
+export interface ValidateScopeOptions {
+  rootDir: string;
+  task: string;
+  maxFiles?: number;
   format?: OutputFormat;
 }
 
@@ -89,35 +106,6 @@ export interface PromotePatternOptions {
   sanitize?: boolean;
   summary: string;
   format?: OutputFormat;
-}
-
-function parseMetadata(raw: string): Record<string, string> {
-  try {
-    const parsed = JSON.parse(raw);
-    if (!parsed || typeof parsed !== "object") return {};
-    return Object.fromEntries(Object.entries(parsed).map(([key, value]) => [key, String(value)]));
-  } catch {
-    return {};
-  }
-}
-
-function parseJsonArray(raw: string | null): string[] {
-  if (!raw) return [];
-  try {
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed.map((value) => String(value)) : [];
-  } catch {
-    return [];
-  }
-}
-
-function unique<T>(items: T[]): T[] {
-  return Array.from(new Set(items));
-}
-
-function upsertRanked<T extends { path: string; score: number; kind: string }>(map: Map<string, T>, value: T): void {
-  const existing = map.get(value.path);
-  if (!existing || value.score > existing.score) map.set(value.path, value);
 }
 
 function normalizeConfidence(score: number): number {
@@ -167,162 +155,21 @@ function inferProjectSummary(task: string, filePaths: string[]): string {
   return `${task} likely centers on ${focus}.`;
 }
 
-async function findConventionTests(rootDir: string, sourceFile: string, allFiles: string[]): Promise<string[]> {
-  const base = sourceFile.replace(/\.\w+$/, "").split("/").pop() ?? "";
-  return allFiles.filter((file) => {
-    const isTest = /\.test\.\w+$|\.spec\.\w+$|\.demo\.\w+$/.test(file);
-    if (!isTest) return false;
-    const testBase = file.replace(/\.\w+$/, "").replace(/\.(test|spec|demo)$/, "").split("/").pop() ?? "";
-    return testBase === base;
-  });
-}
-
-async function findTestsForFiles(rootDir: string, files: string[]): Promise<Array<{ path: string; reason: string; score: number }>> {
-  const db = await getDB(rootDir);
-  const entries = await walkDirectory({ rootDir, depthLimit: 0 });
-  const allFiles = entries.filter((entry) => !entry.isDirectory).map((entry) => entry.relativePath);
-  const results: Array<{ path: string; reason: string; score: number }> = [];
-
-  for (const file of files) {
-    const convention = await findConventionTests(rootDir, file, allFiles);
-    for (const testPath of convention) {
-      results.push({ path: testPath, reason: "Matched by test naming convention", score: 0.68 });
-    }
-    const dbFile = db.getFile(file);
-    if (!dbFile) continue;
-    const importers = db.getImportersOf(dbFile.id);
-    const indexedFiles = db.getAllFiles();
-    for (const importer of importers) {
-      const source = indexedFiles.find((candidate) => candidate.id === importer.source_file_id);
-      if (!source) continue;
-      if (!/\.test\.\w+$|\.spec\.\w+$|\.demo\.\w+$/.test(source.path)) continue;
-      results.push({ path: source.path, reason: "Imports target module", score: 0.82 });
-    }
-  }
-
-  const deduped = new Map<string, { path: string; reason: string; score: number }>();
-  for (const item of results) {
-    const existing = deduped.get(item.path);
-    if (!existing || item.score > existing.score) deduped.set(item.path, item);
-  }
-  return [...deduped.values()].sort((a, b) => b.score - a.score);
-}
-
-async function getRecentDiffSummary(rootDir: string, filePath: string): Promise<{ path: string; commit: string; summary: string } | null> {
-  try {
-    const { stdout } = await execAsync(`git log --oneline -n 1 -- "${filePath}"`, {
-      cwd: rootDir,
-      timeout: 5000,
-    });
-    const line = stdout.trim().split("\n")[0];
-    if (!line) return null;
-    const [commit, ...summary] = line.split(" ");
-    return {
-      path: filePath,
-      commit,
-      summary: summary.join(" "),
-    };
-  } catch {
-    return null;
-  }
-}
-
-async function getProjectMemoryHits(rootDir: string, query: string, topK: number): Promise<Array<{ id: string; kind: string; summary: string }>> {
-  const db = await getDB(rootDir);
-  const [queryVector] = await fetchEmbedding(query);
-  const hits = db.searchMemoryNodes(queryVector, Math.max(topK * 6, 18));
-  const filtered: Array<{ id: string; kind: string; summary: string }> = [];
-  for (const hit of hits) {
-    const metadata = parseMetadata(hit.node.metadata);
-    if ((metadata.scope ?? "project") !== "project") continue;
-    filtered.push({
-      id: hit.node.id,
-      kind: metadata.record_kind ?? "memory",
-      summary: hit.node.content.slice(0, 220),
-    });
-    if (filtered.length >= topK) break;
-  }
-  return filtered;
-}
-
-async function resolveFilesFromSymbols(rootDir: string, symbols: string[] | undefined): Promise<string[]> {
-  if (!symbols || symbols.length === 0) return [];
-  const db = await getDB(rootDir);
-  const files: string[] = [];
-  const indexedFiles = db.getAllFiles();
-  for (const symbol of symbols) {
-    const matches = db.searchSymbolsByName(symbol);
-    for (const match of matches) {
-      const file = indexedFiles.find((candidate) => candidate.id === match.file_id);
-      if (file) files.push(file.path);
-    }
-  }
-  return unique(files);
-}
-
-async function findTextDependents(rootDir: string, filePath: string, symbolNames: string[] = []): Promise<string[]> {
-  const entries = await walkDirectory({ rootDir, depthLimit: 0 });
-  const candidates = entries.filter((entry) => !entry.isDirectory).map((entry) => entry.relativePath);
-  const baseName = basename(filePath).replace(/\.\w+$/, "");
-  const matches: string[] = [];
-  for (const candidate of candidates) {
-    if (candidate === filePath) continue;
-    try {
-      const content = await readFile(join(rootDir, candidate), "utf-8");
-      if (content.includes(baseName) || symbolNames.some((symbol) => content.includes(symbol))) {
-        matches.push(candidate);
-      }
-    } catch {}
-  }
-  return unique(matches);
-}
-
-async function scanExactMentions(rootDir: string, candidateFiles: string[], symbolNames: string[]): Promise<string[]> {
-  if (candidateFiles.length === 0 || symbolNames.length === 0) return [];
-  const matches: string[] = [];
-  for (const candidate of candidateFiles) {
-    try {
-      const content = await readFile(join(rootDir, candidate), "utf-8");
-      if (symbolNames.some((symbol) => content.includes(symbol))) matches.push(candidate);
-    } catch {}
-  }
-  return unique(matches);
-}
-
 function formatMaybeJson(format: OutputFormat | undefined, value: unknown, textRenderer: () => string): string {
   if (format === "json") return JSON.stringify(value, null, 2);
   return textRenderer();
 }
 
-async function fileRisk(rootDir: string, filePath: string): Promise<{ importers: number; imports: number; churn: number }> {
-  const db = await getDB(rootDir);
-  const dbFile = db.getFile(filePath);
-  let importers = 0;
-  let imports = 0;
-  if (dbFile) {
-    importers = db.getImportersOf(dbFile.id).length;
-    imports = db.getImportsFrom(dbFile.id).length;
-  }
-  let churn = 0;
+async function readPackageScripts(rootDir: string): Promise<Record<string, string>> {
   try {
-    const { stdout } = await execAsync(`git log --oneline -- "${filePath}"`, { cwd: rootDir, timeout: 5000 });
-    churn = stdout.trim().split("\n").filter(Boolean).length;
-  } catch {}
-  return { importers, imports, churn };
+    const raw = await readFile(join(rootDir, "package.json"), "utf-8");
+    const parsed = JSON.parse(raw) as { scripts?: Record<string, string> };
+    return parsed.scripts ?? {};
+  } catch {
+    return {};
+  }
 }
 
-async function hubMatchesForFiles(rootDir: string, filePaths: string[]): Promise<string[]> {
-  const hubs = await discoverHubs(rootDir).catch(() => []);
-  const matches: string[] = [];
-  for (const hubPath of hubs) {
-    const hub = await parseHubFile(`${rootDir}/${hubPath}`).catch(() => null);
-    if (!hub) continue;
-    if (hub.links.some((link) => filePaths.includes(link.target))) {
-      matches.push(hubPath);
-    }
-  }
-  return matches;
-}
 
 export async function buildTaskPack(options: TaskPackOptions): Promise<string> {
   const maxFiles = Math.max(1, Math.floor(options.maxFiles ?? 8));
@@ -335,18 +182,33 @@ export async function buildTaskPack(options: TaskPackOptions): Promise<string> {
   });
   const fileResults = search.files?.results ?? [];
   const identifierResults = search.identifiers?.results ?? [];
-  const topFiles = fileResults.slice(0, maxFiles).map((item) => ({
+  const exactIdentifierPaths = buildExactIdentifierPathSet(search, options.task);
+  const rankedTaskFiles = await maybeChatRerankPlanningFiles(
+    options.rootDir,
+    options.task,
+    rerankPlanningFiles(
+      fileResults.slice(0, Math.max(maxFiles, 8)).map((item) => ({
+        path: item.path,
+        reason: `Top semantic and structural match (${Math.round(item.semanticScore)} semantic / ${Math.round(item.keywordScore)} keyword)`,
+        score: item.score / 100,
+        symbols: item.matchedSymbols,
+      })),
+      options.task,
+      exactIdentifierPaths,
+    ),
+  );
+  const topFiles = rankedTaskFiles.slice(0, maxFiles).map((item) => ({
     path: item.path,
-    reason: `Top semantic and structural match (${Math.round(item.semanticScore)} semantic / ${Math.round(item.keywordScore)} keyword)`,
-    score: item.score / 100,
-    symbols: item.matchedSymbols,
+    reason: item.reason,
+    score: item.score,
+    symbols: item.symbols,
   }));
   const filePaths = topFiles.map((item) => item.path);
   const tests = options.includeTests === false ? [] : await findTestsForFiles(options.rootDir, filePaths);
   const recentDiffs = options.includeRecentDiffs === false
     ? []
     : (await Promise.all(filePaths.slice(0, 5).map((path) => getRecentDiffSummary(options.rootDir, path)))).filter(Boolean);
-  const memory = options.includeMemory === false ? [] : await getProjectMemoryHits(options.rootDir, options.task, 3);
+  const memory = options.includeMemory === false ? [] : await getProjectMemoryHits(options.rootDir, options.task, Math.min(options.maxMemory ?? 3, 10));
   const risks = [
     ...identifierResults.slice(0, 2).filter((item) => item.totalCalls > 3).map((item) => `${item.name} has ${item.totalCalls} ranked call sites`),
     ...(tests.length === 0 ? ["No nearby tests found for top-ranked files"] : []),
@@ -648,11 +510,28 @@ export async function buildEditScope(options: EditScopeOptions): Promise<string>
     topK: Math.max(maxFiles, 5),
     persistArtifact: false,
   });
-  const recommendedScope = search.files?.results.slice(0, options.preferSmallestScope === false ? maxFiles : Math.min(maxFiles, 3)).map((file) => ({
+  const exactIdentifierPaths = buildExactIdentifierPathSet(search, options.task);
+  const rankedScopeFiles = await maybeChatRerankPlanningFiles(
+    options.rootDir,
+    options.task,
+    rerankPlanningFiles(
+      (search.files?.results ?? []).slice(0, Math.max(maxFiles, 6)).map((file) => ({
+        path: file.path,
+        reason: `Scoped from semantic file matches (${Math.round(file.semanticScore)} semantic / ${Math.round(file.keywordScore)} keyword)`,
+        score: file.score / 100,
+        symbols: file.matchedSymbols,
+      })),
+      options.task,
+      exactIdentifierPaths,
+    ),
+  );
+  const recommendedScope = rankedScopeFiles
+    .slice(0, options.preferSmallestScope === false ? maxFiles : Math.min(maxFiles, 3))
+    .map((file) => ({
     path: file.path,
     action: "modify",
-    confidence: Math.min(0.98, 0.45 + file.score / 100),
-  })) ?? [];
+    confidence: Math.min(0.98, 0.45 + file.score),
+  }));
   const tests = await findTestsForFiles(options.rootDir, recommendedScope.map((item) => item.path));
   for (const test of tests.slice(0, 2)) {
     recommendedScope.push({
@@ -752,8 +631,23 @@ export async function buildDecisionBrief(options: DecisionBriefOptions): Promise
     topK: 5,
     persistArtifact: false,
   });
-  const filesToReadFirst = search.files?.results.slice(0, 4).map((item) => item.path) ?? [];
-  const memory = options.includeMemory === false ? [] : await getProjectMemoryHits(options.rootDir, options.query, 3);
+  const exactIdentifierPaths = buildExactIdentifierPathSet(search, options.query);
+  const rankedBriefFiles = await maybeChatRerankPlanningFiles(
+    options.rootDir,
+    options.query,
+    rerankPlanningFiles(
+      (search.files?.results ?? []).slice(0, 7).map((item) => ({
+        path: item.path,
+        reason: `Decision candidate (${Math.round(item.semanticScore)} semantic / ${Math.round(item.keywordScore)} keyword)`,
+        score: item.score / 100,
+        symbols: item.matchedSymbols,
+      })),
+      options.query,
+      exactIdentifierPaths,
+    ),
+  );
+  const filesToReadFirst = rankedBriefFiles.slice(0, 4).map((item) => item.path);
+  const memory = options.includeMemory === false ? [] : await getProjectMemoryHits(options.rootDir, options.query, Math.min(options.maxMemory ?? 3, 10));
   const tests = options.includeTests === false ? [] : await findTestsForFiles(options.rootDir, filesToReadFirst);
   const hubs = options.includeHubs === false ? [] : await hubMatchesForFiles(options.rootDir, filesToReadFirst);
   const openQuestions = [
@@ -791,7 +685,7 @@ export async function buildDecisionBrief(options: DecisionBriefOptions): Promise
     summary: inferProjectSummary(options.query, filesToReadFirst),
     topSymbols: search.identifiers?.results.slice(0, 5).map((item) => item.name) ?? [],
     filesToReadFirst,
-    doNotReadYet: search.files?.results.slice(4, 7).map((item) => item.path) ?? [],
+    doNotReadYet: rankedBriefFiles.slice(4, 7).map((item) => item.path),
     hubs,
     memory,
     tests: tests.slice(0, 5),
@@ -851,6 +745,93 @@ export async function buildDecisionBrief(options: DecisionBriefOptions): Promise
   });
 }
 
+export async function buildValidateScope(options: ValidateScopeOptions): Promise<string> {
+  const maxFiles = Math.max(1, Math.floor(options.maxFiles ?? 5));
+  const editScopeRaw = JSON.parse(await buildEditScope({
+    rootDir: options.rootDir,
+    task: options.task,
+    maxFiles,
+    preferSmallestScope: true,
+    format: "json",
+  })) as {
+    repo: AgentRepoMetadata;
+    freshness: ReturnType<typeof buildFreshnessMetadata>;
+    trust: ReturnType<typeof buildTrustMetadata>;
+    recommendedScope: Array<{ path: string; action: string; confidence: number }>;
+    optionalScope: Array<{ path: string; action: string; confidence: number }>;
+  };
+  const scripts = await readPackageScripts(options.rootDir);
+  const sourceFiles = editScopeRaw.recommendedScope.filter((item) => isSourcePath(item.path)).map((item) => item.path);
+  const tests = await findTestsForFiles(options.rootDir, sourceFiles);
+  const testPaths = tests.slice(0, 8).map((test) => test.path);
+  const checks: Array<{ type: string; command: string; reason: string }> = [];
+
+  if (testPaths.length > 0 && scripts.test) {
+    checks.push({
+      type: "test",
+      command: `npm run test -- ${testPaths.join(" ")}`,
+      reason: "Closest regression tests for the scoped source files.",
+    });
+  } else if (testPaths.length > 0 && testPaths.every((path) => /\.(test|spec)\.(mjs|js)$/.test(path))) {
+    checks.push({
+      type: "test",
+      command: `node --test ${testPaths.join(" ")}`,
+      reason: "Direct Node test invocation is available for the scoped test files.",
+    });
+  }
+
+  if (scripts.lint) {
+    checks.push({
+      type: "lint",
+      command: "npm run lint",
+      reason: "Project lint pass to catch type and style regressions around the edit scope.",
+    });
+  }
+
+  if (scripts.build) {
+    checks.push({
+      type: "build",
+      command: "npm run build",
+      reason: "Project build verifies the edited modules still compile cleanly.",
+    });
+  }
+
+  if (checks.length === 0) {
+    checks.push({
+      type: "manual",
+      command: "Inspect nearest tests or run the project-standard validation command manually.",
+      reason: "No safe script-level validation command could be inferred from the repository config.",
+    });
+  }
+
+  const payload = {
+    repo: editScopeRaw.repo,
+    freshness: editScopeRaw.freshness,
+    trust: editScopeRaw.trust,
+    task: options.task,
+    sourceFiles,
+    tests: tests.slice(0, 8),
+    optionalFiles: editScopeRaw.optionalScope,
+    checks,
+  };
+
+  return formatMaybeJson(options.format, payload, () => {
+    const lines = [
+      `Validate Scope: ${options.task}`,
+      "",
+      `Source files: ${sourceFiles.join(", ") || "(none)"}`,
+      `Tests: ${testPaths.join(", ") || "(none)"}`,
+      "",
+      "Checks:",
+    ];
+    for (const check of checks) {
+      lines.push(`  ${check.command}`);
+      lines.push(`    ${check.reason}`);
+    }
+    return lines.join("\n");
+  });
+}
+
 export async function recordTaskMemory(options: MemoryRecordTaskOptions): Promise<string> {
   const db = await getDB(options.rootDir);
   const config = await loadProjectConfig(options.rootDir);
@@ -869,7 +850,12 @@ export async function recordTaskMemory(options: MemoryRecordTaskOptions): Promis
     record_kind: "task",
     task: options.task,
   };
-  const [embedding] = await fetchEmbedding(contentParts.join("\n"));
+  let embedding: number[] = [];
+  try {
+    [embedding] = await fetchEmbedding(contentParts.join("\n"));
+  } catch {
+    // Embedding provider unavailable — store node without vector; keyword search still works.
+  }
   const node = {
     type: "note",
     label: `task:${options.task}`,

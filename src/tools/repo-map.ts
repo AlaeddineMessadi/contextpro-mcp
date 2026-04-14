@@ -121,7 +121,13 @@ export async function getRepoMapData(options: RepoMapOptions): Promise<RepoMapDa
   const freshness = buildFreshnessMetadata(indexState, {
     staleCount: 0,
     refreshed: false,
-    warning: indexState.state === "empty" ? "Index is empty. Run reindex to populate the repository map." : null,
+    warning: indexState.state === "empty"
+      ? "Index is empty. Run reindex to populate the repository map."
+      : indexState.state === "indexing"
+        ? "Indexing is still in progress. Wait for completion before trusting the repository map."
+        : indexState.state === "stale"
+          ? "Index is stale relative to the workspace. Run reindex for a truthful repository map."
+          : null,
   });
   const evidence = [
     `${allFiles.length} indexed files available`,

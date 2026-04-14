@@ -10,33 +10,35 @@ https://github.com/user-attachments/assets/a97a451f-c9b4-468d-b036-15b65fc13e79
 
 ### Discovery
 
-| Tool        | Description                                                                                                                                                      |
-| ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `health`    | Startup health for the active repo, including project identity, Node ABI, native storage readiness, and database openability.                                   |
-| `artifact_list` | List recent reusable context artifacts generated for this project so agents can reuse prior repo maps, searches, and task packets.                         |
-| `artifact_read` | Load a previously generated context artifact by ID instead of regenerating the same context packet.                                                        |
-| `repo_map`  | Compact whole-repo outline with important files and top-level symbols. Designed to give agents first-turn orientation with low token usage.                     |
-| `tree`      | Structural AST tree of a project with file headers and symbol ranges (line numbers for functions/classes/methods). Dynamic pruning shrinks output automatically. |
-| `skeleton`  | Function signatures, class methods, and type definitions with line ranges, without reading full bodies. Shows the API surface.                                   |
-| `search`    | Search by meaning with modes: `file` (headers/symbols), `identifier` (functions/classes with call chains), or `hybrid` (both). Uses embeddings + keyword scoring and returns trust/freshness metadata in JSON mode. |
-| `resolve_symbol` | Resolve an identifier to the most likely definition with ambiguity scoring and file-context-aware ranking.                                                |
-| `cluster`   | Browse codebase by meaning using spectral clustering. Groups semantically related files into labeled clusters.                                                   |
+| Tool             | Description                                                                                                                                                      |
+| ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `health`         | Startup health for the active repo, including project identity, Node ABI, native storage readiness, and database openability.                                    |
+| `artifact_list`  | List recent reusable context artifacts generated for this project so agents can reuse prior repo maps, searches, and task packets.                               |
+| `artifact_read`  | Load a previously generated context artifact by ID instead of regenerating the same context packet.                                                              |
+| `repo_map`       | Compact whole-repo outline with important files and top-level symbols. Designed to give agents first-turn orientation with low token usage.                      |
+| `tree`           | Structural AST tree of a project with file headers and symbol ranges (line numbers for functions/classes/methods). Dynamic pruning shrinks output automatically.  |
+| `skeleton`       | Function signatures, class methods, and type definitions with line ranges, without reading full bodies. Shows the API surface.                                    |
+| `search`         | Search by meaning with modes: `file` (headers/symbols), `identifier` (functions/classes with call chains), or `hybrid` (both). Uses embeddings + keyword scoring. |
+| `resolve_symbol` | Resolve an identifier to the most likely definition with ambiguity scoring and file-context-aware ranking.                                                        |
+| `cluster`        | Browse codebase by meaning using spectral clustering. Groups semantically related files into labeled clusters.                                                    |
 
 ### Analysis
 
-| Tool           | Description                                                                                                                      |
-| -------------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| `blast_radius` | Trace every file and line where a symbol is imported or used. Prevents orphaned references.                                      |
-| `status`       | Project overview dashboard with repo identity, index generations, memory graph stats, git state, and recent per-tool timing stats. |
-| `diff`         | Structured git diff summary with changed files, line counts, and affected symbols.                                               |
-| `related`      | Show related files via imports, importers, sibling files, tests, and hubs.                                                      |
-| `test_map`     | Map a source file or symbol to likely tests.                                                                                     |
-| `explain`      | Extract one symbol body and its immediate call dependencies without loading an entire file.                                      |
-| `task_pack`    | Assemble the minimum useful working set for a task: ranked files, tests, diffs, memory, risks, and reusable artifact ids.      |
-| `change_impact`| Estimate what could break if files or symbols change, using resolver-aware evidence, related files, tests, churn, and reasons. |
-| `edit_scope`   | Identify the smallest likely safe edit set for a task, with confidence and artifact ids in JSON mode.                           |
-| `decision_brief` | Compress a subsystem into a short decision-oriented brief with ranked files, symbols, tests, hubs, memory, and artifact ids. |
-| `lint`         | Auto-detects and runs project linters (tsc, eslint, ruff, cargo check, go vet). Plus skill score checking for code quality.      |
+| Tool              | Description                                                                                                                      |
+| ----------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `blast_radius`    | Trace every file and line where a symbol is used. Uses the SQLite call_sites index first, then import graph scoping, then full scan as fallback. |
+| `status`          | Project overview dashboard with repo identity, index generations, memory graph stats, git state, and recent per-tool timing stats. |
+| `diff`            | Structured git diff summary with changed files, line counts, and affected symbols.                                               |
+| `related`         | Show related files via imports, importers, sibling files, tests, and hubs.                                                       |
+| `test_map`        | Map a source file or symbol to likely tests via import graph and naming conventions.                                              |
+| `explain`         | Extract one symbol body and its immediate call dependencies without loading an entire file.                                       |
+| `reindex`         | Re-walk and re-parse project files after git pull, branch switch, or external edits. Detects changed files via content hash.     |
+| `task_pack`       | Assemble the minimum useful working set for a task: ranked files, tests, diffs, memory, risks, and reusable artifact ids.        |
+| `change_impact`   | Estimate what could break if files or symbols change, using resolver-aware evidence, related files, tests, churn, and reasons.   |
+| `edit_scope`      | Identify the smallest likely safe edit set for a task, with confidence and artifact ids in JSON mode.                            |
+| `decision_brief`  | Compress a subsystem into a short decision-oriented brief with ranked files, symbols, tests, hubs, memory, and artifact ids.     |
+| `validate_scope`  | Recommend the most relevant validation checks and commands for a set of scoped files.                                             |
+| `lint`            | Auto-detects and runs project linters (tsc, eslint, ruff, cargo check, go vet). Plus skill score checking for code quality.      |
 
 ### Code Ops
 
@@ -47,23 +49,25 @@ https://github.com/user-attachments/assets/a97a451f-c9b4-468d-b036-15b65fc13e79
 
 ### Version Control
 
-| Tool          | Description                                                                                                |
-| ------------- | ---------------------------------------------------------------------------------------------------------- |
-| `checkpoints` | List all shadow restore points created by `checkpoint`. Each captures file state before changes.            |
-| `restore`     | Restore files to their state before a specific change. Uses shadow restore points. Does not affect git.     |
+| Tool          | Description                                                                                                 |
+| ------------- | ----------------------------------------------------------------------------------------------------------- |
+| `checkpoints` | List all shadow restore points created by `checkpoint`. Each captures file state before changes.             |
+| `restore`     | Restore files to their state before a specific change. Uses shadow restore points. Does not affect git.      |
 
 ### Memory & RAG
 
-| Tool              | Description                                                                                              |
-| ----------------- | -------------------------------------------------------------------------------------------------------- |
-| `memory_create`   | Create or update a memory node (concept, file, symbol, note) with auto-generated embeddings.             |
-| `memory_link`     | Create typed edges between nodes (relates_to, depends_on, implements, references, similar_to, contains). |
-| `memory_search`   | Semantic search with graph traversal — finds direct matches then walks neighbors.                        |
-| `memory_bulk`     | Bulk-add nodes with auto-similarity linking (cosine ≥ 0.72 creates edges automatically).                 |
-| `memory_explore`  | Start from a node and walk outward — returns all reachable neighbors scored by decay and depth.           |
-| `memory_record_task` | Persist task outcomes with linked files, assumptions, evidence, and open risks.                       |
-| `workspace_context` | List registered projects and recent sessions without merging raw code context.                          |
-| `promote_pattern` | Promote project memory into client/global reusable patterns.                                             |
+| Tool                 | Description                                                                                                           |
+| -------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| `memory_create`      | Create or update a memory node (concept, file, symbol, note) with auto-generated embeddings.                          |
+| `memory_link`        | Create typed edges between nodes: `relates_to`, `depends_on`, `implements`, `references`, `similar_to`, `contains`, `resolved_by`, `contradicts`. |
+| `memory_search`      | Semantic search with graph traversal — finds direct matches then walks neighbors.                                     |
+| `memory_bulk`        | Bulk-add nodes with auto-similarity linking (cosine ≥ 0.72 creates edges automatically).                              |
+| `memory_explore`     | Start from a node and walk outward — returns all reachable neighbors scored by decay and depth.                        |
+| `memory_list`        | List all memory nodes filtered by scope and kind. Use to audit the graph or find node IDs.                            |
+| `memory_delete`      | Delete a specific memory node and all its edges by ID.                                                                |
+| `memory_record_task` | Persist task outcomes with linked files, assumptions, evidence, and open risks.                                       |
+| `workspace_context`  | List registered projects and recent sessions without merging raw code context.                                        |
+| `promote_pattern`    | Promote project memory into client/global reusable patterns.                                                          |
 
 ## Setup
 
@@ -236,39 +240,88 @@ Any endpoint implementing the [OpenAI Embeddings API](https://platform.openai.co
 
 Three layers built with TypeScript over stdio using the Model Context Protocol SDK:
 
-**Core** (`src/core/`) - Multi-language AST parsing (tree-sitter, 43 extensions), nested gitignore-aware traversal with `.contextplusignore` support, multi-provider vector embeddings with parallel batching, SQLite + sqlite-vec storage, wikilink hub graph, in-memory property graph with decay scoring, import extraction for dependency graphs.
+**Core** (`src/core/`) - Multi-language AST parsing (tree-sitter, 43 extensions), nested gitignore-aware traversal with `.contextplusignore` support, multi-provider vector embeddings with parallel batching, SQLite + sqlite-vec storage with schema migrations, wikilink hub graph, in-memory property graph with decay scoring, import and call-site extraction for dependency graphs.
 
 **Git** (`src/git/`) - Shadow restore point system for undo without touching git history.
 
-**Tools** (`src/tools/`) - 33 MCP tools exposing startup diagnostics, structural discovery, task planning, reusable artifacts, operational memory, and change analysis.
-Agent-facing JSON tools include repo identity, freshness, confidence, evidence, ambiguities, and stable artifact IDs for reuse across turns.
+**Tools** (`src/tools/`) - 36 MCP tools exposing startup diagnostics, structural discovery, task planning, reusable artifacts, operational memory, and change analysis. Agent-facing JSON tools include repo identity, freshness, confidence, evidence, ambiguities, and stable artifact IDs for reuse across turns.
 
-**Data** (`.contextplus/`) - Project-scoped directory created on startup. Contains `index.db` (SQLite with vector search), `config.json`, `artifacts/` (reusable JSON context packets), `hubs/` (auto-generated feature hubs), and `backups/` (shadow restore points). Each project gets its own isolated `.contextplus/` directory — no cross-project data sharing.
+**Data** (`.contextplus/`) - Project-scoped directory created on startup. Contains `index.db` (SQLite with vector search, file index, symbol index, import graph, call-site index), `config.json`, `artifacts/` (reusable JSON context packets), `hubs/` (auto-generated feature hubs), and `backups/` (shadow restore points). Each project gets its own isolated `.contextplus/` directory — no cross-project data sharing.
+
+## Best Practices
+
+### Agent Startup
+
+Always begin a session with `status` followed by `task_pack`. This orients the agent to the current project state and assembles the minimum context needed for the task in one call.
+
+```
+1. status        → project overview, index freshness, git state
+2. task_pack     → ranked files, tests, memory hits, recent diffs
+3. artifact_list → check if a fresh task pack or repo map already exists
+```
+
+### Before Editing
+
+Run `skeleton` on any file before reading it in full. Signatures and line ranges are usually enough to make targeted edits. Only read full bodies when the logic isn't clear from the signature.
+
+Run `blast_radius` before renaming or deleting any symbol. After a full reindex, this hits the `call_sites` SQLite index instantly — no disk scan needed.
+
+### After Editing
+
+Run `lint` after every edit. It auto-detects the project linter (tsc, eslint, ruff, cargo check, go vet) and also checks the code skill score (headers, comment discipline, nesting depth, file length).
+
+### Keeping the Index Fresh
+
+Run `reindex` after:
+- `git pull` or branch switch
+- Large external edits (file generation, scaffolding, etc.)
+- Any time `status` shows stale files
+
+For small in-session edits, the index auto-patches via `quickRefresh` on the next search call (up to `CONTEXTPLUS_QUICKREFRESH_MAX_FILES` files, default 30).
+
+### Memory Graph
+
+Use `memory_record_task` at the end of significant work sessions. It persists outcomes, linked files, assumptions, and open risks — future sessions can retrieve this with `memory_search` instead of re-exploring the same code.
+
+Use `memory_link` to express relationships between concepts and files:
+- `resolved_by` — link a bug or question node to the file/symbol that resolved it
+- `contradicts` — flag conflicting decisions or assumptions
+- `depends_on` — track architectural dependencies not visible in imports
+
+### Token Efficiency
+
+- `skeleton` before `read` — saves reading bodies you won't need
+- `artifact_list` + `artifact_read` before `task_pack` or `repo_map` — reuse cached context from prior turns
+- `explain` instead of reading a whole file when you only need one function body
+- `search` with `mode: identifier` to find call chains and definitions in one shot
 
 ## Config
 
-| Variable                                | Type                      | Default                                | Description                                                   |
-| --------------------------------------- | ------------------------- | -------------------------------------- | ------------------------------------------------------------- |
-| `CONTEXTPLUS_EMBED_PROVIDER`            | string                    | `ollama`                               | Embedding backend: `ollama` or `openai`                      |
-| `OLLAMA_EMBED_MODEL`                    | string                    | `nomic-embed-text`                     | Ollama embedding model                                        |
-| `OLLAMA_API_KEY`                        | string                    | -                                      | Ollama Cloud API key                                          |
-| `OLLAMA_CHAT_MODEL`                     | string                    | `llama3.2`                             | Ollama chat model for cluster labeling                        |
-| `CONTEXTPLUS_OPENAI_API_KEY`            | string                    | -                                      | API key for OpenAI-compatible provider (alias: `OPENAI_API_KEY`) |
-| `CONTEXTPLUS_OPENAI_BASE_URL`           | string                    | `https://api.openai.com/v1`            | OpenAI-compatible endpoint URL (alias: `OPENAI_BASE_URL`)    |
-| `CONTEXTPLUS_OPENAI_EMBED_MODEL`        | string                    | `text-embedding-3-small`               | OpenAI-compatible embedding model (alias: `OPENAI_EMBED_MODEL`) |
-| `CONTEXTPLUS_OPENAI_CHAT_MODEL`         | string                    | `gpt-4o-mini`                          | OpenAI-compatible chat model for labeling (alias: `OPENAI_CHAT_MODEL`) |
-| `CONTEXTPLUS_EMBED_BATCH_SIZE`          | string (parsed as number) | `8`                | Embedding batch size per GPU call, clamped to 5-10            |
-| `CONTEXTPLUS_EMBED_CHUNK_CHARS`         | string (parsed as number) | `2000`             | Per-chunk chars before merge, clamped to 256-8000             |
-| `CONTEXTPLUS_MAX_EMBED_FILE_SIZE`       | string (parsed as number) | `51200`            | Skip non-code text files larger than this many bytes          |
-| `CONTEXTPLUS_EMBED_NUM_GPU`             | string (parsed as number) | -                  | Optional Ollama embed runtime `num_gpu` override              |
-| `CONTEXTPLUS_EMBED_MAIN_GPU`            | string (parsed as number) | -                  | Optional Ollama embed runtime `main_gpu` override             |
-| `CONTEXTPLUS_EMBED_NUM_THREAD`          | string (parsed as number) | -                  | Optional Ollama embed runtime `num_thread` override           |
-| `CONTEXTPLUS_EMBED_NUM_BATCH`           | string (parsed as number) | -                  | Optional Ollama embed runtime `num_batch` override            |
-| `CONTEXTPLUS_EMBED_NUM_CTX`             | string (parsed as number) | -                  | Optional Ollama embed runtime `num_ctx` override              |
-| `CONTEXTPLUS_EMBED_LOW_VRAM`            | string (parsed as boolean)| -                  | Optional Ollama embed runtime `low_vram` override             |
-| `CONTEXTPLUS_EMBED_TRACKER`             | string                    | `lazy`             | Embedding tracker mode: `lazy`, `eager`, or `off`             |
-| `CONTEXTPLUS_EMBED_TRACKER_MAX_FILES`   | string (parsed as number) | `8`                | Max changed files processed per tracker tick, clamped to 5-10 |
-| `CONTEXTPLUS_EMBED_TRACKER_DEBOUNCE_MS` | string (parsed as number) | `700`              | Debounce window before tracker refresh                        |
+| Variable                                | Type                       | Default                              | Description                                                          |
+| --------------------------------------- | -------------------------- | ------------------------------------ | -------------------------------------------------------------------- |
+| `CONTEXTPLUS_EMBED_PROVIDER`            | string                     | `ollama`                             | Embedding backend: `ollama` or `openai`                              |
+| `OLLAMA_EMBED_MODEL`                    | string                     | `nomic-embed-text`                   | Ollama embedding model                                               |
+| `OLLAMA_API_KEY`                        | string                     | -                                    | Ollama Cloud API key                                                 |
+| `OLLAMA_CHAT_MODEL`                     | string                     | `llama3.2`                           | Ollama chat model for cluster labeling                               |
+| `CONTEXTPLUS_OPENAI_API_KEY`            | string                     | -                                    | API key for OpenAI-compatible provider (alias: `OPENAI_API_KEY`)     |
+| `CONTEXTPLUS_OPENAI_BASE_URL`           | string                     | `https://api.openai.com/v1`          | OpenAI-compatible endpoint URL (alias: `OPENAI_BASE_URL`)            |
+| `CONTEXTPLUS_OPENAI_EMBED_MODEL`        | string                     | `text-embedding-3-small`             | OpenAI-compatible embedding model (alias: `OPENAI_EMBED_MODEL`)      |
+| `CONTEXTPLUS_OPENAI_CHAT_MODEL`         | string                     | `gpt-4o-mini`                        | OpenAI-compatible chat model for labeling (alias: `OPENAI_CHAT_MODEL`) |
+| `CONTEXTPLUS_EMBED_BATCH_SIZE`          | string (parsed as number)  | `8`                                  | Embedding batch size per GPU call, clamped to 5–10                   |
+| `CONTEXTPLUS_EMBED_CHUNK_CHARS`         | string (parsed as number)  | `2000`                               | Per-chunk chars before merge, clamped to 256–8000                    |
+| `CONTEXTPLUS_MAX_EMBED_FILE_SIZE`       | string (parsed as number)  | `51200`                              | Skip non-code text files larger than this many bytes                 |
+| `CONTEXTPLUS_EMBED_NUM_GPU`             | string (parsed as number)  | -                                    | Optional Ollama embed runtime `num_gpu` override                     |
+| `CONTEXTPLUS_EMBED_MAIN_GPU`            | string (parsed as number)  | -                                    | Optional Ollama embed runtime `main_gpu` override                    |
+| `CONTEXTPLUS_EMBED_NUM_THREAD`          | string (parsed as number)  | -                                    | Optional Ollama embed runtime `num_thread` override                  |
+| `CONTEXTPLUS_EMBED_NUM_BATCH`           | string (parsed as number)  | -                                    | Optional Ollama embed runtime `num_batch` override                   |
+| `CONTEXTPLUS_EMBED_NUM_CTX`             | string (parsed as number)  | -                                    | Optional Ollama embed runtime `num_ctx` override                     |
+| `CONTEXTPLUS_EMBED_LOW_VRAM`            | string (parsed as boolean) | -                                    | Optional Ollama embed runtime `low_vram` override                    |
+| `CONTEXTPLUS_EMBED_TRACKER`             | string                     | `lazy`                               | Embedding tracker mode: `lazy`, `eager`, or `off`                   |
+| `CONTEXTPLUS_EMBED_TRACKER_MAX_FILES`   | string (parsed as number)  | `8`                                  | Max changed files processed per tracker tick, clamped to 5–10        |
+| `CONTEXTPLUS_EMBED_TRACKER_DEBOUNCE_MS` | string (parsed as number)  | `700`                                | Debounce window before tracker refresh                               |
+| `CONTEXTPLUS_QUICKREFRESH_MAX_FILES`    | string (parsed as number)  | `30`                                 | Max stale files auto-patched per search call before warning          |
+| `CONTEXTPLUS_SESSION_ID`                | string                     | -                                    | Session identifier for session-scoped memory isolation               |
+| `CONTEXTPLUS_SESSION_SOURCE`            | string                     | `mcp`                                | Session source tag stored in memory node metadata                    |
 
 ## Test
 
