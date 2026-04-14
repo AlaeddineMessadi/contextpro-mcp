@@ -213,6 +213,11 @@ function vecToBuffer(vec: number[] | Float32Array): Buffer {
   return Buffer.from(f32.buffer, f32.byteOffset, f32.byteLength);
 }
 
+export function bufferToVec(buf: Buffer): number[] {
+  const f32 = new Float32Array(buf.buffer, buf.byteOffset, buf.byteLength / 4);
+  return Array.from(f32);
+}
+
 export class ContextPlusDB {
   private db: DatabaseType;
   private vecDimension: number | null = null;
@@ -385,11 +390,33 @@ export class ContextPlusDB {
     return this.db.prepare("SELECT * FROM symbols WHERE name LIKE ?").all(`%${query}%`) as SymbolRow[];
   }
 
-  upsertEmbedding(sourceType: string, sourceId: number, vector: number[] | Float32Array, hash: string): void {
+  upsertEmbedding(sourceType: string, sourceId: number | string, vector: number[] | Float32Array, hash: string): void {
     this.ensureVecDimension(vector.length);
     this.db.prepare("DELETE FROM embeddings WHERE source_type = ? AND source_id = ?").run(sourceType, String(sourceId));
     this.db.prepare("INSERT INTO embeddings (vector, source_type, source_id, content_hash) VALUES (?, ?, ?, ?)")
       .run(vecToBuffer(vector), sourceType, String(sourceId), hash);
+  }
+
+  upsertEmbeddingsBatch(sourceType: string, entries: Array<{ sourceId: string; vector: number[] | Float32Array; hash: string }>): void {
+    if (entries.length === 0) return;
+    this.ensureVecDimension(entries[0].vector.length);
+    const del = this.db.prepare("DELETE FROM embeddings WHERE source_type = ? AND source_id = ?");
+    const ins = this.db.prepare("INSERT INTO embeddings (vector, source_type, source_id, content_hash) VALUES (?, ?, ?, ?)");
+    const tx = this.db.transaction((rows: typeof entries) => {
+      for (const r of rows) {
+        del.run(sourceType, r.sourceId);
+        ins.run(vecToBuffer(r.vector), sourceType, r.sourceId, r.hash);
+      }
+    });
+    tx(entries);
+  }
+
+  getEmbeddingsByType(sourceType: string): Array<{ sourceId: string; contentHash: string; vector: Buffer }> {
+    return this.db.prepare("SELECT source_id as sourceId, content_hash as contentHash, vector FROM embeddings WHERE source_type = ?").all(sourceType) as Array<{ sourceId: string; contentHash: string; vector: Buffer }>;
+  }
+
+  deleteEmbeddingsByPrefix(sourceType: string, prefix: string): void {
+    this.db.prepare("DELETE FROM embeddings WHERE source_type = ? AND source_id LIKE ?").run(sourceType, `${prefix}%`);
   }
 
   searchEmbeddings(queryVector: number[] | Float32Array, topK: number, sourceType?: string): EmbeddingMatch[] {

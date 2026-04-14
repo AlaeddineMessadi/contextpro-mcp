@@ -6,13 +6,15 @@ import { analyzeFile, flattenSymbols, isSupportedFile } from "../core/parser.js"
 import {
   fetchEmbedding,
   getEmbeddingBatchSize,
-  loadEmbeddingCache,
-  saveEmbeddingCache,
+  deleteFileSearchEmbedding,
   SearchIndex,
   type SearchDocument,
   type SearchQueryOptions,
   type SearchResult,
 } from "../core/embeddings.js";
+import { getDB } from "../core/db.js";
+
+const FILE_SEARCH_SOURCE_TYPE = "file_search_cache";
 import { readFile, stat } from "fs/promises";
 import { extname, resolve } from "path";
 
@@ -39,7 +41,6 @@ let cachedRootDir: string | null = null;
 let lastIndexTime = 0;
 
 const INDEX_TTL_MS = 60000;
-const SEARCH_CACHE_FILE = "embeddings-cache.json";
 const TEXT_INDEX_EXTENSIONS = new Set([
   ".md",
   ".txt",
@@ -210,34 +211,37 @@ export async function refreshFileSearchEmbeddings(options: { rootDir: string; re
   const uniquePaths = Array.from(new Set(options.relativePaths.map(normalizeRelativePath).filter(Boolean)));
   if (uniquePaths.length === 0) return 0;
 
-  const cache = await loadEmbeddingCache(options.rootDir, SEARCH_CACHE_FILE);
+  const db = await getDB(options.rootDir);
+  const existing = db.getEmbeddingsByType(FILE_SEARCH_SOURCE_TYPE);
+  const existingMap = new Map(existing.map((r) => [r.sourceId, r.contentHash]));
   const pending: { path: string; hash: string; text: string }[] = [];
 
   for (const relativePath of uniquePaths) {
     const doc = await buildSearchDocumentForFile(options.rootDir, relativePath);
     if (!doc) {
-      delete cache[relativePath];
+      await deleteFileSearchEmbedding(options.rootDir, relativePath);
       continue;
     }
 
     const text = `${doc.header} ${doc.symbols.join(" ")} ${doc.content}`;
     const hash = hashContent(text);
-    if (cache[relativePath]?.hash === hash) continue;
+    if (existingMap.get(relativePath) === hash) continue;
     pending.push({ path: relativePath, hash, text });
   }
 
   if (pending.length > 0) {
     const batchSize = getEmbeddingBatchSize();
+    const entries: Array<{ sourceId: string; vector: number[]; hash: string }> = [];
     for (let i = 0; i < pending.length; i += batchSize) {
       const batch = pending.slice(i, i + batchSize);
       const vectors = await fetchEmbedding(batch.map((entry) => entry.text));
       for (let j = 0; j < batch.length; j++) {
-        cache[batch[j].path] = { hash: batch[j].hash, vector: vectors[j] };
+        entries.push({ sourceId: batch[j].path, vector: vectors[j], hash: batch[j].hash });
       }
     }
+    db.upsertEmbeddingsBatch(FILE_SEARCH_SOURCE_TYPE, entries);
   }
 
-  await saveEmbeddingCache(options.rootDir, cache, SEARCH_CACHE_FILE);
   invalidateSearchCache();
   return pending.length;
 }

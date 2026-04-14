@@ -2,7 +2,7 @@
 // Supports Ollama (local) and OpenAI-compatible APIs (Gemini, OpenAI, etc.)
 // Indexes file headers and symbols, caches embeddings to disk for speed
 
-import { readFile, writeFile, mkdir } from "fs/promises";
+import { mkdir } from "fs/promises";
 import { join } from "path";
 
 const EMBED_TIMEOUT_MS = 60_000;
@@ -80,8 +80,6 @@ const OPENAI_EMBED_MODEL = process.env.CONTEXTPLUS_OPENAI_EMBED_MODEL ?? process
 const OPENAI_API_KEY = process.env.CONTEXTPLUS_OPENAI_API_KEY ?? process.env.OPENAI_API_KEY ?? "";
 const OPENAI_BASE_URL = process.env.CONTEXTPLUS_OPENAI_BASE_URL ?? process.env.OPENAI_BASE_URL ?? "https://api.openai.com/v1";
 const CACHE_DIR = ".contextplus";
-const ACTIVE_EMBED_MODEL = EMBED_PROVIDER === "openai" ? OPENAI_EMBED_MODEL : EMBED_MODEL;
-const CACHE_FILE = `embeddings-cache-${EMBED_PROVIDER}-${ACTIVE_EMBED_MODEL.replace(/[^a-zA-Z0-9._-]/g, "_")}.json`;
 const MIN_EMBED_BATCH_SIZE = 5;
 const MAX_EMBED_BATCH_SIZE = 10;
 const DEFAULT_EMBED_BATCH_SIZE = 8;
@@ -402,29 +400,39 @@ function computeCombinedScore(semanticScore: number, keywordScore: number, optio
   return clamp01((options.semanticWeight * semanticComponent + options.keywordWeight * keywordScore) / totalWeight);
 }
 
+const FILE_SEARCH_SOURCE_TYPE = "file_search_cache";
+
 async function loadCache(rootDir: string): Promise<EmbeddingCache> {
-  return loadEmbeddingCache(rootDir, CACHE_FILE);
+  const { getDB, bufferToVec } = await import("./db.js");
+  const db = await getDB(rootDir);
+  const rows = db.getEmbeddingsByType(FILE_SEARCH_SOURCE_TYPE);
+  const cache: EmbeddingCache = {};
+  for (const r of rows) {
+    cache[r.sourceId] = { hash: r.contentHash, vector: bufferToVec(r.vector) };
+  }
+  return cache;
 }
 
-async function saveCache(rootDir: string, cache: EmbeddingCache): Promise<void> {
-  await saveEmbeddingCache(rootDir, cache, CACHE_FILE);
+async function saveCache(rootDir: string, cache: EmbeddingCache, dirtyKeys?: Set<string>): Promise<void> {
+  const { getDB } = await import("./db.js");
+  const db = await getDB(rootDir);
+  const keys = dirtyKeys ?? new Set(Object.keys(cache));
+  const entries: Array<{ sourceId: string; vector: number[]; hash: string }> = [];
+  for (const key of keys) {
+    const entry = cache[key];
+    if (entry) entries.push({ sourceId: key, vector: entry.vector, hash: entry.hash });
+  }
+  db.upsertEmbeddingsBatch(FILE_SEARCH_SOURCE_TYPE, entries);
+}
+
+export async function deleteFileSearchEmbedding(rootDir: string, path: string): Promise<void> {
+  const { getDB } = await import("./db.js");
+  const db = await getDB(rootDir);
+  db.deleteEmbeddingsByPrefix(FILE_SEARCH_SOURCE_TYPE, path);
 }
 
 export async function ensureMcpDataDir(rootDir: string): Promise<void> {
   await mkdir(join(rootDir, CACHE_DIR), { recursive: true });
-}
-
-export async function loadEmbeddingCache(rootDir: string, fileName: string): Promise<EmbeddingCache> {
-  try {
-    return JSON.parse(await readFile(join(rootDir, CACHE_DIR, fileName), "utf-8"));
-  } catch {
-    return {};
-  }
-}
-
-export async function saveEmbeddingCache(rootDir: string, cache: EmbeddingCache, fileName: string): Promise<void> {
-  await ensureMcpDataDir(rootDir);
-  await writeFile(join(rootDir, CACHE_DIR, fileName), JSON.stringify(cache));
 }
 
 function formatLineRange(line: number, endLine?: number): string {
@@ -444,6 +452,7 @@ export class SearchIndex {
     this.documents = docs;
     const cache = await loadCache(rootDir);
     const uncached: { idx: number; text: string; hash: string }[] = [];
+    const dirtyKeys = new Set<string>();
 
     this.vectors = new Array(docs.length);
 
@@ -474,7 +483,9 @@ export class SearchIndex {
           const embeddings = await fetchEmbedding(batch.map((u) => u.text));
           for (let j = 0; j < batch.length; j++) {
             this.vectors[batch[j].idx] = embeddings[j];
-            cache[docs[batch[j].idx].path] = { hash: batch[j].hash, vector: embeddings[j] };
+            const key = docs[batch[j].idx].path;
+            cache[key] = { hash: batch[j].hash, vector: embeddings[j] };
+            dirtyKeys.add(key);
           }
         } catch (error) {
           if (!isContextLengthError(error)) {
@@ -485,14 +496,16 @@ export class SearchIndex {
             try {
               const [vector] = await fetchEmbedding(item.text);
               this.vectors[item.idx] = vector;
-              cache[docs[item.idx].path] = { hash: item.hash, vector };
+              const key = docs[item.idx].path;
+              cache[key] = { hash: item.hash, vector };
+              dirtyKeys.add(key);
             } catch {
               delete cache[docs[item.idx].path];
             }
           }
         }
       })));
-      await saveCache(rootDir, cache);
+      await saveCache(rootDir, cache, dirtyKeys);
     }
   }
 
