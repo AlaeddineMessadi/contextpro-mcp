@@ -6,6 +6,7 @@ import { resolve } from "path";
 import { walkDirectory } from "../core/walker.js";
 import { analyzeFile, flattenSymbols, isSupportedFile } from "../core/parser.js";
 import { getDB } from "../core/db.js";
+import { resolveSymbolData } from "./resolve-symbol.js";
 
 export interface ExplainOptions {
   rootDir: string;
@@ -24,14 +25,21 @@ interface SymbolBody {
   body: string;
 }
 
-async function findSymbolInFile(rootDir: string, filePath: string, symbolName: string): Promise<SymbolBody | null> {
+interface CallReference {
+  name: string;
+  kind?: string;
+}
+
+async function findSymbolInFile(rootDir: string, filePath: string, symbolName: string, preferredLine?: number): Promise<SymbolBody | null> {
   const fullPath = resolve(rootDir, filePath);
   try {
     const content = await readFile(fullPath, "utf-8");
     const lines = content.split("\n");
     const analysis = await analyzeFile(fullPath);
     const flat = flattenSymbols(analysis.symbols);
-    const match = flat.find((s) => s.name === symbolName);
+    const match = preferredLine
+      ? flat.find((symbol) => symbol.name === symbolName && symbol.line === preferredLine) ?? flat.find((symbol) => symbol.name === symbolName)
+      : flat.find((symbol) => symbol.name === symbolName);
     if (!match) return null;
 
     const bodyLines = lines.slice(match.line - 1, match.endLine);
@@ -49,18 +57,19 @@ async function findSymbolInFile(rootDir: string, filePath: string, symbolName: s
   }
 }
 
-async function findSymbolAcrossProject(rootDir: string, symbolName: string): Promise<SymbolBody | null> {
-  const db = await getDB(rootDir);
-  const dbSymbols = db.searchSymbolsByName(symbolName);
-  const exactMatch = dbSymbols.find((s) => s.name === symbolName);
+async function findSymbolAcrossProject(rootDir: string, symbolName: string, fileContext?: string, kind?: string): Promise<SymbolBody | null> {
+  const resolution = await resolveSymbolData({
+    rootDir,
+    symbolName,
+    fileContext,
+    kind,
+    limit: 5,
+  });
+  const bestMatch = resolution.bestMatch;
 
-  if (exactMatch) {
-    const allFiles = db.getAllFiles();
-    const file = allFiles.find((f) => f.id === exactMatch.file_id);
-    if (file) {
-      const result = await findSymbolInFile(rootDir, file.path, symbolName);
-      if (result) return result;
-    }
+  if (bestMatch) {
+    const result = await findSymbolInFile(rootDir, bestMatch.path, bestMatch.name, bestMatch.line);
+    if (result) return result;
   }
 
   const entries = await walkDirectory({ rootDir, depthLimit: 0 });
@@ -72,6 +81,26 @@ async function findSymbolAcrossProject(rootDir: string, symbolName: string): Pro
   }
 
   return null;
+}
+
+function collectCallReferences(body: string): CallReference[] {
+  const refs = new Map<string, CallReference>();
+
+  const memberPattern = /\b([a-zA-Z_]\w*)\.([a-zA-Z_]\w*)\s*\(/g;
+  let memberMatch;
+  while ((memberMatch = memberPattern.exec(body)) !== null) {
+    const name = memberMatch[2];
+    refs.set(`method:${name}`, { name, kind: "method" });
+  }
+
+  const functionPattern = /(?<!\.)\b([a-zA-Z_]\w*)\s*\(/g;
+  let functionMatch;
+  while ((functionMatch = functionPattern.exec(body)) !== null) {
+    const name = functionMatch[1];
+    refs.set(`call:${name}`, { name });
+  }
+
+  return [...refs.values()];
 }
 
 async function getCalledSymbols(rootDir: string, body: string, currentFile: string, depth: number): Promise<SymbolBody[]> {
@@ -86,17 +115,11 @@ async function getCalledSymbols(rootDir: string, body: string, currentFile: stri
     for (const s of symbols) allSymbolNames.add(s.name);
   }
 
-  const wordPattern = /\b([a-zA-Z_]\w+)\s*\(/g;
-  const calledNames = new Set<string>();
-  let match;
-  while ((match = wordPattern.exec(body)) !== null) {
-    const name = match[1];
-    if (allSymbolNames.has(name) && name.length > 2) calledNames.add(name);
-  }
+  const callReferences = collectCallReferences(body).filter((ref) => allSymbolNames.has(ref.name) && ref.name.length > 2);
 
   const results: SymbolBody[] = [];
-  for (const name of calledNames) {
-    const found = await findSymbolAcrossProject(rootDir, name);
+  for (const ref of callReferences) {
+    const found = await findSymbolAcrossProject(rootDir, ref.name, currentFile, ref.kind);
     if (found && found.file !== currentFile) {
       results.push(found);
       if (depth > 1) {
@@ -144,7 +167,7 @@ export async function explain(options: ExplainOptions): Promise<string> {
   if (options.file) {
     symbolBody = await findSymbolInFile(options.rootDir, options.file, options.symbol);
   } else {
-    symbolBody = await findSymbolAcrossProject(options.rootDir, options.symbol);
+    symbolBody = await findSymbolAcrossProject(options.rootDir, options.symbol, options.file);
   }
 
   if (!symbolBody) {

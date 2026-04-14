@@ -12,9 +12,12 @@ https://github.com/user-attachments/assets/a97a451f-c9b4-468d-b036-15b65fc13e79
 
 | Tool        | Description                                                                                                                                                      |
 | ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `health`    | Startup health for the active repo, including project identity, Node ABI, native storage readiness, and database openability.                                   |
+| `repo_map`  | Compact whole-repo outline with important files and top-level symbols. Designed to give agents first-turn orientation with low token usage.                     |
 | `tree`      | Structural AST tree of a project with file headers and symbol ranges (line numbers for functions/classes/methods). Dynamic pruning shrinks output automatically. |
 | `skeleton`  | Function signatures, class methods, and type definitions with line ranges, without reading full bodies. Shows the API surface.                                   |
 | `search`    | Search by meaning with modes: `file` (headers/symbols), `identifier` (functions/classes with call chains), or `hybrid` (both). Uses embeddings + keyword scoring. |
+| `resolve_symbol` | Resolve an identifier to the most likely definition with ambiguity scoring and file-context-aware ranking.                                                |
 | `cluster`   | Browse codebase by meaning using spectral clustering. Groups semantically related files into labeled clusters.                                                   |
 
 ### Analysis
@@ -22,6 +25,15 @@ https://github.com/user-attachments/assets/a97a451f-c9b4-468d-b036-15b65fc13e79
 | Tool           | Description                                                                                                                      |
 | -------------- | -------------------------------------------------------------------------------------------------------------------------------- |
 | `blast_radius` | Trace every file and line where a symbol is imported or used. Prevents orphaned references.                                      |
+| `status`       | Project overview dashboard with repo identity, index counts, memory graph stats, and git state.                                 |
+| `diff`         | Structured git diff summary with changed files, line counts, and affected symbols.                                               |
+| `related`      | Show related files via imports, importers, sibling files, tests, and hubs.                                                      |
+| `test_map`     | Map a source file or symbol to likely tests.                                                                                     |
+| `explain`      | Extract one symbol body and its immediate call dependencies without loading an entire file.                                      |
+| `task_pack`    | Assemble the minimum useful working set for a task: ranked files, tests, diffs, memory, and risks.                             |
+| `change_impact`| Estimate what could break if files or symbols change, including related files and tests.                                        |
+| `edit_scope`   | Identify the smallest likely safe edit set for a task.                                                                           |
+| `decision_brief` | Compress a subsystem into a short decision-oriented brief with ranked files, symbols, tests, and memory.                      |
 | `lint`         | Auto-detects and runs project linters (tsc, eslint, ruff, cargo check, go vet). Plus skill score checking for code quality.      |
 
 ### Code Ops
@@ -47,6 +59,9 @@ https://github.com/user-attachments/assets/a97a451f-c9b4-468d-b036-15b65fc13e79
 | `memory_search`   | Semantic search with graph traversal — finds direct matches then walks neighbors.                        |
 | `memory_bulk`     | Bulk-add nodes with auto-similarity linking (cosine ≥ 0.72 creates edges automatically).                 |
 | `memory_explore`  | Start from a node and walk outward — returns all reachable neighbors scored by decay and depth.           |
+| `memory_record_task` | Persist task outcomes with linked files, assumptions, evidence, and open risks.                       |
+| `workspace_context` | List registered projects and recent sessions without merging raw code context.                          |
+| `promote_pattern` | Promote project memory into client/global reusable patterns.                                             |
 
 ## Setup
 
@@ -120,6 +135,7 @@ Config file locations:
 ### CLI Subcommands
 
 - `init [target]` - Generate MCP configuration and scaffold `.contextplus/` directory with `config.json`.
+- `doctor [path] [--fix]` - Print startup/storage diagnostics for a repo and optionally repair native dependencies with the active Node runtime.
 - `skeleton [path]` or `tree [path]` - View the structural tree of a project with file headers and symbol definitions directly in your terminal.
 - `[path]` - Start the MCP server (stdio) for the specified path (defaults to current directory).
 
@@ -220,7 +236,7 @@ Three layers built with TypeScript over stdio using the Model Context Protocol S
 
 **Core** (`src/core/`) - Multi-language AST parsing (tree-sitter, 43 extensions), nested gitignore-aware traversal with `.contextplusignore` support, multi-provider vector embeddings with parallel batching, SQLite + sqlite-vec storage, wikilink hub graph, in-memory property graph with decay scoring, import extraction for dependency graphs.
 
-**Tools** (`src/tools/`) - 15 MCP tools exposing structural, semantic, operational, and memory graph capabilities.
+**Tools** (`src/tools/`) - 31 MCP tools exposing startup diagnostics, structural discovery, task planning, operational memory, and change analysis.
 
 **Git** (`src/git/`) - Shadow restore point system for undo without touching git history.
 

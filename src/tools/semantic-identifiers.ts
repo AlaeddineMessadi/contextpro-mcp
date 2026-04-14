@@ -23,6 +23,35 @@ export interface SemanticIdentifierSearchOptions {
   keywordWeight?: number;
 }
 
+export interface IdentifierCallSiteResult {
+  file: string;
+  line: number;
+  context: string;
+  semanticScore: number;
+  keywordScore: number;
+  score: number;
+}
+
+export interface SemanticIdentifierHit {
+  name: string;
+  kind: string;
+  path: string;
+  line: number;
+  endLine: number;
+  signature: string;
+  parentName?: string;
+  score: number;
+  semanticScore: number;
+  keywordScore: number;
+  calls: IdentifierCallSiteResult[];
+  totalCalls: number;
+}
+
+export interface SemanticIdentifierSearchData {
+  query: string;
+  results: SemanticIdentifierHit[];
+}
+
 interface IdentifierDoc {
   id: string;
   path: string;
@@ -349,7 +378,7 @@ async function rankCallSites(
   };
 }
 
-export async function semanticIdentifierSearch(options: SemanticIdentifierSearchOptions): Promise<string> {
+export async function semanticIdentifierSearchResults(options: SemanticIdentifierSearchOptions): Promise<SemanticIdentifierSearchData> {
   const topK = Math.max(1, Math.floor(options.topK ?? 5));
   const topCalls = Math.max(1, Math.floor(options.topCallsPerIdentifier ?? 10));
   const semanticWeight = normalizeWeight(options.semanticWeight, 0.78);
@@ -357,9 +386,7 @@ export async function semanticIdentifierSearch(options: SemanticIdentifierSearch
   const includeKinds = normalizeKinds(options.includeKinds);
 
   const index = await buildIdentifierIndex(options.rootDir);
-  if (index.docs.length === 0) {
-    return "No supported identifiers found for semantic identifier search.";
-  }
+  if (index.docs.length === 0) return { query: options.query, results: [] };
 
   const [queryVec] = await fetchEmbedding(options.query);
   const queryTerms = new Set(splitTerms(options.query));
@@ -379,26 +406,14 @@ export async function semanticIdentifierSearch(options: SemanticIdentifierSearch
     scored.push({ doc, semanticScore, keywordScore, score });
   }
 
-  if (scored.length === 0) {
-    return "No identifiers matched the requested kind filters.";
-  }
+  if (scored.length === 0) return { query: options.query, results: [] };
 
   const top = scored.sort((a, b) => b.score - a.score).slice(0, topK);
   const cache = await loadEmbeddingCache(options.rootDir, IDENTIFIER_CACHE_FILE);
-
-  const lines: string[] = [
-    `Top ${top.length} identifier matches for: "${options.query}"`,
-    "",
-  ];
+  const results: SemanticIdentifierHit[] = [];
 
   for (let i = 0; i < top.length; i++) {
     const item = top[i];
-    const range = formatLineRange(item.doc.line, item.doc.endLine);
-    lines.push(`${i + 1}. ${item.doc.kind} ${item.doc.name} - ${item.doc.path} (${range})`);
-    lines.push(`   Score: ${Math.round(item.score * 1000) / 10}% | Semantic: ${Math.round(item.semanticScore * 1000) / 10}% | Keyword: ${Math.round(item.keywordScore * 1000) / 10}%`);
-    lines.push(`   Signature: ${item.doc.signature}`);
-    if (item.doc.parentName) lines.push(`   Parent: ${item.doc.parentName}`);
-
     const calls = await rankCallSites(
       options.rootDir,
       cache,
@@ -408,22 +423,59 @@ export async function semanticIdentifierSearch(options: SemanticIdentifierSearch
       index.fileLines,
       topCalls,
     );
+    results.push({
+      name: item.doc.name,
+      kind: item.doc.kind,
+      path: item.doc.path,
+      line: item.doc.line,
+      endLine: item.doc.endLine,
+      signature: item.doc.signature,
+      parentName: item.doc.parentName,
+      score: Math.round(item.score * 1000) / 10,
+      semanticScore: Math.round(item.semanticScore * 1000) / 10,
+      keywordScore: Math.round(item.keywordScore * 1000) / 10,
+      calls: calls.sites,
+      totalCalls: calls.total,
+    });
+  }
 
-    if (calls.sites.length === 0) {
+  await saveEmbeddingCache(options.rootDir, cache, IDENTIFIER_CACHE_FILE);
+  return { query: options.query, results };
+}
+
+export async function semanticIdentifierSearch(options: SemanticIdentifierSearchOptions): Promise<string> {
+  const { query, results } = await semanticIdentifierSearchResults(options);
+  if (results.length === 0) {
+    return options.includeKinds && options.includeKinds.length > 0
+      ? "No identifiers matched the requested kind filters."
+      : "No supported identifiers found for semantic identifier search.";
+  }
+
+  const lines: string[] = [
+    `Top ${results.length} identifier matches for: "${query}"`,
+    "",
+  ];
+
+  for (let i = 0; i < results.length; i++) {
+    const item = results[i];
+    const range = formatLineRange(item.line, item.endLine);
+    lines.push(`${i + 1}. ${item.kind} ${item.name} - ${item.path} (${range})`);
+    lines.push(`   Score: ${item.score}% | Semantic: ${item.semanticScore}% | Keyword: ${item.keywordScore}%`);
+    lines.push(`   Signature: ${item.signature}`);
+    if (item.parentName) lines.push(`   Parent: ${item.parentName}`);
+    if (item.calls.length === 0) {
       lines.push("   Calls: none found");
       lines.push("");
       continue;
     }
-
-    lines.push(`   Calls (${calls.sites.length}/${calls.total}):`);
-    for (let j = 0; j < calls.sites.length; j++) {
-      const site = calls.sites[j];
+    lines.push(`   Calls (${item.calls.length}/${item.totalCalls}):`);
+    for (let j = 0; j < item.calls.length; j++) {
+      const site = item.calls[j];
       lines.push(`     ${j + 1}. ${site.file}:L${site.line} (${Math.round(site.score * 1000) / 10}%) ${site.context}`);
     }
     lines.push("");
   }
 
-  await saveEmbeddingCache(options.rootDir, cache, IDENTIFIER_CACHE_FILE);
   return lines.join("\n");
 }
 

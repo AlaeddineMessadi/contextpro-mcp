@@ -7,11 +7,39 @@ import { getDB } from "../core/db.js";
 import { exec } from "child_process";
 import { promisify } from "util";
 import { extname } from "path";
+import { loadProjectConfig } from "../core/project-config.js";
 
 const execAsync = promisify(exec);
 
 export interface StatusOptions {
   rootDir: string;
+  format?: "text" | "json";
+}
+
+export interface StatusSnapshot {
+  repo: {
+    root: string;
+    projectId: string | null;
+    clientId: string | null;
+    gitRoot: string | null;
+    fingerprint: string | null;
+  };
+  files: {
+    total: number;
+    source: number;
+    indexed: number;
+    staleRemoved: number;
+  };
+  memory: {
+    nodes: number;
+    edges: number;
+  };
+  git: {
+    branch: string;
+    uncommitted: number;
+    recentCommits: string[];
+  };
+  warnings: string[];
 }
 
 async function gitInfo(rootDir: string): Promise<{ branch: string; uncommitted: number; recentCommits: string[] }> {
@@ -48,7 +76,7 @@ function detectProjectType(files: { relativePath: string }[]): string {
   return `${type} — ${top}`;
 }
 
-export async function getStatus(options: StatusOptions): Promise<string> {
+export async function getStatusData(options: StatusOptions): Promise<StatusSnapshot> {
   const entries = await walkDirectory({ rootDir: options.rootDir, depthLimit: 0 });
   const allFiles = entries.filter((e) => !e.isDirectory);
   const sourceFiles = allFiles.filter((e) => isSupportedFile(e.path));
@@ -57,39 +85,70 @@ export async function getStatus(options: StatusOptions): Promise<string> {
   const indexedFiles = db.getAllFiles();
   const graphStats = db.getGraphStats();
   const git = await gitInfo(options.rootDir);
+  const config = await loadProjectConfig(options.rootDir);
 
   const staleCount = indexedFiles.filter((f) => !allFiles.some((e) => e.relativePath === f.path)).length;
-  const projectType = detectProjectType(allFiles);
+  const warnings: string[] = [];
+  if (indexedFiles.length === 0) warnings.push("Index is empty. Run reindex to populate the database.");
+  else if (staleCount > 5) warnings.push(`${staleCount} files stale or removed. Run reindex to refresh.`);
+  return {
+    repo: {
+      root: options.rootDir,
+      projectId: config?.projectId ?? null,
+      clientId: config?.clientId ?? null,
+      gitRoot: config?.gitRoot ?? null,
+      fingerprint: config?.repoFingerprint ?? null,
+    },
+    files: {
+      total: allFiles.length,
+      source: sourceFiles.length,
+      indexed: indexedFiles.length,
+      staleRemoved: staleCount,
+    },
+    memory: {
+      nodes: graphStats.totalNodes,
+      edges: graphStats.totalEdges,
+    },
+    git,
+    warnings,
+  };
+}
+
+export async function getStatus(options: StatusOptions): Promise<string> {
+  const snapshot = await getStatusData(options);
+  if (options.format === "json") {
+    return JSON.stringify(snapshot, null, 2);
+  }
+  const projectType = detectProjectType((await walkDirectory({ rootDir: options.rootDir, depthLimit: 0 })).filter((e) => !e.isDirectory));
 
   const lines = [
     `=== Context+ Status ===`,
     ``,
     `Project: ${options.rootDir.split("/").pop()} (${projectType})`,
-    `Branch: ${git.branch}`,
+    `Project ID: ${snapshot.repo.projectId ?? "unknown"} | Client ID: ${snapshot.repo.clientId ?? "none"}`,
+    `Git Root: ${snapshot.repo.gitRoot ?? "unknown"}`,
+    `Fingerprint: ${snapshot.repo.fingerprint ?? "unknown"}`,
+    `Branch: ${snapshot.git.branch}`,
     ``,
     `--- Files ---`,
-    `Total files: ${allFiles.length}`,
-    `Source files: ${sourceFiles.length}`,
-    `Indexed in DB: ${indexedFiles.length}`,
-    `Stale/removed: ${staleCount}`,
+    `Total files: ${snapshot.files.total}`,
+    `Source files: ${snapshot.files.source}`,
+    `Indexed in DB: ${snapshot.files.indexed}`,
+    `Stale/removed: ${snapshot.files.staleRemoved}`,
     ``,
     `--- Memory Graph ---`,
-    `Nodes: ${graphStats.totalNodes}`,
-    `Edges: ${graphStats.totalEdges}`,
+    `Nodes: ${snapshot.memory.nodes}`,
+    `Edges: ${snapshot.memory.edges}`,
     ``,
     `--- Git ---`,
-    `Uncommitted changes: ${git.uncommitted}`,
+    `Uncommitted changes: ${snapshot.git.uncommitted}`,
     `Recent commits:`,
   ];
 
-  for (const c of git.recentCommits) lines.push(`  ${c}`);
-
-  if (indexedFiles.length === 0) {
+  for (const c of snapshot.git.recentCommits) lines.push(`  ${c}`);
+  if (snapshot.warnings.length > 0) {
     lines.push(``);
-    lines.push(`⚠ Index is empty. Run reindex to populate the database.`);
-  } else if (staleCount > 5) {
-    lines.push(``);
-    lines.push(`⚠ ${staleCount} files stale or removed. Run reindex to refresh.`);
+    for (const warning of snapshot.warnings) lines.push(`⚠ ${warning}`);
   }
 
   return lines.join("\n");

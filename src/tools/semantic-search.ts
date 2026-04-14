@@ -11,6 +11,7 @@ import {
   SearchIndex,
   type SearchDocument,
   type SearchQueryOptions,
+  type SearchResult,
 } from "../core/embeddings.js";
 import { readFile, stat } from "fs/promises";
 import { extname, resolve } from "path";
@@ -26,6 +27,11 @@ export interface SemanticSearchOptions {
   minCombinedScore?: number;
   requireKeywordMatch?: boolean;
   requireSemanticMatch?: boolean;
+}
+
+export interface SemanticCodeSearchData {
+  query: string;
+  results: SearchResult[];
 }
 
 let cachedIndex: SearchIndex | null = null;
@@ -154,7 +160,7 @@ async function buildIndex(rootDir: string): Promise<SearchIndex> {
   return index;
 }
 
-export async function semanticCodeSearch(options: SemanticSearchOptions): Promise<string> {
+export async function semanticCodeSearchResults(options: SemanticSearchOptions): Promise<SemanticCodeSearchData> {
   const index = await buildIndex(options.rootDir);
   const searchOptions: SearchQueryOptions = {
     topK: options.topK,
@@ -168,9 +174,18 @@ export async function semanticCodeSearch(options: SemanticSearchOptions): Promis
   };
   const results = await index.search(options.query, searchOptions);
 
+  return {
+    query: options.query,
+    results,
+  };
+}
+
+export async function semanticCodeSearch(options: SemanticSearchOptions): Promise<string> {
+  const { query, results } = await semanticCodeSearchResults(options);
+
   if (results.length === 0) return "No matching files found for the given query.";
 
-  const lines: string[] = [`Top ${results.length} hybrid matches for: "${options.query}"\n`];
+  const lines: string[] = [`Top ${results.length} hybrid matches for: "${query}"\n`];
 
   for (let i = 0; i < results.length; i++) {
     const r = results[i];

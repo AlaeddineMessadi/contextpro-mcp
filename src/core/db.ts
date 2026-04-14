@@ -1,11 +1,16 @@
 // SQLite storage layer with vec0 vector search for embeddings and memory graph
 // FEATURE: Core persistence — replaces JSON files with indexed, queryable storage
 
-import Database, { type Database as DatabaseType } from "better-sqlite3";
-import * as sqliteVec from "sqlite-vec";
 import { createHash } from "crypto";
 import { mkdir } from "fs/promises";
-import { join } from "path";
+import { createRequire } from "module";
+import { join, resolve } from "path";
+
+type DatabaseType = import("better-sqlite3").Database;
+type BetterSqlite3Constructor = new (path: string, options?: unknown) => DatabaseType;
+type SqliteVecModule = { load: (db: DatabaseType) => void };
+
+const requireFromHere = createRequire(import.meta.url);
 
 export interface FileRow {
   id: number;
@@ -105,12 +110,115 @@ export interface ImportRow {
   symbols_imported: string | null;
 }
 
+export interface NativeStorageDiagnostic {
+  code: string;
+  message: string;
+  remediation: string[];
+}
+
+export interface NativeStorageProbe {
+  ok: boolean;
+  runtime: {
+    nodeVersion: string;
+    nodeAbi: string;
+  };
+  diagnostic?: NativeStorageDiagnostic;
+}
+
 const SCHEMA_VERSION = "1";
 const DECAY_LAMBDA = 0.05;
 const STALE_EDGE_THRESHOLD = 0.15;
 const STALE_NODE_DAYS = 7;
 const STALE_NODE_MIN_ACCESS = 2;
 const PRUNE_INTERVAL_HOURS = 24;
+
+let nativeStorageBindings: { Database: BetterSqlite3Constructor; sqliteVec: SqliteVecModule } | null = null;
+
+function normalizeBetterSqliteModule(candidate: unknown): BetterSqlite3Constructor {
+  if (typeof candidate === "function") return candidate as BetterSqlite3Constructor;
+  if (candidate && typeof (candidate as { default?: unknown }).default === "function") {
+    return (candidate as { default: BetterSqlite3Constructor }).default;
+  }
+  throw new Error("better-sqlite3 did not expose a database constructor.");
+}
+
+function normalizeSqliteVecModule(candidate: unknown): SqliteVecModule {
+  const maybeModule = candidate && typeof (candidate as SqliteVecModule).load === "function"
+    ? candidate as SqliteVecModule
+    : (candidate as { default?: SqliteVecModule } | null)?.default;
+  if (maybeModule && typeof maybeModule.load === "function") return maybeModule;
+  throw new Error("sqlite-vec did not expose a load(db) function.");
+}
+
+export function describeNativeStorageError(error: unknown): NativeStorageDiagnostic {
+  const message = error instanceof Error ? error.message : String(error);
+  const remediation = [
+    `Run npm install in the Context+ repo to restore native dependencies.`,
+    `Rebuild better-sqlite3 with the same Node runtime that launches Context+ (${process.execPath}).`,
+    `Restart the MCP host after fixing native dependencies so it respawns the server cleanly.`,
+  ];
+
+  if (message.includes("Cannot find module") || message.includes("Could not locate the bindings file")) {
+    return {
+      code: "native_module_missing",
+      message,
+      remediation,
+    };
+  }
+
+  if (message.includes("NODE_MODULE_VERSION") || message.includes("compiled against a different Node.js version")) {
+    return {
+      code: "native_module_abi_mismatch",
+      message,
+      remediation,
+    };
+  }
+
+  return {
+    code: "native_module_error",
+    message,
+    remediation,
+  };
+}
+
+function loadNativeStorageBindings(): { Database: BetterSqlite3Constructor; sqliteVec: SqliteVecModule } {
+  if (nativeStorageBindings) return nativeStorageBindings;
+  try {
+    const betterSqlite = normalizeBetterSqliteModule(requireFromHere("better-sqlite3"));
+    const sqliteVec = normalizeSqliteVecModule(requireFromHere("sqlite-vec"));
+    nativeStorageBindings = { Database: betterSqlite, sqliteVec };
+    return nativeStorageBindings;
+  } catch (error) {
+    const diagnostic = describeNativeStorageError(error);
+    throw new Error(`Context+ native storage unavailable [${diagnostic.code}]: ${diagnostic.message}\n${diagnostic.remediation.join("\n")}`);
+  }
+}
+
+export function probeNativeStorage(): NativeStorageProbe {
+  try {
+    const { Database, sqliteVec } = loadNativeStorageBindings();
+    const db = new Database(":memory:");
+    sqliteVec.load(db);
+    db.prepare("SELECT 1").get();
+    db.close();
+    return {
+      ok: true,
+      runtime: {
+        nodeVersion: process.version,
+        nodeAbi: process.versions.modules ?? "unknown",
+      },
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      runtime: {
+        nodeVersion: process.version,
+        nodeAbi: process.versions.modules ?? "unknown",
+      },
+      diagnostic: describeNativeStorageError(error),
+    };
+  }
+}
 
 const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS files (
@@ -211,6 +319,7 @@ export class ContextPlusDB {
   constructor(rootDir: string) {
     this.rootDir = rootDir;
     const dbPath = join(rootDir, ".contextplus", "index.db");
+    const { Database, sqliteVec } = loadNativeStorageBindings();
     this.db = new Database(dbPath);
     sqliteVec.load(this.db);
     this.db.pragma("journal_mode = WAL");
@@ -395,6 +504,10 @@ export class ContextPlusDB {
     return row ?? null;
   }
 
+  listMemoryNodes(): MemoryNodeRow[] {
+    return this.db.prepare("SELECT * FROM memory_nodes ORDER BY last_accessed DESC, created_at DESC").all() as MemoryNodeRow[];
+  }
+
   deleteMemoryNode(id: string): void {
     this.db.prepare("DELETE FROM memory_embeddings WHERE node_id = ?").run(id);
     this.db.prepare("DELETE FROM memory_nodes WHERE id = ?").run(id);
@@ -418,6 +531,10 @@ export class ContextPlusDB {
 
   deleteMemoryEdge(id: string): void {
     this.db.prepare("DELETE FROM memory_edges WHERE id = ?").run(id);
+  }
+
+  getMemoryEdgesForNode(id: string): MemoryEdgeRow[] {
+    return this.db.prepare("SELECT * FROM memory_edges WHERE source = ? OR target = ?").all(id, id) as MemoryEdgeRow[];
   }
 
   searchMemoryNodes(queryVector: number[], topK: number = 5): MemorySearchResult[] {
@@ -551,18 +668,30 @@ export class ContextPlusDB {
   }
 }
 
-let dbInstance: ContextPlusDB | null = null;
+const dbInstances = new Map<string, ContextPlusDB>();
 
 export async function getDB(rootDir: string): Promise<ContextPlusDB> {
-  if (dbInstance) return dbInstance;
-  await mkdir(join(rootDir, ".contextplus"), { recursive: true });
-  dbInstance = new ContextPlusDB(rootDir);
-  return dbInstance;
+  const normalizedRoot = resolve(rootDir);
+  const existing = dbInstances.get(normalizedRoot);
+  if (existing) return existing;
+  await mkdir(join(normalizedRoot, ".contextplus"), { recursive: true });
+  const db = new ContextPlusDB(normalizedRoot);
+  dbInstances.set(normalizedRoot, db);
+  return db;
 }
 
-export function closeDB(): void {
-  if (dbInstance) {
-    dbInstance.close();
-    dbInstance = null;
+export function closeDB(rootDir?: string): void {
+  if (rootDir) {
+    const normalizedRoot = resolve(rootDir);
+    const db = dbInstances.get(normalizedRoot);
+    if (db) {
+      db.close();
+      dbInstances.delete(normalizedRoot);
+    }
+    return;
+  }
+  for (const [key, db] of dbInstances) {
+    db.close();
+    dbInstances.delete(key);
   }
 }

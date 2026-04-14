@@ -26,6 +26,12 @@ import { getDiff } from "./tools/diff.js";
 import { getRelated } from "./tools/related.js";
 import { getTestMap } from "./tools/test-map.js";
 import { explain } from "./tools/explain.js";
+import { getRepoMap } from "./tools/repo-map.js";
+import { resolveSymbol } from "./tools/resolve-symbol.js";
+import { ensureProjectConfig, registerWorkspace, verifyProjectContext } from "./core/project-config.js";
+import { buildTaskPack, buildChangeImpact, buildEditScope, buildDecisionBrief, recordTaskMemory, getWorkspaceContext, promotePattern } from "./tools/agentic-context.js";
+import { formatStartupHealthReport, runStartupHealthCheck } from "./core/startup-health.js";
+import { formatDoctorReport, runDoctor } from "./core/doctor.js";
 
 type AgentTarget = "claude" | "cursor" | "vscode" | "windsurf" | "opencode";
 
@@ -37,16 +43,97 @@ const AGENT_CONFIG_PATH: Record<AgentTarget, string> = {
   opencode: "opencode.json",
 };
 
-const SUB_COMMANDS = ["init", "skeleton", "tree"];
-const passthroughArgs = process.argv.slice(2);
-const ROOT_DIR = passthroughArgs[0] && !SUB_COMMANDS.includes(passthroughArgs[0])
-  ? resolve(passthroughArgs[0])
-  : process.cwd();
+const SUB_COMMANDS = ["init", "skeleton", "tree", "doctor"];
 const INSTRUCTIONS_SOURCE_URL = "https://contextplus.vercel.app/api/instructions";
 const INSTRUCTIONS_RESOURCE_URI = "contextplus://instructions";
 
 let noteServerActivity = () => { };
 let ensureTrackerRunning = () => { };
+
+interface ParsedCliArgs {
+  command?: string;
+  rootDir: string;
+  runner?: string;
+  projectId?: string;
+  clientId?: string;
+  sessionSource?: string;
+  fix?: boolean;
+  positional: string[];
+}
+
+function parseCliArgs(args: string[]): ParsedCliArgs {
+  const parsed: ParsedCliArgs = {
+    rootDir: process.cwd(),
+    positional: [],
+  };
+  let index = 0;
+  while (index < args.length) {
+    const arg = args[index];
+    if (index === 0 && SUB_COMMANDS.includes(arg)) {
+      parsed.command = arg;
+      index += 1;
+      continue;
+    }
+    if (arg.startsWith("--runner=")) {
+      parsed.runner = arg.split("=")[1];
+      index += 1;
+      continue;
+    }
+    if (arg === "--runner") {
+      parsed.runner = args[index + 1];
+      index += 2;
+      continue;
+    }
+    if (arg.startsWith("--project-id=")) {
+      parsed.projectId = arg.split("=")[1];
+      index += 1;
+      continue;
+    }
+    if (arg === "--project-id") {
+      parsed.projectId = args[index + 1];
+      index += 2;
+      continue;
+    }
+    if (arg.startsWith("--client-id=")) {
+      parsed.clientId = arg.split("=")[1];
+      index += 1;
+      continue;
+    }
+    if (arg === "--client-id") {
+      parsed.clientId = args[index + 1];
+      index += 2;
+      continue;
+    }
+    if (arg.startsWith("--session-source=")) {
+      parsed.sessionSource = arg.split("=")[1];
+      index += 1;
+      continue;
+    }
+    if (arg === "--session-source") {
+      parsed.sessionSource = args[index + 1];
+      index += 2;
+      continue;
+    }
+    if (arg === "--fix") {
+      parsed.fix = true;
+      index += 1;
+      continue;
+    }
+    parsed.positional.push(arg);
+    index += 1;
+  }
+  if (parsed.command === "init") {
+    if (parsed.positional.length > 0) parsed.positional = parsed.positional.slice(0, 1);
+  } else if (parsed.command === "tree" || parsed.command === "skeleton") {
+    if (parsed.positional.length > 0) parsed.rootDir = resolve(parsed.positional[0]);
+  } else if (parsed.positional.length > 0) {
+    parsed.rootDir = resolve(parsed.positional[0]);
+  }
+  return parsed;
+}
+
+const parsedCliArgs = parseCliArgs(process.argv.slice(2));
+const ROOT_DIR = parsedCliArgs.rootDir;
 
 function withRequestActivity<TArgs, TResult>(
   handler: (args: TArgs) => Promise<TResult>,
@@ -55,6 +142,7 @@ function withRequestActivity<TArgs, TResult>(
   return async (args: TArgs): Promise<TResult> => {
     noteServerActivity();
     if (options?.useEmbeddingTracker) ensureTrackerRunning();
+    await verifyProjectContext(ROOT_DIR);
     return handler(args);
   };
 }
@@ -70,17 +158,10 @@ function parseAgentTarget(input?: string): AgentTarget {
 }
 
 function parseRunner(args: string[]): "npx" | "bunx" {
-  const explicit = args.find((arg) => arg.startsWith("--runner="));
-  if (explicit) {
-    const value = explicit.split("=")[1];
-    if (value === "npx" || value === "bunx") return value;
-    throw new Error(`Unsupported runner \"${value}\". Use --runner=npx or --runner=bunx.`);
-  }
-  const runnerFlagIndex = args.findIndex((arg) => arg === "--runner");
-  if (runnerFlagIndex >= 0) {
-    const value = args[runnerFlagIndex + 1];
-    if (value === "npx" || value === "bunx") return value;
-    throw new Error(`Unsupported runner \"${value}\". Use --runner=npx or --runner=bunx.`);
+  const parsed = parseCliArgs(args);
+  if (parsed.runner) {
+    if (parsed.runner === "npx" || parsed.runner === "bunx") return parsed.runner;
+    throw new Error(`Unsupported runner \"${parsed.runner}\". Use --runner=npx or --runner=bunx.`);
   }
   const userAgent = (process.env.npm_config_user_agent ?? "").toLowerCase();
   const execPath = (process.env.npm_execpath ?? "").toLowerCase();
@@ -158,6 +239,12 @@ function buildMcpConfig(runner: "npx" | "bunx") {
   );
 }
 
+async function runDoctorCommand(args: string[]) {
+  const parsed = parseCliArgs(["doctor", ...args]);
+  const report = await runDoctor(parsed.rootDir, parsed.fix === true);
+  process.stdout.write(formatDoctorReport(report) + "\n");
+}
+
 function buildOpenCodeConfig(runner: "npx" | "bunx") {
   const command = runner === "npx" ? ["npx", "-y", "contextplus"] : ["bunx", "contextplus"];
   return JSON.stringify(
@@ -184,8 +271,8 @@ function buildOpenCodeConfig(runner: "npx" | "bunx") {
 }
 
 async function runInitCommand(args: string[]) {
-  const nonFlags = args.filter((arg) => !arg.startsWith("--"));
-  const target = parseAgentTarget(nonFlags[0]);
+  const parsed = parseCliArgs(["init", ...args]);
+  const target = parseAgentTarget(parsed.positional[0]);
   const runner = parseRunner(args);
   const outputPath = resolve(process.cwd(), AGENT_CONFIG_PATH[target]);
   const content = target === "opencode" ? buildOpenCodeConfig(runner) : buildMcpConfig(runner);
@@ -201,6 +288,12 @@ async function runInitCommand(args: string[]) {
   } catch {
     await writeFile(configPath, JSON.stringify({ provider: "ollama", embedModel: "nomic-embed-text", chatModel: "llama3.2" }, null, 2) + "\n");
   }
+  await ensureProjectConfig({
+    rootDir: process.cwd(),
+    projectId: parsed.projectId,
+    clientId: parsed.clientId,
+    sessionSource: parsed.sessionSource ?? "mcp",
+  });
 
   console.error(`Context+ initialized for ${target} using ${runner}.`);
   console.error(`Wrote MCP config: ${outputPath}`);
@@ -227,6 +320,76 @@ server.resource(
       }],
     };
   }),
+);
+
+server.tool(
+  "health",
+  "Report Context+ startup health, including active root, project identity, Node ABI, native storage status, and database readiness.",
+  {
+    format: z.enum(["text", "json"]).optional().describe("Return plain text or structured JSON. Default: text."),
+  },
+  async ({ format }) => {
+    noteServerActivity();
+    const report = await runStartupHealthCheck(ROOT_DIR);
+    return {
+      content: [{
+        type: "text" as const,
+        text: format === "json" ? JSON.stringify(report, null, 2) : formatStartupHealthReport(report),
+      }],
+    };
+  },
+);
+
+server.tool(
+  "repo_map",
+  "Return a compact repository map with important files and top-level symbols. Optimized for first-turn agent orientation with low token usage.",
+  {
+    target_path: z.string().optional().describe("Optional subdirectory prefix to scope the map."),
+    include_signatures: z.boolean().optional().describe("Include symbol signatures. Defaults to true."),
+    max_files: z.number().optional().describe("Maximum files to include. Default: 40."),
+    max_symbols_per_file: z.number().optional().describe("Maximum top-level symbols per file. Default: 8."),
+    max_tokens: z.number().optional().describe("Approximate token budget for text output. Default: 2000."),
+    format: z.enum(["text", "json"]).optional().describe("Return plain text or structured JSON. Default: text."),
+  },
+  withRequestActivity(async ({ target_path, include_signatures, max_files, max_symbols_per_file, max_tokens, format }) => ({
+    content: [{
+      type: "text" as const,
+      text: await getRepoMap({
+        rootDir: ROOT_DIR,
+        targetPath: target_path,
+        includeSignatures: include_signatures,
+        maxFiles: max_files,
+        maxSymbolsPerFile: max_symbols_per_file,
+        maxTokens: max_tokens,
+        format,
+      }),
+    }],
+  })),
+);
+
+server.tool(
+  "resolve_symbol",
+  "Resolve an identifier to the most likely definition with ambiguity scoring. Use this before explain/refactor work when a symbol name appears in multiple files.",
+  {
+    symbol_name: z.string().describe("The symbol or identifier name to resolve."),
+    file_context: z.string().optional().describe("Optional current file path to bias resolution using import context and locality."),
+    kind: z.string().optional().describe("Optional expected kind, e.g. function, method, class, interface."),
+    limit: z.number().optional().describe("Maximum candidates to return. Default: 8."),
+    format: z.enum(["text", "json"]).optional().describe("Return plain text or structured JSON. Default: text."),
+  },
+  withRequestActivity(async ({ symbol_name, file_context, kind, limit, format }) => ({
+    content: [{
+      type: "text" as const,
+      text: await resolveSymbol({
+        rootDir: ROOT_DIR,
+        symbolName: symbol_name,
+        fileContext: file_context,
+        kind,
+        limit,
+        format,
+      }),
+    }],
+  })),
 );
 
 server.tool(
@@ -276,6 +439,7 @@ server.tool(
   {
     query: z.string().describe("Natural language description of what you're looking for."),
     mode: z.enum(["file", "identifier", "hybrid"]).optional().describe("Search mode: 'file' for files, 'identifier' for functions/classes, 'hybrid' for both. Default: hybrid."),
+    format: z.enum(["text", "json"]).optional().describe("Return plain text or structured JSON. Default: text."),
     top_k: z.number().optional().describe("Number of matches to return. Default: 5."),
     top_calls_per_identifier: z.number().optional().describe("How many ranked call sites per identifier (identifier/hybrid mode). Default: 10."),
     include_kinds: z.array(z.string()).optional().describe("Filter identifier kinds, e.g. [\"function\", \"method\"]. Only for identifier/hybrid mode."),
@@ -294,6 +458,7 @@ server.tool(
         rootDir: ROOT_DIR,
         query: args.query,
         mode: args.mode,
+        format: args.format,
         topK: args.top_k,
         topCallsPerIdentifier: args.top_calls_per_identifier,
         includeKinds: args.include_kinds,
@@ -445,11 +610,12 @@ server.tool(
     label: z.string().describe("Short identifier for the node. Used for deduplication with type."),
     content: z.string().describe("Detailed content for the node. Used for embedding generation."),
     metadata: z.record(z.string()).optional().describe("Optional key-value metadata pairs."),
+    scope: z.enum(["session", "project", "client", "global"]).optional().describe("Memory scope. Defaults to project."),
   },
-  withRequestActivity(async ({ type, label, content, metadata }) => ({
+  withRequestActivity(async ({ type, label, content, metadata, scope }) => ({
     content: [{
       type: "text" as const,
-      text: await toolUpsertMemoryNode({ rootDir: ROOT_DIR, type, label, content, metadata }),
+      text: await toolUpsertMemoryNode({ rootDir: ROOT_DIR, type, label, content, metadata, scope }),
     }],
   })),
 );
@@ -481,13 +647,14 @@ server.tool(
     query: z.string().describe("Natural language query to search the memory graph."),
     max_depth: z.number().optional().describe("How many hops to traverse from direct matches. Default: 1."),
     top_k: z.number().optional().describe("Number of direct matches to return. Default: 5."),
+    scope: z.enum(["session", "project", "client", "global"]).optional().describe("Retrieval scope. Defaults to project."),
     edge_filter: z.array(z.enum(["relates_to", "depends_on", "implements", "references", "similar_to", "contains"])).optional()
       .describe("Only traverse edges of these types. Omit for all types."),
   },
-  withRequestActivity(async ({ query, max_depth, top_k, edge_filter }) => ({
+  withRequestActivity(async ({ query, max_depth, top_k, edge_filter, scope }) => ({
     content: [{
       type: "text" as const,
-      text: await toolSearchMemoryGraph({ rootDir: ROOT_DIR, query, maxDepth: max_depth, topK: top_k, edgeFilter: edge_filter }),
+      text: await toolSearchMemoryGraph({ rootDir: ROOT_DIR, query, maxDepth: max_depth, topK: top_k, edgeFilter: edge_filter, scope }),
     }],
   })),
 );
@@ -504,11 +671,12 @@ server.tool(
       metadata: z.record(z.string()).optional(),
     })).describe("Array of nodes to add. Each needs type, label, and content."),
     auto_link: z.boolean().optional().describe("Whether to auto-create similarity edges. Default: true."),
+    scope: z.enum(["session", "project", "client", "global"]).optional().describe("Memory scope. Defaults to project."),
   },
-  withRequestActivity(async ({ items, auto_link }) => ({
+  withRequestActivity(async ({ items, auto_link, scope }) => ({
     content: [{
       type: "text" as const,
-      text: await toolAddInterlinkedContext({ rootDir: ROOT_DIR, items, autoLink: auto_link }),
+      text: await toolAddInterlinkedContext({ rootDir: ROOT_DIR, items, autoLink: auto_link, scope }),
     }],
   })),
 );
@@ -551,11 +719,13 @@ server.tool(
   "status",
   "Project overview dashboard. Returns file counts, index state, memory graph stats, git branch, uncommitted changes, and recent commits. " +
   "One call for complete situational awareness at the start of a session.",
-  {},
-  withRequestActivity(async () => ({
+  {
+    format: z.enum(["text", "json"]).optional().describe("Return plain text or structured JSON. Default: text."),
+  },
+  withRequestActivity(async ({ format }) => ({
     content: [{
       type: "text" as const,
-      text: await getStatus({ rootDir: ROOT_DIR }),
+      text: await getStatus({ rootDir: ROOT_DIR, format }),
     }],
   })),
 );
@@ -626,14 +796,194 @@ server.tool(
   })),
 );
 
+server.tool(
+  "task_pack",
+  "Assemble the minimum useful working set for a task: ranked files, nearby tests, recent diffs, memory, and risks.",
+  {
+    task: z.string().describe("Task description or engineering objective."),
+    max_files: z.number().optional().describe("Maximum ranked files to include. Default: 8."),
+    include_tests: z.boolean().optional().describe("Include nearby tests. Default: true."),
+    include_recent_diffs: z.boolean().optional().describe("Include recent file-level diffs. Default: true."),
+    include_memory: z.boolean().optional().describe("Include project memory hits. Default: true."),
+    format: z.enum(["text", "json"]).optional().describe("Return plain text or structured JSON. Default: text."),
+  },
+  withRequestActivity(async ({ task, max_files, include_tests, include_recent_diffs, include_memory, format }) => ({
+    content: [{
+      type: "text" as const,
+      text: await buildTaskPack({
+        rootDir: ROOT_DIR,
+        task,
+        maxFiles: max_files,
+        includeTests: include_tests,
+        includeRecentDiffs: include_recent_diffs,
+        includeMemory: include_memory,
+        format,
+      }),
+    }],
+  }), { useEmbeddingTracker: true }),
+);
+
+server.tool(
+  "change_impact",
+  "Estimate what could break if specific files or symbols change, including related files, tests, churn, and reasons.",
+  {
+    files: z.array(z.string()).optional().describe("Files to analyze for impact."),
+    symbols: z.array(z.string()).optional().describe("Symbols to analyze for impact."),
+    include_tests: z.boolean().optional().describe("Include likely impacted tests. Default: true."),
+    include_recent_churn: z.boolean().optional().describe("Include recent churn in risk scoring. Default: true."),
+    format: z.enum(["text", "json"]).optional().describe("Return plain text or structured JSON. Default: text."),
+  },
+  withRequestActivity(async ({ files, symbols, include_tests, include_recent_churn, format }) => ({
+    content: [{
+      type: "text" as const,
+      text: await buildChangeImpact({
+        rootDir: ROOT_DIR,
+        files,
+        symbols,
+        includeTests: include_tests,
+        includeRecentChurn: include_recent_churn,
+        format,
+      }),
+    }],
+  })),
+);
+
+server.tool(
+  "edit_scope",
+  "Identify the smallest likely safe edit set for a task, including likely source files and nearby tests.",
+  {
+    task: z.string().describe("Task description or intended change."),
+    max_files: z.number().optional().describe("Maximum files to recommend. Default: 5."),
+    prefer_smallest_scope: z.boolean().optional().describe("Bias toward the smallest safe scope. Default: true."),
+    format: z.enum(["text", "json"]).optional().describe("Return plain text or structured JSON. Default: text."),
+  },
+  withRequestActivity(async ({ task, max_files, prefer_smallest_scope, format }) => ({
+    content: [{
+      type: "text" as const,
+      text: await buildEditScope({
+        rootDir: ROOT_DIR,
+        task,
+        maxFiles: max_files,
+        preferSmallestScope: prefer_smallest_scope,
+        format,
+      }),
+    }],
+  }), { useEmbeddingTracker: true }),
+);
+
+server.tool(
+  "decision_brief",
+  "Compress a subsystem or task into a short decision-oriented brief with ranked files, symbols, tests, hubs, and memory.",
+  {
+    query: z.string().describe("Subsystem, area, or task query."),
+    include_hubs: z.boolean().optional().describe("Include matching hubs. Default: true."),
+    include_memory: z.boolean().optional().describe("Include project memory. Default: true."),
+    include_tests: z.boolean().optional().describe("Include nearby tests. Default: true."),
+    format: z.enum(["text", "json"]).optional().describe("Return plain text or structured JSON. Default: text."),
+  },
+  withRequestActivity(async ({ query, include_hubs, include_memory, include_tests, format }) => ({
+    content: [{
+      type: "text" as const,
+      text: await buildDecisionBrief({
+        rootDir: ROOT_DIR,
+        query,
+        includeHubs: include_hubs,
+        includeMemory: include_memory,
+        includeTests: include_tests,
+        format,
+      }),
+    }],
+  }), { useEmbeddingTracker: true }),
+);
+
+server.tool(
+  "memory_record_task",
+  "Persist useful task outcomes with linked files, assumptions, evidence, and open risks for future sessions.",
+  {
+    task: z.string().describe("Task or issue name."),
+    summary: z.string().describe("What changed or was learned."),
+    files: z.array(z.string()).optional().describe("Files touched or relevant to the task."),
+    assumptions: z.array(z.string()).optional().describe("Assumptions made during the task."),
+    evidence: z.array(z.string()).optional().describe("Evidence supporting the outcome."),
+    open_risks: z.array(z.string()).optional().describe("Risks that remain unresolved."),
+    format: z.enum(["text", "json"]).optional().describe("Return plain text or structured JSON. Default: text."),
+  },
+  withRequestActivity(async ({ task, summary, files, assumptions, evidence, open_risks, format }) => ({
+    content: [{
+      type: "text" as const,
+      text: await recordTaskMemory({
+        rootDir: ROOT_DIR,
+        task,
+        summary,
+        files,
+        assumptions,
+        evidence,
+        openRisks: open_risks,
+        format,
+      }),
+    }],
+  }), { useEmbeddingTracker: true }),
+);
+
+server.tool(
+  "workspace_context",
+  "List active registered projects and recent sessions without merging project-internal code context.",
+  {
+    client_id: z.string().optional().describe("Filter to a specific client or engagement."),
+    include_projects: z.boolean().optional().describe("Include project entries. Default: true."),
+    include_recent_sessions: z.boolean().optional().describe("Include recent session summaries. Default: true."),
+    format: z.enum(["text", "json"]).optional().describe("Return plain text or structured JSON. Default: text."),
+  },
+  withRequestActivity(async ({ client_id, include_projects, include_recent_sessions, format }) => ({
+    content: [{
+      type: "text" as const,
+      text: await getWorkspaceContext({
+        clientId: client_id,
+        includeProjects: include_projects,
+        includeRecentSessions: include_recent_sessions,
+        format,
+      }),
+    }],
+  })),
+);
+
+server.tool(
+  "promote_pattern",
+  "Promote a project memory item into a client-level or global reusable pattern record.",
+  {
+    source_memory_id: z.string().describe("Memory node ID to promote."),
+    target_scope: z.enum(["client", "global"]).describe("Where to promote the pattern."),
+    sanitize: z.boolean().optional().describe("Mark the promoted pattern as sanitized. Default: true."),
+    summary: z.string().describe("Reusable pattern summary."),
+    format: z.enum(["text", "json"]).optional().describe("Return plain text or structured JSON. Default: text."),
+  },
+  withRequestActivity(async ({ source_memory_id, target_scope, sanitize, summary, format }) => ({
+    content: [{
+      type: "text" as const,
+      text: await promotePattern({
+        rootDir: ROOT_DIR,
+        sourceMemoryId: source_memory_id,
+        targetScope: target_scope,
+        sanitize,
+        summary,
+        format,
+      }),
+    }],
+  })),
+);
+
 async function main() {
   const args = process.argv.slice(2);
-  if (args[0] === "init") {
+  if (parsedCliArgs.command === "init") {
     await runInitCommand(args.slice(1));
     return;
   }
-  if (args[0] === "skeleton" || args[0] === "tree") {
-    const targetRoot = args[1] ? resolve(args[1]) : process.cwd();
+  if (parsedCliArgs.command === "doctor") {
+    await runDoctorCommand(args.slice(1));
+    return;
+  }
+  if (parsedCliArgs.command === "skeleton" || parsedCliArgs.command === "tree") {
+    const targetRoot = parsedCliArgs.rootDir;
     const tree = await getContextTree({
       rootDir: targetRoot,
       includeSymbols: true,
@@ -643,6 +993,15 @@ async function main() {
     return;
   }
   await ensureContextPlusDir(ROOT_DIR);
+  const projectConfig = await ensureProjectConfig({
+    rootDir: ROOT_DIR,
+    projectId: parsedCliArgs.projectId ?? process.env.CONTEXTPLUS_PROJECT_ID,
+    clientId: parsedCliArgs.clientId ?? process.env.CONTEXTPLUS_CLIENT_ID,
+    sessionSource: parsedCliArgs.sessionSource ?? process.env.CONTEXTPLUS_SESSION_SOURCE ?? "mcp",
+  });
+  await registerWorkspace(projectConfig);
+  const startupHealth = await runStartupHealthCheck(ROOT_DIR);
+  console.error(formatStartupHealthReport(startupHealth));
   const trackerController = createEmbeddingTrackerController({
     rootDir: ROOT_DIR,
     mode: process.env.CONTEXTPLUS_EMBED_TRACKER,
