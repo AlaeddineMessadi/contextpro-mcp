@@ -116,17 +116,15 @@ export async function reindex(options: ReindexOptions): Promise<string> {
   try {
     const entries = await walkDirectory({ rootDir: options.rootDir, targetPath: options.targetPath, depthLimit: 0 });
     const files = entries.filter((e) => !e.isDirectory);
-
-    const currentPaths = new Set(files.map((f) => f.relativePath));
+    const sourceFiles = files.filter((file) => isSupportedFile(file.path));
+    const currentPaths = new Set(sourceFiles.map((f) => f.relativePath));
     const currentHashes = new Map<string, string>();
     let totalSymbols = 0;
     let totalImports = 0;
     let indexed = 0;
-    let skipped = 0;
+    let skipped = files.length - sourceFiles.length;
 
-    for (const file of files) {
-      if (!isSupportedFile(file.path)) { skipped++; continue; }
-
+    for (const file of sourceFiles) {
       try {
         const content = await readFile(file.path, "utf-8");
         const hash = hashContent(content);

@@ -3,6 +3,7 @@
 
 import { getDB } from "../core/db.js";
 import { isSupportedFile } from "../core/parser.js";
+import { walkDirectory } from "../core/walker.js";
 import { readFile } from "fs/promises";
 import { resolve } from "path";
 
@@ -59,49 +60,58 @@ async function scanFileForSymbol(
 export async function getBlastRadius(options: BlastRadiusOptions): Promise<string> {
   const db = await getDB(options.rootDir);
   const usages: SymbolUsage[] = [];
+  const seenUsageKeys = new Set<string>();
+
+  const pushUsages = (items: SymbolUsage[]) => {
+    for (const item of items) {
+      const key = `${item.file}:${item.line}:${item.context}`;
+      if (seenUsageKeys.has(key)) continue;
+      seenUsageKeys.add(key);
+      usages.push(item);
+    }
+  };
 
   const callSiteRows = db.getCallersOf(options.symbolName);
   const contextFile = options.fileContext ? db.getFile(options.fileContext) : null;
   const importers = contextFile ? db.getImportersOf(contextFile.id) : null;
+  const candidateFiles = new Set<string>();
 
   if (callSiteRows.length > 0) {
     const allFiles = db.getAllFiles();
-    const fileMap = new Map(allFiles.map((f) => [f.id, f.path]));
+    const fileMap = new Map(allFiles.map((f) => [f.id, f.path] as const));
     const seen = new Set<number>();
     for (const row of callSiteRows) {
       if (seen.has(row.file_id)) continue;
       seen.add(row.file_id);
       const filePath = fileMap.get(row.file_id);
       if (!filePath || (options.fileContext && filePath === options.fileContext)) continue;
-      const fullPath = resolve(options.rootDir, filePath);
-      const found = await scanFileForSymbol(fullPath, filePath, options.symbolName, options.fileContext);
-      usages.push(...found);
+      candidateFiles.add(filePath);
     }
-  } else if (importers && importers.length > 0) {
+  }
+
+  if (importers && importers.length > 0) {
     const allFiles = db.getAllFiles();
-    const fileMap = new Map(allFiles.map((f) => [f.id, f.path]));
-    const candidates = new Set<string>();
-    if (options.fileContext) candidates.add(options.fileContext);
+    const fileMap = new Map(allFiles.map((f) => [f.id, f.path] as const));
     for (const r of importers) {
       const p = fileMap.get(r.source_file_id);
-      if (p) candidates.add(p);
+      if (p) candidateFiles.add(p);
     }
-    for (const relativePath of candidates) {
-      if (!isSupportedFile(relativePath)) continue;
-      const found = await scanFileForSymbol(resolve(options.rootDir, relativePath), relativePath, options.symbolName, options.fileContext);
-      usages.push(...found);
-    }
-  } else {
-    const allFiles = db.getAllFiles();
-    await Promise.all(
-      allFiles
-        .filter((f) => isSupportedFile(f.path))
-        .map(async (f) => {
-          const found = await scanFileForSymbol(resolve(options.rootDir, f.path), f.path, options.symbolName, options.fileContext);
-          usages.push(...found);
-        }),
-    );
   }
+
+  const workspaceEntries = await walkDirectory({ rootDir: options.rootDir, depthLimit: 0 });
+  for (const entry of workspaceEntries) {
+    if (entry.isDirectory || !isSupportedFile(entry.path)) continue;
+    candidateFiles.add(entry.relativePath);
+  }
+
+  await Promise.all(
+    [...candidateFiles]
+      .filter((relativePath) => isSupportedFile(relativePath))
+      .map(async (relativePath) => {
+        const found = await scanFileForSymbol(resolve(options.rootDir, relativePath), relativePath, options.symbolName, options.fileContext);
+        pushUsages(found);
+      }),
+  );
 
   if (usages.length === 0) {
     return `Symbol "${options.symbolName}" is not used anywhere in the codebase.`;

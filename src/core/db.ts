@@ -319,6 +319,10 @@ export class ContextPlusDB {
     this.db.prepare("INSERT OR REPLACE INTO meta (key, value) VALUES ('vec_dimension', ?)").run(String(dim));
   }
 
+  private hasVectorTables(): boolean {
+    return this.vecDimension !== null;
+  }
+
   upsertFile(path: string, hash: string, header: string | null, language: string | null, fileSize: number = 0): number {
     const existing = this.db.prepare("SELECT id FROM files WHERE path = ?").get(path) as { id: number } | undefined;
     if (existing) {
@@ -363,8 +367,10 @@ export class ContextPlusDB {
   deleteFile(path: string): void {
     const file = this.getFile(path);
     if (file) {
-      this.db.prepare("DELETE FROM embeddings WHERE source_type = 'file' AND source_id = ?").run(String(file.id));
-      this.db.prepare("DELETE FROM embeddings WHERE source_type = 'symbol' AND source_id IN (SELECT CAST(id AS TEXT) FROM symbols WHERE file_id = ?)").run(file.id);
+      if (this.hasVectorTables()) {
+        this.db.prepare("DELETE FROM embeddings WHERE source_type = 'file' AND source_id = ?").run(String(file.id));
+        this.db.prepare("DELETE FROM embeddings WHERE source_type = 'symbol' AND source_id IN (SELECT CAST(id AS TEXT) FROM symbols WHERE file_id = ?)").run(file.id);
+      }
       this.db.prepare("DELETE FROM symbols WHERE file_id = ?").run(file.id);
       this.db.prepare("DELETE FROM files WHERE id = ?").run(file.id);
     }
@@ -412,10 +418,12 @@ export class ContextPlusDB {
   }
 
   getEmbeddingsByType(sourceType: string): Array<{ sourceId: string; contentHash: string; vector: Buffer }> {
+    if (!this.hasVectorTables()) return [];
     return this.db.prepare("SELECT source_id as sourceId, content_hash as contentHash, vector FROM embeddings WHERE source_type = ?").all(sourceType) as Array<{ sourceId: string; contentHash: string; vector: Buffer }>;
   }
 
   deleteEmbeddingsByPrefix(sourceType: string, prefix: string): void {
+    if (!this.hasVectorTables()) return;
     this.db.prepare("DELETE FROM embeddings WHERE source_type = ? AND source_id LIKE ?").run(sourceType, `${prefix}%`);
   }
 
@@ -438,12 +446,14 @@ export class ContextPlusDB {
   }
 
   getEmbeddingBySource(sourceType: string, sourceId: number): { vector: Buffer; hash: string } | null {
+    if (!this.hasVectorTables()) return null;
     const row = this.db.prepare("SELECT rowid, content_hash FROM embeddings WHERE source_type = ? AND source_id = ?")
       .get(sourceType, String(sourceId)) as { rowid: number; content_hash: string } | undefined;
     return row ? { vector: Buffer.alloc(0), hash: row.content_hash } : null;
   }
 
   getEmbeddingHash(sourceType: string, sourceId: number): string | null {
+    if (!this.hasVectorTables()) return null;
     const row = this.db.prepare("SELECT content_hash FROM embeddings WHERE source_type = ? AND source_id = ?")
       .get(sourceType, String(sourceId)) as { content_hash: string } | undefined;
     return row?.content_hash ?? null;
@@ -487,7 +497,9 @@ export class ContextPlusDB {
   }
 
   deleteMemoryNode(id: string): void {
-    this.db.prepare("DELETE FROM memory_embeddings WHERE node_id = ?").run(id);
+    if (this.hasVectorTables()) {
+      this.db.prepare("DELETE FROM memory_embeddings WHERE node_id = ?").run(id);
+    }
     this.db.prepare("DELETE FROM memory_nodes WHERE id = ?").run(id);
   }
 

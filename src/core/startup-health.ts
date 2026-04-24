@@ -66,7 +66,7 @@ export async function runStartupHealthCheck(rootDir: string): Promise<StartupHea
 
   let storageProbe = probeNativeStorage();
   if (!storageProbe.ok) {
-    const repaired = await attemptNativeAutoRepair(storageProbe.diagnostic?.code, rootDir);
+    const repaired = await attemptNativeAutoRepair(storageProbe.diagnostic?.code);
     if (repaired) storageProbe = probeNativeStorage();
   }
   let databaseOpen = { ok: false, message: "native storage unavailable" };

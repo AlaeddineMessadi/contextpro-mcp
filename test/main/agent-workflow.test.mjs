@@ -191,6 +191,42 @@ describe("agent workflow metadata", () => {
     assert.equal(status.index.missingIndexedFiles, 1);
   });
 
+  it("drops legacy non-source DB rows during full reindex so status counts stay clean", async () => {
+    const localRoot = await mkdtemp(join(tmpdir(), "contextplus-agent-clean-"));
+    await mkdir(join(localRoot, "src"), { recursive: true });
+    await writeFile(
+      join(localRoot, "src", "index.ts"),
+      [
+        "// Source file for cleanup regression test",
+        "// FEATURE: cleanup regression fixture",
+        "export const ready = true;",
+        "",
+      ].join("\n"),
+    );
+
+    const projectMod = await import("../../build/core/project-config.js");
+    await projectMod.ensureProjectConfig({
+      rootDir: localRoot,
+      projectId: "agent-clean-fixture",
+      sessionSource: "codex",
+    });
+
+    const dbMod = await import("../../build/core/db.js");
+    const db = await dbMod.getDB(localRoot);
+    db.upsertFile("dist/legacy.json", "deadbeefdeadbeef", "legacy blob", "json", 12);
+
+    const reindexMod = await import("../../build/tools/reindex.js");
+    await reindexMod.reindex({ rootDir: localRoot, force: true });
+
+    const statusMod = await import("../../build/tools/status.js");
+    const status = await statusMod.getStatusData({ rootDir: localRoot, format: "json" });
+    assert.equal(status.files.indexed, status.files.source);
+    assert.equal(status.index.state, "fresh");
+
+    dbMod.closeDB(localRoot);
+    await rm(localRoot, { recursive: true, force: true });
+  });
+
   it("hard-boosts exact symbol intent in search results", async () => {
     const projectMod = await import("../../build/core/project-config.js");
     await projectMod.ensureProjectConfig({

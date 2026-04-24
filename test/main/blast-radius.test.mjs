@@ -90,6 +90,24 @@ describe("blast-radius", async () => {
       });
       assert.ok(result.includes("2 files") || result.includes("usages"));
     });
+
+    it("scans workspace even when graph has not been indexed yet", async () => {
+      await writeFile(
+        join(FIXTURE_DIR, "lazy.ts"),
+        "export function lazyHelper() {\n  return 1;\n}\n",
+      );
+      await writeFile(
+        join(FIXTURE_DIR, "consumer.ts"),
+        "import { lazyHelper } from './lazy';\nconsole.log(lazyHelper());\n",
+      );
+      const result = await getBlastRadius({
+        rootDir: FIXTURE_DIR,
+        symbolName: "lazyHelper",
+        fileContext: "lazy.ts",
+      });
+      assert.ok(result.includes("consumer.ts"));
+      assert.ok(!result.includes("not used"));
+    });
   });
 
   after(async () => {

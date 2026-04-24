@@ -1,5 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 
 describe("native repair helpers", () => {
   it("flags repairable native storage failures", async () => {
@@ -30,5 +32,14 @@ describe("native repair helpers", () => {
 
     if (previous === undefined) delete process.env.CONTEXTPLUS_NATIVE_AUTO_REPAIR;
     else process.env.CONTEXTPLUS_NATIVE_AUTO_REPAIR = previous;
+  });
+
+  it("resolves repair root to ContextPlus package root, not active workspace root", async () => {
+    const mod = await import("../../build/core/native-repair.js");
+    const packageRoot = mod.getContextPlusPackageRoot();
+    const pkg = JSON.parse(await readFile(join(packageRoot, "package.json"), "utf-8"));
+
+    assert.equal(pkg.name, "contextplus");
+    assert.equal(packageRoot.endsWith("/contextplus-official"), true);
   });
 });

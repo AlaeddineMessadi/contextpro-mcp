@@ -58,8 +58,9 @@ function clamp(value: number, min: number, max: number): number {
 export async function getIndexState(rootDir: string): Promise<IndexState> {
   const db = await getDB(rootDir);
   const latestIndexedAt = db.getLatestIndexedAt();
-  const indexedFiles = db.getAllFiles().length;
-  const indexedPaths = new Set(db.getAllFiles().map((file) => file.path));
+  const indexedSourceFiles = db.getAllFiles().filter((file) => isSupportedFile(file.path));
+  const indexedFiles = indexedSourceFiles.length;
+  const indexedPaths = new Set(indexedSourceFiles.map((file) => file.path));
   const entries = await walkDirectory({ rootDir, depthLimit: 0 });
   const sourceEntries = entries.filter((entry) => !entry.isDirectory && isSupportedFile(entry.path));
   const sourcePaths = new Set(sourceEntries.map((entry) => entry.relativePath));

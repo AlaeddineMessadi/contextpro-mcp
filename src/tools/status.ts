@@ -104,7 +104,7 @@ export async function getStatusData(options: StatusOptions): Promise<StatusSnaps
     loadProjectConfig(options.rootDir),
     getIndexState(options.rootDir),
   ]);
-  const indexedFiles = db.getAllFiles();
+  const indexedFiles = db.getAllFiles().filter((file) => isSupportedFile(file.path));
   const graphStats = db.getGraphStats();
   const staleCount = indexedFiles.filter((f) => !allFiles.some((e) => e.relativePath === f.path)).length;
   const warnings: string[] = [];

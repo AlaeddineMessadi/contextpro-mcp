@@ -3,7 +3,7 @@
 
 import { resolve } from "path";
 import { runStartupHealthCheck, type StartupHealthReport } from "./startup-health.js";
-import { isRepairableNativeError, repairNativeDependencies, type NativeRepairAction } from "./native-repair.js";
+import { getContextPlusPackageRoot, isRepairableNativeError, repairNativeDependencies, type NativeRepairAction } from "./native-repair.js";
 
 export type DoctorAction = NativeRepairAction;
 
@@ -26,7 +26,7 @@ export async function runDoctor(rootDir: string, fix: boolean): Promise<DoctorRe
   const actions: DoctorAction[] = [];
 
   if (fix && needsNativeRepair(before)) {
-    actions.push(...await repairNativeDependencies(normalizedRoot, before.storage.diagnostic?.code));
+    actions.push(...await repairNativeDependencies(getContextPlusPackageRoot(), before.storage.diagnostic?.code));
   }
 
   const after = await runStartupHealthCheck(normalizedRoot);
