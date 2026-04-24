@@ -48,7 +48,7 @@ The MCP server is built with TypeScript and communicates over stdio using the Mo
 
 The memory graph is a **Retrieval-Augmented Generation (RAG)** system backed by SQLite + sqlite-vec. Agents MUST use `memory_search` at the start of every task to retrieve prior context, and persist learnings with `memory_create` and `memory_link` after completing work. This prevents redundant exploration and builds cumulative knowledge across sessions.
 
-**Entry Point**: `src/index.ts` initializes the SQLite database, registers 36 MCP tools, and starts the stdio transport. Accepts an optional CLI argument for the target project root directory (defaults to `process.cwd()`).
+**Entry Point**: `src/index.ts` initializes the SQLite database, registers 36 MCP tools, and starts the stdio transport. Accepts `--root <path>` or an optional positional project root. Without explicit root, it falls back to `process.cwd()`, but now refuses dangerous cwd values like `/` or home-level dirs unless `CONTEXTPLUS_ALLOW_UNSAFE_ROOT=true`.
 
 ## Environment Variables
 
@@ -66,6 +66,7 @@ The memory graph is a **Retrieval-Augmented Generation (RAG)** system backed by 
 | `CONTEXTPLUS_SESSION_SOURCE`            | `mcp`                | Session source tag stored in memory node metadata                |
 | `CONTEXTPLUS_QUICKREFRESH_MAX_FILES`    | `30`                 | Max stale files auto-patched per search call before warning      |
 | `CONTEXTPLUS_NATIVE_AUTO_REPAIR`        | `true`               | Auto-repair native SQLite bindings for the current Node runtime  |
+| `CONTEXTPLUS_ALLOW_UNSAFE_ROOT`         | `false`              | Allow cwd fallback from `/` or home-level directories            |
 
 Runtime cache: `.contextplus/` is created at MCP startup and stores reusable embedding vectors for files, identifiers, call sites, and artifact payloads. A realtime tracker watches file updates and refreshes changed function/file embeddings incrementally.
 

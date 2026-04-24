@@ -16,6 +16,7 @@ import { formatStartupHealthReport, runStartupHealthCheck } from "./core/startup
 import { formatDoctorReport, runDoctor } from "./core/doctor.js";
 import { recordToolTiming } from "./core/tool-metrics.js";
 import { registerTools } from "./tools/register-tools.js";
+import { selectRootDir, validateSelectedRoot } from "./core/root-guard.js";
 
 type AgentTarget = "claude" | "cursor" | "vscode" | "windsurf" | "opencode";
 
@@ -37,17 +38,20 @@ let ensureTrackerRunning = () => { };
 interface ParsedCliArgs {
   command?: string;
   rootDir: string;
+  rootSource: "cwd" | "positional" | "flag";
   runner?: string;
   projectId?: string;
   clientId?: string;
   sessionSource?: string;
   fix?: boolean;
+  flagRoot?: string;
   positional: string[];
 }
 
 function parseCliArgs(args: string[]): ParsedCliArgs {
   const parsed: ParsedCliArgs = {
     rootDir: process.cwd(),
+    rootSource: "cwd",
     positional: [],
   };
   let index = 0;
@@ -65,6 +69,16 @@ function parseCliArgs(args: string[]): ParsedCliArgs {
     }
     if (arg === "--runner") {
       parsed.runner = args[index + 1];
+      index += 2;
+      continue;
+    }
+    if (arg.startsWith("--root=")) {
+      parsed.flagRoot = arg.split("=")[1];
+      index += 1;
+      continue;
+    }
+    if (arg === "--root") {
+      parsed.flagRoot = args[index + 1];
       index += 2;
       continue;
     }
@@ -106,18 +120,16 @@ function parseCliArgs(args: string[]): ParsedCliArgs {
     parsed.positional.push(arg);
     index += 1;
   }
-  if (parsed.command === "init") {
-    if (parsed.positional.length > 0) parsed.positional = parsed.positional.slice(0, 1);
-  } else if (parsed.command === "tree" || parsed.command === "skeleton") {
-    if (parsed.positional.length > 0) parsed.rootDir = resolve(parsed.positional[0]);
-  } else if (parsed.positional.length > 0) {
-    parsed.rootDir = resolve(parsed.positional[0]);
-  }
+  if (parsed.command === "init" && parsed.positional.length > 0) parsed.positional = parsed.positional.slice(0, 1);
+  const rootArgs = parsed.command === "init" ? [] : parsed.positional;
+  const selectedRoot = selectRootDir(process.cwd(), rootArgs, parsed.flagRoot);
+  parsed.rootDir = selectedRoot.rootDir;
+  parsed.rootSource = selectedRoot.source;
   return parsed;
 }
 
 const parsedCliArgs = parseCliArgs(process.argv.slice(2));
-const ROOT_DIR = parsedCliArgs.rootDir;
+const ROOT_DIR = validateSelectedRoot({ rootDir: parsedCliArgs.rootDir, source: parsedCliArgs.rootSource }).rootDir;
 
 function withRequestActivity<TArgs, TResult>(
   handler: (args: TArgs) => Promise<TResult>,

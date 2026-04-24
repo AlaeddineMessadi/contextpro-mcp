@@ -143,9 +143,10 @@ Config file locations:
 - `init [target]` - Generate MCP configuration and scaffold `.contextplus/` directory with `config.json`.
 - `doctor [path] [--fix]` - Print startup/storage diagnostics for a repo and optionally repair native dependencies with the active Node runtime.
 - `skeleton [path]` or `tree [path]` - View the structural tree of a project with file headers and symbol definitions directly in your terminal.
-- `[path]` - Start the MCP server (stdio) for the specified path (defaults to current directory).
+- `--root <path>` or `[path]` - Start the MCP server (stdio) for the specified project root. If omitted, Context+ falls back to `process.cwd()`.
 
 On MCP startup, Context+ automatically tries to repair `better-sqlite3` / `sqlite-vec` when it detects a repairable native load failure for the active Node runtime. Set `CONTEXTPLUS_NATIVE_AUTO_REPAIR=false` to disable that behavior.
+If `process.cwd()` resolves to `/` or a home-level directory, Context+ now refuses to start unless you pass `--root <project-path>` (or a positional project path) or set `CONTEXTPLUS_ALLOW_UNSAFE_ROOT=true`.
 
 ### From Source
 
@@ -323,6 +324,7 @@ Use `memory_link` to express relationships between concepts and files:
 | `CONTEXTPLUS_EMBED_TRACKER_DEBOUNCE_MS` | string (parsed as number)  | `700`                                | Debounce window before tracker refresh                               |
 | `CONTEXTPLUS_QUICKREFRESH_MAX_FILES`    | string (parsed as number)  | `30`                                 | Max stale files auto-patched per search call before warning          |
 | `CONTEXTPLUS_NATIVE_AUTO_REPAIR`        | string (parsed as boolean) | `true`                               | Auto-rebuild/install native SQLite bindings for the active Node ABI  |
+| `CONTEXTPLUS_ALLOW_UNSAFE_ROOT`         | string (parsed as boolean) | `false`                              | Allow cwd fallback from `/` or home-level directories                |
 | `CONTEXTPLUS_SESSION_ID`                | string                     | -                                    | Session identifier for session-scoped memory isolation               |
 | `CONTEXTPLUS_SESSION_SOURCE`            | string                     | `mcp`                                | Session source tag stored in memory node metadata                    |
 
