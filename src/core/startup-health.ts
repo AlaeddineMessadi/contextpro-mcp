@@ -2,6 +2,7 @@
 // FEATURE: Boot diagnostics — fail loud on root drift and native dependency breakage
 
 import { closeDB, getDB, probeNativeStorage, type NativeStorageProbe } from "./db.js";
+import { attemptNativeAutoRepair } from "./native-repair.js";
 import { verifyProjectContext, type VerifiedProjectContext } from "./project-config.js";
 
 export interface StartupHealthReport {
@@ -63,7 +64,11 @@ export async function runStartupHealthCheck(rootDir: string): Promise<StartupHea
     projectError = error;
   }
 
-  const storageProbe = probeNativeStorage();
+  let storageProbe = probeNativeStorage();
+  if (!storageProbe.ok) {
+    const repaired = await attemptNativeAutoRepair(storageProbe.diagnostic?.code, rootDir);
+    if (repaired) storageProbe = probeNativeStorage();
+  }
   let databaseOpen = { ok: false, message: "native storage unavailable" };
 
   if (storageProbe.ok) {

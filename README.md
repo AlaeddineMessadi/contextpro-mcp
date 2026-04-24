@@ -145,6 +145,8 @@ Config file locations:
 - `skeleton [path]` or `tree [path]` - View the structural tree of a project with file headers and symbol definitions directly in your terminal.
 - `[path]` - Start the MCP server (stdio) for the specified path (defaults to current directory).
 
+On MCP startup, Context+ automatically tries to repair `better-sqlite3` / `sqlite-vec` when it detects a repairable native load failure for the active Node runtime. Set `CONTEXTPLUS_NATIVE_AUTO_REPAIR=false` to disable that behavior.
+
 ### From Source
 
 ```bash
@@ -320,6 +322,7 @@ Use `memory_link` to express relationships between concepts and files:
 | `CONTEXTPLUS_EMBED_TRACKER_MAX_FILES`   | string (parsed as number)  | `8`                                  | Max changed files processed per tracker tick, clamped to 5–10        |
 | `CONTEXTPLUS_EMBED_TRACKER_DEBOUNCE_MS` | string (parsed as number)  | `700`                                | Debounce window before tracker refresh                               |
 | `CONTEXTPLUS_QUICKREFRESH_MAX_FILES`    | string (parsed as number)  | `30`                                 | Max stale files auto-patched per search call before warning          |
+| `CONTEXTPLUS_NATIVE_AUTO_REPAIR`        | string (parsed as boolean) | `true`                               | Auto-rebuild/install native SQLite bindings for the active Node ABI  |
 | `CONTEXTPLUS_SESSION_ID`                | string                     | -                                    | Session identifier for session-scoped memory isolation               |
 | `CONTEXTPLUS_SESSION_SOURCE`            | string                     | `mcp`                                | Session source tag stored in memory node metadata                    |
 

@@ -65,6 +65,7 @@ The memory graph is a **Retrieval-Augmented Generation (RAG)** system backed by 
 | `CONTEXTPLUS_SESSION_ID`                | (empty)              | Session identifier for session-scoped memory isolation           |
 | `CONTEXTPLUS_SESSION_SOURCE`            | `mcp`                | Session source tag stored in memory node metadata                |
 | `CONTEXTPLUS_QUICKREFRESH_MAX_FILES`    | `30`                 | Max stale files auto-patched per search call before warning      |
+| `CONTEXTPLUS_NATIVE_AUTO_REPAIR`        | `true`               | Auto-repair native SQLite bindings for the current Node runtime  |
 
 Runtime cache: `.contextplus/` is created at MCP startup and stores reusable embedding vectors for files, identifiers, call sites, and artifact payloads. A realtime tracker watches file updates and refreshes changed function/file embeddings incrementally.
 
