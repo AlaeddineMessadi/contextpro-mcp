@@ -1,17 +1,17 @@
 {
-  "name": "contextplus",
+  "name": "contextpro-mcp",
   "version": "1.1.0",
-  "description": "Standalone MCP code intelligence engine for low-token, project-scoped coding agents.",
+  "description": "Private standalone MCP code intelligence engine for low-token, project-scoped coding agents.",
   "type": "module",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/ForLoopCodes/contextplus.git"
+    "url": "git+https://github.com/AlaeddineMessadi/contextpro-mcp.git"
   },
   "bugs": {
-    "url": "https://github.com/ForLoopCodes/contextplus/issues"
+    "url": "https://github.com/AlaeddineMessadi/contextpro-mcp/issues"
   },
-  "homepage": "https://github.com/ForLoopCodes/contextplus#readme",
+  "homepage": "https://github.com/AlaeddineMessadi/contextpro-mcp#readme",
   "keywords": [
     "mcp",
     "model-context-protocol",
@@ -35,7 +35,8 @@
     "docs/roadmaps"
   ],
   "bin": {
-    "contextplus": "./build/index.js"
+    "contextpro-mcp": "./build/index.js",
+    "contextpro": "./build/index.js"
   },
   "scripts": {
     "build": "tsc",

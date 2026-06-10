@@ -1,8 +1,8 @@
-# Context+
+# ContextPro MCP
 
 Standalone code intelligence MCP for coding agents.
 
-Context+ helps AI coding agents work across real projects with less token waste and fewer blind edits. It combines semantic search, Tree-sitter AST indexing, exact TypeScript/JavaScript references, optional SCIP evidence, reusable task artifacts, project memory, safe restore points, and graph-based impact analysis so agents can plan, edit, and validate without reading every file.
+ContextPro helps AI coding agents work across real projects with less token waste and fewer blind edits. It combines semantic search, Tree-sitter AST indexing, exact TypeScript/JavaScript references, optional SCIP evidence, reusable task artifacts, project memory, safe restore points, and graph-based impact analysis so agents can plan, edit, and validate without reading every file.
 
 https://github.com/user-attachments/assets/a97a451f-c9b4-468d-b036-15b65fc13e79
 
@@ -93,16 +93,16 @@ Use these first. They wrap lower-level discovery and analysis into compact packe
 
 ### Quick Start (npx / bunx)
 
-No installation needed. Add Context+ to your IDE MCP config.
+No installation needed. Add ContextPro to your IDE MCP config.
 
 For Claude Code, Cursor, and Windsurf, use `mcpServers`:
 
 ```json
 {
   "mcpServers": {
-    "contextplus": {
+    "contextpro": {
       "command": "bunx",
-      "args": ["contextplus"],
+      "args": ["contextpro-mcp"],
       "env": {
         "OLLAMA_EMBED_MODEL": "nomic-embed-text",
         "OLLAMA_CHAT_MODEL": "gemma2:27b",
@@ -118,10 +118,10 @@ For VS Code (`.vscode/mcp.json`), use `servers` and `inputs`:
 ```json
 {
   "servers": {
-    "contextplus": {
+    "contextpro": {
       "type": "stdio",
       "command": "bunx",
-      "args": ["contextplus"],
+      "args": ["contextpro-mcp"],
       "env": {
         "OLLAMA_EMBED_MODEL": "nomic-embed-text",
         "OLLAMA_CHAT_MODEL": "gemma2:27b",
@@ -136,14 +136,14 @@ For VS Code (`.vscode/mcp.json`), use `servers` and `inputs`:
 If you prefer `npx`, use:
 
 - `"command": "npx"`
-- `"args": ["-y", "contextplus"]`
+- `"args": ["-y", "contextpro-mcp"]`
 
 Or generate the MCP config file directly in your current directory:
 
 ```bash
-npx -y contextplus init claude
-bunx contextplus init cursor
-npx -y contextplus init opencode
+npx -y contextpro-mcp init claude
+bunx contextpro-mcp init cursor
+npx -y contextpro-mcp init opencode
 ```
 
 Supported coding agent names: `claude`, `cursor`, `vscode`, `windsurf`, `opencode`.
@@ -163,10 +163,10 @@ Config file locations:
 - `init [target]` - Generate MCP configuration and scaffold `.contextplus/` directory with `config.json`.
 - `doctor [path] [--fix]` - Print startup/storage diagnostics for a repo and optionally repair native dependencies with the active Node runtime.
 - `skeleton [path]` or `tree [path]` - View the structural tree of a project with file headers and symbol definitions directly in your terminal.
-- `--root <path>` or `[path]` - Start the MCP server (stdio) for the specified project root. If omitted, Context+ falls back to `process.cwd()`.
+- `--root <path>` or `[path]` - Start the MCP server (stdio) for the specified project root. If omitted, ContextPro falls back to `process.cwd()`.
 
-On MCP startup, Context+ automatically tries to repair `better-sqlite3` / `sqlite-vec` when it detects a repairable native load failure for the active Node runtime. Set `CONTEXTPLUS_NATIVE_AUTO_REPAIR=false` to disable that behavior.
-If `process.cwd()` resolves to `/` or a home-level directory, Context+ now refuses to start unless you pass `--root <project-path>` (or a positional project path) or set `CONTEXTPLUS_ALLOW_UNSAFE_ROOT=true`.
+On MCP startup, ContextPro automatically tries to repair `better-sqlite3` / `sqlite-vec` when it detects a repairable native load failure for the active Node runtime. Set `CONTEXTPLUS_NATIVE_AUTO_REPAIR=false` to disable that behavior.
+If `process.cwd()` resolves to `/` or a home-level directory, ContextPro now refuses to start unless you pass `--root <project-path>` (or a positional project path) or set `CONTEXTPLUS_ALLOW_UNSAFE_ROOT=true`.
 
 ### From Source
 
@@ -182,7 +182,7 @@ Use this when you want an MCP client to run a local checkout instead of the publ
 1. Install dependencies and build the generated server entrypoint:
 
 ```bash
-cd /absolute/path/to/contextplus
+cd /absolute/path/to/contextpro-mcp
 npm install
 npm run build
 ```
@@ -192,10 +192,10 @@ npm run build
 ```json
 {
   "mcpServers": {
-    "contextplus": {
+    "contextpro": {
       "command": "node",
       "args": [
-        "/absolute/path/to/contextplus/build/index.js",
+        "/absolute/path/to/contextpro-mcp/build/index.js",
         "--root",
         "/absolute/path/to/your/project"
       ],
@@ -214,11 +214,11 @@ For VS Code (`.vscode/mcp.json`), use the same command and args inside `servers`
 ```json
 {
   "servers": {
-    "contextplus": {
+    "contextpro": {
       "type": "stdio",
       "command": "node",
       "args": [
-        "/absolute/path/to/contextplus/build/index.js",
+        "/absolute/path/to/contextpro-mcp/build/index.js",
         "--root",
         "/absolute/path/to/your/project"
       ],
@@ -236,11 +236,11 @@ For VS Code (`.vscode/mcp.json`), use the same command and args inside `servers`
 For Codex `~/.codex/config.toml`:
 
 ```toml
-[mcp_servers.contextplus]
+[mcp_servers.contextpro]
 command = "node"
-args = ["/absolute/path/to/contextplus/build/index.js"]
+args = ["/absolute/path/to/contextpro-mcp/build/index.js"]
 
-[mcp_servers.contextplus.env]
+[mcp_servers.contextpro.env]
 CONTEXTPLUS_EMBED_PROVIDER = "ollama"
 OLLAMA_EMBED_MODEL = "nomic-embed-text"
 CONTEXTPLUS_EMBED_TRACKER = "lazy"
@@ -251,12 +251,12 @@ CONTEXTPLUS_EMBED_TRACKER = "lazy"
 Verify a local source build before restarting the client:
 
 ```bash
-node /absolute/path/to/contextplus/build/index.js doctor --root /absolute/path/to/your/project
+node /absolute/path/to/contextpro-mcp/build/index.js doctor --root /absolute/path/to/your/project
 ```
 
 ## Embedding Providers
 
-Context+ supports two embedding backends controlled by `CONTEXTPLUS_EMBED_PROVIDER`:
+ContextPro supports two embedding backends controlled by `CONTEXTPLUS_EMBED_PROVIDER`:
 
 | Provider | Value | Requires | Best For |
 |----------|-------|----------|----------|
@@ -279,9 +279,9 @@ Full Claude Code `.mcp.json` example:
 ```json
 {
   "mcpServers": {
-    "contextplus": {
+    "contextpro": {
       "command": "npx",
-      "args": ["-y", "contextplus"],
+      "args": ["-y", "contextpro-mcp"],
       "env": {
         "CONTEXTPLUS_EMBED_PROVIDER": "openai",
         "CONTEXTPLUS_OPENAI_API_KEY": "YOUR_GEMINI_API_KEY",
@@ -300,9 +300,9 @@ Get a free API key at [Google AI Studio](https://aistudio.google.com/apikey).
 ```json
 {
   "mcpServers": {
-    "contextplus": {
+    "contextpro": {
       "command": "npx",
-      "args": ["-y", "contextplus"],
+      "args": ["-y", "contextpro-mcp"],
       "env": {
         "CONTEXTPLUS_EMBED_PROVIDER": "openai",
         "OPENAI_API_KEY": "sk-...",
@@ -320,9 +320,9 @@ Any endpoint implementing the [OpenAI Embeddings API](https://platform.openai.co
 ```json
 {
   "mcpServers": {
-    "contextplus": {
+    "contextpro": {
       "command": "npx",
-      "args": ["-y", "contextplus"],
+      "args": ["-y", "contextpro-mcp"],
       "env": {
         "CONTEXTPLUS_EMBED_PROVIDER": "openai",
         "CONTEXTPLUS_OPENAI_API_KEY": "YOUR_KEY",

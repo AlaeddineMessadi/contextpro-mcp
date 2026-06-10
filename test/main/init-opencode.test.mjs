@@ -25,15 +25,15 @@ describe("init-opencode", () => {
       const raw = await readFile(join(cwd, "opencode.json"), "utf8");
       const cfg = JSON.parse(raw);
       assert.equal(cfg.$schema, "https://opencode.ai/config.json");
-      assert.equal(cfg.mcp.contextplus.type, "local");
-      assert.deepEqual(cfg.mcp.contextplus.command, [
+      assert.equal(cfg.mcp.contextpro.type, "local");
+      assert.deepEqual(cfg.mcp.contextpro.command, [
         "npx",
         "-y",
-        "contextplus",
+        "contextpro-mcp",
       ]);
-      assert.equal(cfg.mcp.contextplus.enabled, true);
+      assert.equal(cfg.mcp.contextpro.enabled, true);
       assert.equal(
-        cfg.mcp.contextplus.environment.OLLAMA_EMBED_MODEL,
+        cfg.mcp.contextpro.environment.OLLAMA_EMBED_MODEL,
         "nomic-embed-text",
       );
     } finally {
@@ -56,7 +56,7 @@ describe("init-opencode", () => {
       );
       const raw = await readFile(join(cwd, "opencode.json"), "utf8");
       const cfg = JSON.parse(raw);
-      assert.deepEqual(cfg.mcp.contextplus.command, ["bunx", "contextplus"]);
+      assert.deepEqual(cfg.mcp.contextpro.command, ["bunx", "contextpro-mcp"]);
     } finally {
       await rm(cwd, { recursive: true, force: true });
     }

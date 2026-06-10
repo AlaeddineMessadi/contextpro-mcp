@@ -1,8 +1,8 @@
-# Context+ MCP - Agent Workflow
+# ContextPro MCP - Agent Workflow
 
 ## Purpose
 
-Context+ gives you structural awareness of the entire codebase without reading every file. These tools replace your default search and read operations — use them as your primary interface to the codebase.
+ContextPro gives you structural awareness of the entire codebase without reading every file. These tools replace your default search and read operations — use them as your primary interface to the codebase.
 
 ## PMLL Short-Term KV Memory (5 Tools)
 
@@ -26,11 +26,11 @@ Call `peek` before every expensive tool invocation:
 4. **`resolve`** to check or fulfill Q-promise continuations
 5. **`flush`** at task end to clear all session slots
 
-This pattern ensures that Context+ tool results, Playwright page contents, and other expensive outputs are cached and reused across subtasks rather than re-fetched.
+This pattern ensures that ContextPro tool results, Playwright page contents, and other expensive outputs are cached and reused across subtasks rather than re-fetched.
 
 ## Tool Priority (Mandatory)
 
-You MUST use Context+ tools instead of native equivalents. Only fall back to native tools when a Context+ tool cannot fulfill the specific need.
+You MUST use ContextPro tools instead of native equivalents. Only fall back to native tools when a ContextPro tool cannot fulfill the specific need.
 
 | Instead of…              | MUST use…                    | Why                                          |
 |--------------------------|------------------------------|----------------------------------------------|
@@ -75,7 +75,7 @@ You MUST use Context+ tools instead of native equivalents. Only fall back to nat
 |-----------|------------------------------------------------------------------------------|
 | `graphql` | Execute GraphQL queries/mutations against the memory store with optional PMLL cache integration. |
 
-### Context+ Structural Tools
+### ContextPro Structural Tools
 
 | Tool                        | When to Use                                                  |
 |-----------------------------|--------------------------------------------------------------|

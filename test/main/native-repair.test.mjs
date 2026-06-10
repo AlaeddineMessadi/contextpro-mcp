@@ -34,12 +34,12 @@ describe("native repair helpers", () => {
     else process.env.CONTEXTPLUS_NATIVE_AUTO_REPAIR = previous;
   });
 
-  it("resolves repair root to ContextPlus package root, not active workspace root", async () => {
+  it("resolves repair root to package root, not active workspace root", async () => {
     const mod = await import("../../build/core/native-repair.js");
     const packageRoot = mod.getContextPlusPackageRoot();
     const pkg = JSON.parse(await readFile(join(packageRoot, "package.json"), "utf-8"));
 
-    assert.equal(pkg.name, "contextplus");
-    assert.equal(packageRoot.endsWith("/contextplus-official"), true);
+    assert.equal(pkg.name, "contextpro-mcp");
+    assert.equal(packageRoot, process.cwd());
   });
 });

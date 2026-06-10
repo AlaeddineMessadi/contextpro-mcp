@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Context+ MCP - Semantic codebase navigator for AI agents
+// ContextPro MCP - Semantic codebase navigator for AI agents
 // Structural AST tree, blast radius, semantic search, commit gatekeeper
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -32,7 +32,7 @@ const AGENT_CONFIG_PATH: Record<AgentTarget, string> = {
 
 const SUB_COMMANDS = ["init", "skeleton", "tree", "doctor"];
 const INSTRUCTIONS_SOURCE_URL = "https://contextplus.vercel.app/api/instructions";
-const INSTRUCTIONS_RESOURCE_URI = "contextplus://instructions";
+const INSTRUCTIONS_RESOURCE_URI = "contextpro://instructions";
 const PACKAGE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 let agentInstructions: string | undefined;
 try {
@@ -236,11 +236,11 @@ async function ensureContextPlusDir(rootDir: string): Promise<void> {
 }
 
 function buildMcpConfig(runner: "npx" | "bunx") {
-  const commandArgs = runner === "npx" ? ["-y", "contextplus"] : ["contextplus"];
+  const commandArgs = runner === "npx" ? ["-y", "contextpro-mcp"] : ["contextpro-mcp"];
   return JSON.stringify(
     {
       mcpServers: {
-        contextplus: {
+        contextpro: {
           command: runner,
           args: commandArgs,
           env: {
@@ -265,12 +265,12 @@ async function runDoctorCommand(args: string[]) {
 }
 
 function buildOpenCodeConfig(runner: "npx" | "bunx") {
-  const command = runner === "npx" ? ["npx", "-y", "contextplus"] : ["bunx", "contextplus"];
+  const command = runner === "npx" ? ["npx", "-y", "contextpro-mcp"] : ["bunx", "contextpro-mcp"];
   return JSON.stringify(
     {
       $schema: "https://opencode.ai/config.json",
       mcp: {
-        contextplus: {
+        contextpro: {
           type: "local",
           command,
           enabled: true,
@@ -314,13 +314,13 @@ async function runInitCommand(args: string[]) {
     sessionSource: parsed.sessionSource ?? "mcp",
   });
 
-  console.error(`Context+ initialized for ${target} using ${runner}.`);
+  console.error(`ContextPro initialized for ${target} using ${runner}.`);
   console.error(`Wrote MCP config: ${outputPath}`);
   console.error(`Created .contextplus/ directory with config.json`);
 }
 
 const server = new McpServer({
-  name: "contextplus",
+  name: "contextpro",
   version: "1.0.0",
 }, {
   capabilities: { logging: {} },
@@ -328,7 +328,7 @@ const server = new McpServer({
 });
 
 server.resource(
-  "contextplus_instructions",
+  "contextpro_instructions",
   INSTRUCTIONS_RESOURCE_URI,
   withRequestActivity(async (uri) => {
     const response = await fetch(INSTRUCTIONS_SOURCE_URL);
@@ -409,7 +409,7 @@ async function main() {
   const shutdown = async (reason: string, exitCode: number = 0) => {
     if (shuttingDown) return;
     shuttingDown = true;
-    console.error(`Context+ MCP shutdown requested: ${reason}`);
+  console.error(`ContextPro MCP shutdown requested: ${reason}`);
     await runCleanup({
       cancelEmbeddings: cancelAllEmbeddings,
       stopTracker: trackerController.stop,
@@ -454,7 +454,7 @@ async function main() {
   });
 
   noteServerActivity();
-  console.error(`Context+ MCP server running on stdio | root: ${ROOT_DIR}`);
+  console.error(`ContextPro MCP server running on stdio | root: ${ROOT_DIR}`);
 }
 
 main().catch((error) => {

@@ -1,8 +1,8 @@
-# Context+ MCP - Agent Instructions
+# ContextPro MCP - Agent Instructions
 
 ## Purpose
 
-You are equipped with the Context+ MCP server. It gives you structural awareness of the entire codebase without reading every file. Follow this workflow strictly to conserve context and maximize accuracy.
+You are equipped with the ContextPro MCP server. It gives you structural awareness of the entire codebase without reading every file. Follow this workflow strictly to conserve context and maximize accuracy.
 
 ## Architecture
 
