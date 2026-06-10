@@ -1,7 +1,7 @@
 // Shared retrieval utilities: test discovery, diff summaries, memory hits, import resolution
 // FEATURE: Helper layer for agentic-context — query-independent data fetching functions
 
-import { exec } from "child_process";
+import { execFile } from "child_process";
 import { promisify } from "util";
 import { readFile } from "fs/promises";
 import { basename, join } from "path";
@@ -10,8 +10,9 @@ import { getDB } from "../core/db.js";
 import { loadProjectConfig } from "../core/project-config.js";
 import { discoverHubs, parseHubFile } from "../core/hub.js";
 import { walkDirectory } from "../core/walker.js";
+import { resolveProjectPath } from "../core/path-guard.js";
 
-const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
 
 export function unique<T>(items: T[]): T[] {
   return Array.from(new Set(items));
@@ -80,7 +81,7 @@ export async function findTestsForFiles(rootDir: string, files: string[]): Promi
 
 export async function getRecentDiffSummary(rootDir: string, filePath: string): Promise<{ path: string; commit: string; summary: string } | null> {
   try {
-    const { stdout } = await execAsync(`git log --oneline -n 1 -- "${filePath}"`, {
+    const { stdout } = await execFileAsync("git", ["log", "--oneline", "-n", "1", "--", filePath], {
       cwd: rootDir,
       timeout: 5000,
     });
@@ -160,7 +161,7 @@ export async function findTextDependents(rootDir: string, filePath: string, symb
   for (const candidate of candidates) {
     if (candidate === filePath) continue;
     try {
-      const content = await readFile(join(rootDir, candidate), "utf-8");
+      const content = await readFile(resolveProjectPath(rootDir, candidate, "candidate file"), "utf-8");
       if (content.includes(baseName) || symbolNames.some((symbol) => content.includes(symbol))) {
         matches.push(candidate);
       }
@@ -174,7 +175,7 @@ export async function scanExactMentions(rootDir: string, candidateFiles: string[
   const matches: string[] = [];
   for (const candidate of candidateFiles) {
     try {
-      const content = await readFile(join(rootDir, candidate), "utf-8");
+      const content = await readFile(resolveProjectPath(rootDir, candidate, "candidate file"), "utf-8");
       if (symbolNames.some((symbol) => content.includes(symbol))) matches.push(candidate);
     } catch {}
   }
@@ -192,7 +193,7 @@ export async function fileRisk(rootDir: string, filePath: string): Promise<{ imp
   }
   let churn = 0;
   try {
-    const { stdout } = await execAsync(`git log --oneline -- "${filePath}"`, { cwd: rootDir, timeout: 5000 });
+    const { stdout } = await execFileAsync("git", ["log", "--oneline", "--", filePath], { cwd: rootDir, timeout: 5000 });
     churn = stdout.trim().split("\n").filter(Boolean).length;
   } catch {}
   return { importers, imports, churn };
@@ -202,7 +203,7 @@ export async function hubMatchesForFiles(rootDir: string, filePaths: string[]): 
   const hubs = await discoverHubs(rootDir).catch(() => []);
   const matches: string[] = [];
   for (const hubPath of hubs) {
-    const hub = await parseHubFile(`${rootDir}/${hubPath}`).catch(() => null);
+    const hub = await parseHubFile(resolveProjectPath(rootDir, hubPath, "hubPath")).catch(() => null);
     if (!hub) continue;
     if (hub.links.some((link) => filePaths.includes(link.target))) {
       matches.push(hubPath);

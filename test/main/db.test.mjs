@@ -78,6 +78,21 @@ describe("ContextPlusDB", () => {
       assert.equal(db.getSymbolsByFile(fileId).length, 0);
       db.close();
     });
+
+    it("indexes and searches file text with FTS", () => {
+      const db = new ContextPlusDB(FIXTURE_DIR);
+      db.upsertFileSearchDocument({
+        path: "src/payments.ts",
+        header: "Payment workflow",
+        language: "typescript",
+        symbols: [{ name: "capturePayment", kind: "function", signature: "function capturePayment()" }],
+      });
+      const results = db.searchFileText("payment capture", 5);
+      assert.ok(results.some((result) => result.path === "src/payments.ts"));
+      db.deleteFileSearchDocument("src/payments.ts");
+      assert.equal(db.searchFileText("payment capture", 5).length, 0);
+      db.close();
+    });
   });
 
   describe("symbol operations", () => {

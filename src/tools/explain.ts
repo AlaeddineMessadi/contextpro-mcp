@@ -2,11 +2,11 @@
 // FEATURE: Explain — read specific symbols without loading entire files
 
 import { readFile } from "fs/promises";
-import { resolve } from "path";
 import { walkDirectory } from "../core/walker.js";
 import { analyzeFile, flattenSymbols, isSupportedFile } from "../core/parser.js";
 import { getDB } from "../core/db.js";
 import { resolveSymbolData } from "./resolve-symbol.js";
+import { resolveProjectPath } from "../core/path-guard.js";
 
 export interface ExplainOptions {
   rootDir: string;
@@ -31,7 +31,7 @@ interface CallReference {
 }
 
 async function findSymbolInFile(rootDir: string, filePath: string, symbolName: string, preferredLine?: number): Promise<SymbolBody | null> {
-  const fullPath = resolve(rootDir, filePath);
+  const fullPath = resolveProjectPath(rootDir, filePath, "file");
   try {
     const content = await readFile(fullPath, "utf-8");
     const lines = content.split("\n");
@@ -137,7 +137,7 @@ export async function explain(options: ExplainOptions): Promise<string> {
   const depth = options.depth ?? 1;
 
   if (options.file && !options.symbol) {
-    const fullPath = resolve(options.rootDir, options.file);
+    const fullPath = resolveProjectPath(options.rootDir, options.file, "file");
     try {
       const analysis = await analyzeFile(fullPath);
       const flat = flattenSymbols(analysis.symbols);

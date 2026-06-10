@@ -12,15 +12,17 @@ import {
   type SearchQueryOptions,
   type SearchResult,
 } from "../core/embeddings.js";
-import { getDB } from "../core/db.js";
+import { getDB, type FileRow, type SymbolRow } from "../core/db.js";
+import { resolveProjectPath } from "../core/path-guard.js";
 
 const FILE_SEARCH_SOURCE_TYPE = "file_search_cache";
 import { readFile, stat } from "fs/promises";
-import { extname, resolve } from "path";
+import { extname } from "path";
 
 export interface SemanticSearchOptions {
   rootDir: string;
   query: string;
+  preset?: "fast" | "balanced" | "exhaustive";
   topK?: number;
   semanticWeight?: number;
   keywordWeight?: number;
@@ -58,6 +60,34 @@ const TEXT_INDEX_EXTENSIONS = new Set([
 ]);
 const MAX_TEXT_DOC_CHARS = 4000;
 const DEFAULT_MAX_EMBED_FILE_SIZE = 50 * 1024;
+
+function applySearchPreset(options: SemanticSearchOptions): SemanticSearchOptions {
+  const preset = options.preset ?? "balanced";
+  if (preset === "fast") {
+    return {
+      ...options,
+      topK: options.topK ?? 5,
+      semanticWeight: options.semanticWeight ?? 0.55,
+      keywordWeight: options.keywordWeight ?? 0.45,
+      minCombinedScore: options.minCombinedScore ?? 0.05,
+    };
+  }
+  if (preset === "exhaustive") {
+    return {
+      ...options,
+      topK: options.topK ?? 20,
+      semanticWeight: options.semanticWeight ?? 0.62,
+      keywordWeight: options.keywordWeight ?? 0.38,
+      minCombinedScore: options.minCombinedScore ?? 0,
+    };
+  }
+  return {
+    ...options,
+    topK: options.topK ?? 5,
+    semanticWeight: options.semanticWeight ?? 0.72,
+    keywordWeight: options.keywordWeight ?? 0.28,
+  };
+}
 
 function isTextIndexCandidate(filePath: string): boolean {
   return TEXT_INDEX_EXTENSIONS.has(extname(filePath).toLowerCase());
@@ -97,7 +127,7 @@ function normalizeRelativePath(path: string): string {
 
 async function buildSearchDocumentForFile(rootDir: string, relativePath: string): Promise<SearchDocument | null> {
   const normalized = normalizeRelativePath(relativePath);
-  const fullPath = resolve(rootDir, normalized);
+  const fullPath = resolveProjectPath(rootDir, normalized, "search file");
 
   if (isTextIndexCandidate(fullPath)) {
     try {
@@ -138,18 +168,43 @@ async function buildSearchDocumentForFile(rootDir: string, relativePath: string)
   }
 }
 
+function buildSearchDocumentFromIndexedFile(file: FileRow, symbols: SymbolRow[]): SearchDocument {
+  return {
+    path: normalizeRelativePath(file.path),
+    header: file.header ?? "",
+    symbols: symbols.map((symbol) => symbol.name),
+    symbolEntries: symbols.map((symbol) => ({
+      name: symbol.name,
+      kind: symbol.kind,
+      line: symbol.line_start,
+      endLine: symbol.line_end ?? undefined,
+      signature: symbol.signature ?? undefined,
+    })),
+    content: symbols.map((symbol) => symbol.signature ?? symbol.name).join(" "),
+  };
+}
+
+async function buildSearchDocumentsFromDB(rootDir: string): Promise<SearchDocument[]> {
+  const db = await getDB(rootDir);
+  const files = db.getAllFiles();
+  if (files.length === 0) return [];
+  return files.map((file) => buildSearchDocumentFromIndexedFile(file, db.getSymbolsByFile(file.id)));
+}
+
 async function buildIndex(rootDir: string): Promise<SearchIndex> {
   if (cachedIndex && cachedRootDir === rootDir && Date.now() - lastIndexTime < INDEX_TTL_MS) {
     return cachedIndex;
   }
 
-  const entries = await walkDirectory({ rootDir, depthLimit: 0 });
-  const files = entries.filter((e) => !e.isDirectory);
-
-  const docs: SearchDocument[] = [];
-  for (const file of files) {
-    const doc = await buildSearchDocumentForFile(rootDir, file.relativePath);
-    if (doc) docs.push(doc);
+  let docs = await buildSearchDocumentsFromDB(rootDir);
+  if (docs.length === 0) {
+    const entries = await walkDirectory({ rootDir, depthLimit: 0 });
+    const files = entries.filter((e) => !e.isDirectory);
+    docs = [];
+    for (const file of files) {
+      const doc = await buildSearchDocumentForFile(rootDir, file.relativePath);
+      if (doc) docs.push(doc);
+    }
   }
 
   const index = new SearchIndex();
@@ -161,19 +216,71 @@ async function buildIndex(rootDir: string): Promise<SearchIndex> {
   return index;
 }
 
+function queryTerms(query: string): string[] {
+  return (query.match(/[A-Za-z0-9_]+/g) ?? []).map((term) => term.toLowerCase()).filter((term) => term.length > 1);
+}
+
+async function fuseFtsMatches(rootDir: string, query: string, results: SearchResult[], topK: number | undefined, options: SemanticSearchOptions): Promise<SearchResult[]> {
+  if (options.requireSemanticMatch) return results;
+  const db = await getDB(rootDir);
+  const ftsMatches = db.searchFileText(query, Math.max((topK ?? 5) * 4, 20));
+  if (ftsMatches.length === 0) return results;
+  const terms = queryTerms(query);
+  const byPath = new Map(results.map((result) => [result.path, result]));
+
+  for (let i = 0; i < ftsMatches.length; i++) {
+    const match = ftsMatches[i];
+    const lexicalScore = Math.max(45, 100 - i * 6);
+    const existing = byPath.get(match.path);
+    if (existing) {
+      byPath.set(match.path, {
+        ...existing,
+        score: Math.min(100, Math.max(existing.score, Math.round((existing.score + lexicalScore * 0.18) * 10) / 10)),
+        keywordScore: Math.max(existing.keywordScore, lexicalScore),
+      });
+      continue;
+    }
+    const file = db.getFile(match.path);
+    if (!file) continue;
+    const symbols = db.getSymbolsByFile(file.id);
+    const matchedSymbols = symbols
+      .filter((symbol) => terms.some((term) => symbol.name.toLowerCase().includes(term) || (symbol.signature ?? "").toLowerCase().includes(term)))
+      .map((symbol) => symbol.name);
+    byPath.set(match.path, {
+      path: match.path,
+      score: lexicalScore,
+      semanticScore: 0,
+      keywordScore: lexicalScore,
+      header: file.header ?? "",
+      matchedSymbols,
+      matchedSymbolLocations: symbols
+        .filter((symbol) => matchedSymbols.includes(symbol.name))
+        .map((symbol) => `${symbol.name}@L${symbol.line_start}${symbol.line_end && symbol.line_end > symbol.line_start ? `-L${symbol.line_end}` : ""}`),
+    });
+  }
+
+  return [...byPath.values()]
+    .filter((result) => !options.requireKeywordMatch || result.keywordScore > 0)
+    .filter((result) => options.minKeywordScore === undefined || result.keywordScore >= (options.minKeywordScore > 1 ? options.minKeywordScore : options.minKeywordScore * 100))
+    .sort((a, b) => b.score - a.score || b.keywordScore - a.keywordScore || a.path.localeCompare(b.path))
+    .slice(0, topK ?? 5);
+}
+
 export async function semanticCodeSearchResults(options: SemanticSearchOptions): Promise<SemanticCodeSearchData> {
+  const resolvedOptions = applySearchPreset(options);
   const index = await buildIndex(options.rootDir);
   const searchOptions: SearchQueryOptions = {
-    topK: options.topK,
-    semanticWeight: options.semanticWeight,
-    keywordWeight: options.keywordWeight,
-    minSemanticScore: options.minSemanticScore,
-    minKeywordScore: options.minKeywordScore,
-    minCombinedScore: options.minCombinedScore,
-    requireKeywordMatch: options.requireKeywordMatch,
-    requireSemanticMatch: options.requireSemanticMatch,
+    topK: resolvedOptions.topK,
+    semanticWeight: resolvedOptions.semanticWeight,
+    keywordWeight: resolvedOptions.keywordWeight,
+    minSemanticScore: resolvedOptions.minSemanticScore,
+    minKeywordScore: resolvedOptions.minKeywordScore,
+    minCombinedScore: resolvedOptions.minCombinedScore,
+    requireKeywordMatch: resolvedOptions.requireKeywordMatch,
+    requireSemanticMatch: resolvedOptions.requireSemanticMatch,
   };
-  const results = await index.search(options.query, searchOptions);
+  const rawResults = await index.search(options.query, searchOptions);
+  const results = await fuseFtsMatches(options.rootDir, options.query, rawResults, searchOptions.topK, resolvedOptions);
 
   return {
     query: options.query,

@@ -5,7 +5,7 @@ import { getDB } from "../core/db.js";
 import { isSupportedFile } from "../core/parser.js";
 import { walkDirectory } from "../core/walker.js";
 import { readFile } from "fs/promises";
-import { resolve } from "path";
+import { resolveProjectPath } from "../core/path-guard.js";
 
 export interface BlastRadiusOptions {
   rootDir: string;
@@ -108,7 +108,7 @@ export async function getBlastRadius(options: BlastRadiusOptions): Promise<strin
     [...candidateFiles]
       .filter((relativePath) => isSupportedFile(relativePath))
       .map(async (relativePath) => {
-        const found = await scanFileForSymbol(resolve(options.rootDir, relativePath), relativePath, options.symbolName, options.fileContext);
+        const found = await scanFileForSymbol(resolveProjectPath(options.rootDir, relativePath, "candidate file"), relativePath, options.symbolName, options.fileContext);
         pushUsages(found);
       }),
   );

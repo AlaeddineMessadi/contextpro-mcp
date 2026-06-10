@@ -3,11 +3,11 @@
 
 import { getDB } from "../core/db.js";
 import { walkDirectory } from "../core/walker.js";
-import { exec } from "child_process";
+import { execFile } from "child_process";
 import { promisify } from "util";
 import { extname, dirname } from "path";
 
-const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
 
 export interface TestMapOptions {
   rootDir: string;
@@ -38,8 +38,11 @@ function findTestsByConvention(sourceFile: string, allFiles: string[]): string[]
 
 async function getChangedFiles(rootDir: string): Promise<string[]> {
   try {
-    const { stdout } = await execAsync("git diff --name-only && git diff --name-only --cached", { cwd: rootDir, timeout: 5000 });
-    return [...new Set(stdout.trim().split("\n").filter((l) => l.trim()))];
+    const [{ stdout: unstaged }, { stdout: staged }] = await Promise.all([
+      execFileAsync("git", ["diff", "--name-only"], { cwd: rootDir, timeout: 5000 }),
+      execFileAsync("git", ["diff", "--name-only", "--cached"], { cwd: rootDir, timeout: 5000 }),
+    ]);
+    return [...new Set(`${unstaged}\n${staged}`.trim().split("\n").filter((l) => l.trim()))];
   } catch {
     return [];
   }

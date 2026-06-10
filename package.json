@@ -1,8 +1,38 @@
 {
   "name": "contextplus",
-  "version": "1.0.9",
+  "version": "1.1.0",
+  "description": "Standalone MCP code intelligence engine for low-token, project-scoped coding agents.",
   "type": "module",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ForLoopCodes/contextplus.git"
+  },
+  "bugs": {
+    "url": "https://github.com/ForLoopCodes/contextplus/issues"
+  },
+  "homepage": "https://github.com/ForLoopCodes/contextplus#readme",
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "code-intelligence",
+    "coding-agent",
+    "semantic-search",
+    "scip",
+    "lsp",
+    "rag"
+  ],
+  "engines": {
+    "node": ">=20 <27"
+  },
+  "files": [
+    "build",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE",
+    "INSTRUCTIONS.md",
+    "docs/roadmaps"
+  ],
   "bin": {
     "contextplus": "./build/index.js"
   },
@@ -10,21 +40,24 @@
     "build": "tsc",
     "dev": "tsc --watch",
     "start": "node build/index.js",
+    "prepack": "npm run build",
+    "pack:dry": "npm pack --dry-run",
+    "pretest": "npm run build",
     "test": "node --test test/main/*.test.mjs",
     "test:demo": "node --test test/demo/*.demo.mjs",
     "test:all": "node --test test/main/*.test.mjs test/demo/*.demo.mjs"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.12.1",
-    "better-sqlite3": "^12.8.0",
-    "claude": "^0.1.2",
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "better-sqlite3": "^12.10.0",
     "ignore": "^7.0.4",
     "ml-matrix": "^6.12.1",
     "ollama": "^0.6.3",
     "p-limit": "^7.3.0",
-    "simple-git": "^3.27.0",
+    "simple-git": "^3.36.0",
     "sqlite-vec": "^0.1.9",
     "tree-sitter-wasms": "^0.1.13",
+    "typescript": "^5.9.3",
     "web-tree-sitter": "^0.20.8",
     "zod": "^3.25.23"
   },
@@ -32,7 +65,6 @@
     "@tailwindcss/postcss": "^4.2.1",
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^22.15.0",
-    "tailwindcss": "^4.2.1",
-    "typescript": "^5.8.3"
+    "tailwindcss": "^4.2.1"
   }
 }

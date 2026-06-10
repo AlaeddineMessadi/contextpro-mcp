@@ -8,6 +8,18 @@ https://github.com/user-attachments/assets/a97a451f-c9b4-468d-b036-15b65fc13e79
 
 ## Tools
 
+### Primary Agent Workflows
+
+Use these first. They wrap lower-level discovery and analysis into compact packets so agents do not need to read or search the whole repository.
+
+| Tool         | Description                                                                                                      |
+| ------------ | ---------------------------------------------------------------------------------------------------------------- |
+| `start_task` | Primary entry point. Returns ranked files, tests, recent diffs, project memory, freshness, risks, and artifact IDs. |
+| `plan_edit`  | Finds the smallest likely safe edit set before reading or changing files.                                        |
+| `impact`     | Estimates what could break for files or symbols, including related files, tests, churn, and reasons.             |
+| `validate`   | Recommends the smallest relevant validation commands for the planned or completed edit scope.                    |
+| `remember`   | Records task outcomes, linked files, assumptions, evidence, and open risks for future sessions.                  |
+
 ### Discovery
 
 | Tool             | Description                                                                                                                                                      |
@@ -16,10 +28,15 @@ https://github.com/user-attachments/assets/a97a451f-c9b4-468d-b036-15b65fc13e79
 | `artifact_list`  | List recent reusable context artifacts generated for this project so agents can reuse prior repo maps, searches, and task packets.                               |
 | `artifact_read`  | Load a previously generated context artifact by ID instead of regenerating the same context packet.                                                              |
 | `repo_map`       | Compact whole-repo outline with important files and top-level symbols. Designed to give agents first-turn orientation with low token usage.                      |
+| `graph_export`   | Export `.contextplus/graph.json`, `.contextplus/GRAPH_REPORT.md`, and `.contextplus/graph-dashboard.html` for portable project intelligence.                    |
+| `graph_query`    | Query graph summary, file neighborhoods, symbol neighborhoods, and impact views without reading source files.                                                    |
 | `tree`           | Structural AST tree of a project with file headers and symbol ranges (line numbers for functions/classes/methods). Dynamic pruning shrinks output automatically.  |
 | `skeleton`       | Function signatures, class methods, and type definitions with line ranges, without reading full bodies. Shows the API surface.                                    |
-| `search`         | Search by meaning with modes: `file` (headers/symbols), `identifier` (functions/classes with call chains), or `hybrid` (both). Uses embeddings + keyword scoring. |
+| `search`         | Search by meaning with modes and presets. Uses embeddings when available plus SQLite FTS5/BM25 fallback over indexed paths, headers, signatures, and symbols.    |
 | `resolve_symbol` | Resolve an identifier to the most likely definition with ambiguity scoring and file-context-aware ranking.                                                        |
+| `exact_references` | Find exact references with the local TypeScript/JavaScript language service or an imported SCIP JSON index.                                                    |
+| `scip_import`    | Normalize a project-provided SCIP JSON index into `.contextplus/scip-index.json` for exact cross-language graph/reference evidence.                              |
+| `scip_status`    | Report whether the project has imported SCIP evidence available.                                                                                                |
 | `cluster`        | Browse codebase by meaning using spectral clustering. Groups semantically related files into labeled clusters.                                                    |
 
 ### Analysis
@@ -35,6 +52,7 @@ https://github.com/user-attachments/assets/a97a451f-c9b4-468d-b036-15b65fc13e79
 | `reindex`         | Re-walk and re-parse project files after git pull, branch switch, or external edits. Detects changed files via content hash.     |
 | `task_pack`       | Assemble the minimum useful working set for a task: ranked files, tests, diffs, memory, risks, and reusable artifact ids.        |
 | `change_impact`   | Estimate what could break if files or symbols change, using resolver-aware evidence, related files, tests, churn, and reasons.   |
+| `impact_delta`    | Compare a saved graph export with the current indexed graph after edits to show actual structural changes.                       |
 | `edit_scope`      | Identify the smallest likely safe edit set for a task, with confidence and artifact ids in JSON mode.                            |
 | `decision_brief`  | Compress a subsystem into a short decision-oriented brief with ranked files, symbols, tests, hubs, memory, and artifact ids.     |
 | `validate_scope`  | Recommend the most relevant validation checks and commands for a set of scoped files.                                             |
@@ -155,6 +173,51 @@ npm install
 npm run build
 ```
 
+Use this when you want an MCP client to run a local checkout instead of the published `npx` / `bunx` package.
+
+For MCP clients that use JSON config:
+
+```json
+{
+  "mcpServers": {
+    "contextplus": {
+      "command": "node",
+      "args": [
+        "/absolute/path/to/contextplus/build/index.js",
+        "--root",
+        "/absolute/path/to/your/project"
+      ],
+      "env": {
+        "CONTEXTPLUS_EMBED_PROVIDER": "ollama",
+        "OLLAMA_EMBED_MODEL": "nomic-embed-text",
+        "CONTEXTPLUS_EMBED_TRACKER": "lazy"
+      }
+    }
+  }
+}
+```
+
+For Codex `~/.codex/config.toml`:
+
+```toml
+[mcp_servers.contextplus]
+command = "node"
+args = ["/absolute/path/to/contextplus/build/index.js"]
+
+[mcp_servers.contextplus.env]
+CONTEXTPLUS_EMBED_PROVIDER = "ollama"
+OLLAMA_EMBED_MODEL = "nomic-embed-text"
+CONTEXTPLUS_EMBED_TRACKER = "lazy"
+```
+
+`build/index.js` is generated by `npm run build` and is intentionally ignored by git. If a client reports `Cannot find module '/.../build/index.js'` or `calling "initialize": EOF`, run `npm install && npm run build` in this repository, then restart or reload the MCP client.
+
+Verify a local source build before restarting the client:
+
+```bash
+node /absolute/path/to/contextplus/build/index.js doctor --root /absolute/path/to/your/project
+```
+
 ## Embedding Providers
 
 Context+ supports two embedding backends controlled by `CONTEXTPLUS_EMBED_PROVIDER`:
@@ -243,35 +306,39 @@ Any endpoint implementing the [OpenAI Embeddings API](https://platform.openai.co
 
 Three layers built with TypeScript over stdio using the Model Context Protocol SDK:
 
-**Core** (`src/core/`) - Multi-language AST parsing (tree-sitter, 43 extensions), nested gitignore-aware traversal with `.contextplusignore` support, multi-provider vector embeddings with parallel batching, SQLite + sqlite-vec storage with schema migrations, wikilink hub graph, in-memory property graph with decay scoring, import and call-site extraction for dependency graphs.
+**Core** (`src/core/`) - Multi-language AST parsing (tree-sitter, 43 extensions), nested gitignore-aware traversal with `.contextplusignore` support, multi-provider vector embeddings with parallel batching, SQLite + sqlite-vec storage with schema migrations, SQLite FTS5/BM25 file search, wikilink hub graph, project-scoped memory graph with decay scoring, import/call-site extraction, portable project graph export, and optional SCIP JSON normalization for exact cross-language evidence.
 
 **Git** (`src/git/`) - Shadow restore point system for undo without touching git history.
 
-**Tools** (`src/tools/`) - 36 MCP tools exposing startup diagnostics, structural discovery, task planning, reusable artifacts, operational memory, and change analysis. Agent-facing JSON tools include repo identity, freshness, confidence, evidence, ambiguities, and stable artifact IDs for reuse across turns.
+**Tools** (`src/tools/`) - 48 MCP tools exposing startup diagnostics, structural discovery, graph export/query, exact references, task planning, reusable artifacts, operational memory, and change analysis. Agent-facing JSON tools include repo identity, freshness, confidence, evidence, ambiguities, and stable artifact IDs for reuse across turns.
 
-**Data** (`.contextplus/`) - Project-scoped directory created on startup. Contains `index.db` (SQLite with vector search, file index, symbol index, import graph, call-site index), `config.json`, `artifacts/` (reusable JSON context packets), `hubs/` (auto-generated feature hubs), and `backups/` (shadow restore points). Each project gets its own isolated `.contextplus/` directory — no cross-project data sharing.
+**Data** (`.contextplus/`) - Project-scoped directory created on startup. Contains `index.db` (SQLite with vector search, FTS5 file search, file index, symbol index, import graph, call-site index), `config.json`, `artifacts/` (reusable JSON context packets), `hubs/` (auto-generated feature hubs), `backups/` (shadow restore points), optional `scip-index.json`, and exported graph artifacts (`graph.json`, `GRAPH_REPORT.md`, `graph-dashboard.html`). Each project gets its own isolated `.contextplus/` directory — no cross-project data sharing.
 
 ## Best Practices
 
 ### Agent Startup
 
-Always begin a session with `status` followed by `task_pack`. This orients the agent to the current project state and assembles the minimum context needed for the task in one call.
+Always begin implementation work with `start_task`. It wraps project status, ranked files, likely tests, memory hits, recent diffs, and reusable artifacts into one compact packet.
 
 ```
-1. status        → project overview, index freshness, git state
-2. task_pack     → ranked files, tests, memory hits, recent diffs
-3. artifact_list → check if a fresh task pack or repo map already exists
+1. start_task    → ranked files, tests, memory hits, recent diffs, risks
+2. artifact_list → check whether a fresh task pack, graph export, or repo map already exists
+3. graph_query   → inspect neighborhoods or impact paths without reading source files
 ```
 
 ### Before Editing
 
+Run `plan_edit` before changing files. It gives the smallest likely edit set, related tests, and confidence without making the agent explore the repository manually.
+
 Run `skeleton` on any file before reading it in full. Signatures and line ranges are usually enough to make targeted edits. Only read full bodies when the logic isn't clear from the signature.
 
-Run `blast_radius` before renaming or deleting any symbol. After a full reindex, this hits the `call_sites` SQLite index instantly — no disk scan needed.
+Run `exact_references` or `blast_radius` before renaming or deleting any symbol. `exact_references` uses the TypeScript/JavaScript language service when available and falls back to imported SCIP evidence for other languages.
 
 ### After Editing
 
-Run `lint` after every edit. It auto-detects the project linter (tsc, eslint, ruff, cargo check, go vet) and also checks the code skill score (headers, comment discipline, nesting depth, file length).
+Run `impact_delta` after edits when you exported a graph before editing. It compares the saved graph with the current indexed graph so agents can see what changed structurally.
+
+Run `validate` after every edit. It recommends focused project checks. Use `lint` when you want the raw auto-detected validators (tsc, eslint, ruff, cargo check, go vet) and code quality checks.
 
 ### Keeping the Index Fresh
 
@@ -281,6 +348,18 @@ Run `reindex` after:
 - Any time `status` shows stale files
 
 For small in-session edits, the index auto-patches via `quickRefresh` on the next search call (up to `CONTEXTPLUS_QUICKREFRESH_MAX_FILES` files, default 30).
+
+### Exact Cross-Language References
+
+For TypeScript and JavaScript projects, `exact_references` uses the local TypeScript language service and marks results as `LSP_RESOLVED`.
+
+For other languages, generate a SCIP JSON index with the project's preferred indexer, write it inside the project, then call the MCP tool:
+
+```
+scip_import({ "index_path": ".contextplus/index.scip.json" })
+```
+
+Imported SCIP facts are cached at `.contextplus/scip-index.json` and reused by `graph_export`, `graph_query`, and `exact_references` with `SCIP_RESOLVED` confidence.
 
 ### Memory Graph
 

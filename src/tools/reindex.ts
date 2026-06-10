@@ -10,6 +10,7 @@ import { invalidateSearchCache, refreshFileSearchEmbeddings } from "./semantic-s
 import { invalidateIdentifierSearchCache, refreshIdentifierEmbeddings } from "./semantic-identifiers.js";
 import { autoGenerateHubData } from "./feature-hub.js";
 import { toolUpsertMemoryNode } from "./memory-tools.js";
+import { resolveProjectPath } from "../core/path-guard.js";
 
 export interface ReindexOptions {
   rootDir: string;
@@ -150,6 +151,12 @@ export async function reindex(options: ReindexOptions): Promise<string> {
           signature: s.signature,
           parentSymbolId: undefined,
         })));
+        db.upsertFileSearchDocument({
+          path: file.relativePath,
+          header: analysis.header,
+          language: lang,
+          symbols: flatSymbols.map((s) => ({ name: s.name, kind: s.kind, signature: s.signature })),
+        });
 
         const imports = extractImports(content, file.path);
         for (const imp of imports) {
@@ -259,7 +266,7 @@ export async function quickRefresh(rootDir: string): Promise<{
     const changedSymbols: string[] = [];
     for (const path of stale) {
       try {
-        const fullPath = resolve(rootDir, path);
+        const fullPath = resolveProjectPath(rootDir, path, "indexed file");
         const content = await readFile(fullPath, "utf-8");
         const hash = hashContent(content);
         const analysis = await analyzeFile(fullPath);
@@ -281,6 +288,12 @@ export async function quickRefresh(rootDir: string): Promise<{
         db.upsertSymbols(fileId, flatSymbols.map((s) => ({
           name: s.name, kind: s.kind, lineStart: s.line, lineEnd: s.endLine, signature: s.signature,
         })));
+        db.upsertFileSearchDocument({
+          path,
+          header: analysis.header,
+          language: lang,
+          symbols: flatSymbols.map((s) => ({ name: s.name, kind: s.kind, signature: s.signature })),
+        });
         const imports = extractImports(content, fullPath);
         for (const imp of imports) {
           const targetRel = resolveImportPath(imp.source, path, currentPaths, rootDir);

@@ -142,6 +142,17 @@ describe("propose-commit", async () => {
       );
       assert.equal(written, content);
     });
+
+    it("rejects writes outside the project root", async () => {
+      await assert.rejects(
+        () => proposeCommit({
+          rootDir: FIXTURE_DIR,
+          filePath: "../outside.ts",
+          newContent: "// H1\n// H2\n\nexport const x = 1;\n",
+        }),
+        /Path escapes project root/,
+      );
+    });
   });
 
   after(async () => {

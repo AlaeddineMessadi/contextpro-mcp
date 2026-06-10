@@ -2,9 +2,10 @@
 // Validates abstraction rules and creates shadow restore points before writing
 
 import { writeFile, mkdir } from "fs/promises";
-import { resolve, dirname, extname } from "path";
+import { dirname, extname } from "path";
 import { createRestorePoint } from "../git/shadow.js";
 import { isSupportedFile } from "../core/parser.js";
+import { resolveProjectPath, toProjectRelativePath } from "../core/path-guard.js";
 
 export interface ProposeCommitOptions {
   rootDir: string;
@@ -97,7 +98,8 @@ function validateAbstraction(lines: string[]): ValidationError[] {
 }
 
 export async function proposeCommit(options: ProposeCommitOptions): Promise<string> {
-  const fullPath = resolve(options.rootDir, options.filePath);
+  const fullPath = resolveProjectPath(options.rootDir, options.filePath, "filePath");
+  const relativePath = toProjectRelativePath(options.rootDir, options.filePath, "filePath");
   const ext = extname(fullPath);
   const lines = options.newContent.split("\n");
   const allErrors: ValidationError[] = [];
@@ -120,11 +122,11 @@ export async function proposeCommit(options: ProposeCommitOptions): Promise<stri
 
   const warnings = allErrors.filter((e) => e.rule !== "no-comments" || commentErrors.length <= 5);
 
-  await createRestorePoint(options.rootDir, [options.filePath], `Pre-commit: ${options.filePath}`);
+  await createRestorePoint(options.rootDir, [relativePath], `Pre-commit: ${relativePath}`);
   await mkdir(dirname(fullPath), { recursive: true });
   await writeFile(fullPath, options.newContent, "utf-8");
 
-  const result = [`✅ File saved: ${options.filePath}`];
+  const result = [`✅ File saved: ${relativePath}`];
   if (warnings.length > 0) {
     result.push(`\n⚠ ${warnings.length} warning(s):`);
     for (const w of warnings) result.push(`  ⚠ [${w.rule}] ${w.message}`);

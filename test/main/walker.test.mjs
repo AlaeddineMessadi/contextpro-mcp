@@ -95,6 +95,13 @@ describe("walker", () => {
       assert.equal(entries.length, 0);
     });
 
+    it("rejects targetPath values outside the project root", async () => {
+      await assert.rejects(
+        () => walkDirectory({ rootDir: FIXTURE_DIR, targetPath: "../outside" }),
+        /Path escapes project root/,
+      );
+    });
+
     it("includes depth info", async () => {
       const entries = await walkDirectory({ rootDir: FIXTURE_DIR });
       const topLevel = entries.filter((e) => e.depth === 0);

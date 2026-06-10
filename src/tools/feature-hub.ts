@@ -8,6 +8,7 @@ import { getFileSkeleton } from "./file-skeleton.js";
 import { walkDirectory } from "../core/walker.js";
 import { extractImports } from "../core/parser.js";
 import { chatCompletion, extractJsonBlock, hasConfiguredChatModel } from "../core/chat-model.js";
+import { resolveProjectPath, toProjectRelativePath } from "../core/path-guard.js";
 
 export interface FeatureHubOptions {
   rootDir: string;
@@ -60,7 +61,7 @@ export async function getFeatureHub(options: FeatureHubOptions): Promise<string>
     }
 
     const hubInfos = await Promise.all(
-      hubs.map(async (h) => ({ path: h, info: await parseHubFile(resolve(rootDir, h)) })),
+      hubs.map(async (h) => ({ path: h, info: await parseHubFile(resolveProjectPath(rootDir, h, "hubPath")) })),
     );
 
     if (options.query) {
@@ -118,7 +119,7 @@ export async function getFeatureHub(options: FeatureHubOptions): Promise<string>
 
   if (!hubRelPath) return "Provide hub_path, feature_name, or set show_orphans=true.";
 
-  const hubFull = resolve(rootDir, hubRelPath);
+  const hubFull = resolveProjectPath(rootDir, hubRelPath, "hubPath");
   if (!(await fileExists(hubFull))) {
     return `Hub file not found: ${hubRelPath}`;
   }
@@ -139,11 +140,15 @@ export async function getFeatureHub(options: FeatureHubOptions): Promise<string>
   const missing: string[] = [];
 
   for (const link of hub.links) {
-    const linkFull = resolve(rootDir, link.target);
-    if (await fileExists(linkFull)) {
-      resolved.push(link.target);
-    } else {
-      missing.push(link.target);
+    try {
+      const linkFull = resolveProjectPath(rootDir, link.target, "hub link");
+      if (await fileExists(linkFull)) {
+        resolved.push(toProjectRelativePath(rootDir, link.target, "hub link"));
+      } else {
+        missing.push(link.target);
+      }
+    } catch {
+      missing.push(`${link.target} (outside project root)`);
     }
   }
 
@@ -158,7 +163,7 @@ export async function getFeatureHub(options: FeatureHubOptions): Promise<string>
       const skeleton = await getFileSkeleton({ rootDir, filePath });
       out.push(skeleton);
     } catch {
-      const content = await readFile(resolve(rootDir, filePath), "utf-8");
+      const content = await readFile(resolveProjectPath(rootDir, filePath, "hub link"), "utf-8");
       out.push(content.split("\n").slice(0, 20).join("\n"));
     }
     out.push("");
@@ -342,7 +347,7 @@ export async function autoGenerateHubData(rootDir: string): Promise<AutoHubResul
     };
   }
 
-  const hubDir = resolve(rootDir, ".contextplus", "hubs");
+  const hubDir = resolveProjectPath(rootDir, ".contextplus/hubs", "hubDir");
   await mkdir(hubDir, { recursive: true });
 
   const generated: string[] = [];
@@ -353,7 +358,7 @@ export async function autoGenerateHubData(rootDir: string): Promise<AutoHubResul
 
     let header = "";
     try {
-      const content = await readFile(resolve(rootDir, entryPoint), "utf-8");
+      const content = await readFile(resolveProjectPath(rootDir, entryPoint, "entryPoint"), "utf-8");
       header = extractFeatureTag(content) ?? "";
       if (!header) {
         const firstLine = content.split("\n")[0];

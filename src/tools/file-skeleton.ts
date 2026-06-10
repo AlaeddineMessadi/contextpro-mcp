@@ -3,7 +3,7 @@
 
 import { analyzeFile, isSupportedFile, type FileAnalysis } from "../core/parser.js";
 import { readFile } from "fs/promises";
-import { resolve } from "path";
+import { resolveProjectPath } from "../core/path-guard.js";
 
 export interface SkeletonOptions {
   filePath: string;
@@ -34,7 +34,7 @@ function formatSignatureBlock(analysis: FileAnalysis): string {
 }
 
 export async function getFileSkeleton(options: SkeletonOptions): Promise<string> {
-  const fullPath = resolve(options.rootDir, options.filePath);
+  const fullPath = resolveProjectPath(options.rootDir, options.filePath, "filePath");
 
   if (!isSupportedFile(fullPath)) {
     const content = await readFile(fullPath, "utf-8");

@@ -4,6 +4,7 @@
 import { simpleGit, type SimpleGit } from "simple-git";
 import { readFile, writeFile, mkdir } from "fs/promises";
 import { join, dirname } from "path";
+import { resolveProjectPath, toProjectRelativePath } from "../core/path-guard.js";
 
 const SHADOW_BRANCH = "mcp-shadow-history";
 const DATA_DIR = ".contextplus/backups";
@@ -40,9 +41,10 @@ export async function createRestorePoint(rootDir: string, files: string[], messa
   const id = `rp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const backupDir = join(dataPath, "backups", id);
   await mkdir(backupDir, { recursive: true });
+  const safeFiles = files.map((file) => toProjectRelativePath(rootDir, file, "restore file"));
 
-  for (const file of files) {
-    const fullPath = join(rootDir, file);
+  for (const file of safeFiles) {
+    const fullPath = resolveProjectPath(rootDir, file, "restore file");
     try {
       const content = await readFile(fullPath, "utf-8");
       const backupPath = join(backupDir, file.replace(/[\\/]/g, "__"));
@@ -51,7 +53,7 @@ export async function createRestorePoint(rootDir: string, files: string[], messa
     }
   }
 
-  const point: RestorePoint = { id, timestamp: Date.now(), files, message };
+  const point: RestorePoint = { id, timestamp: Date.now(), files: safeFiles, message };
   const manifest = await loadManifest(rootDir);
   manifest.push(point);
   if (manifest.length > 100) manifest.splice(0, manifest.length - 100);
@@ -72,7 +74,7 @@ export async function restorePoint(rootDir: string, pointId: string): Promise<st
     const backupPath = join(backupDir, file.replace(/[\\/]/g, "__"));
     try {
       const content = await readFile(backupPath, "utf-8");
-      const targetPath = join(rootDir, file);
+      const targetPath = resolveProjectPath(rootDir, file, "restore file");
       await mkdir(dirname(targetPath), { recursive: true });
       await writeFile(targetPath, content);
       restoredFiles.push(file);

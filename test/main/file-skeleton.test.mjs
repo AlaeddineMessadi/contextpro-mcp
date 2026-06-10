@@ -108,6 +108,13 @@ describe("file-skeleton", async () => {
       });
       assert.ok(result.includes("Dog") || result.includes("bark"));
     });
+
+    it("rejects reads outside the project root", async () => {
+      await assert.rejects(
+        () => getFileSkeleton({ rootDir: FIXTURE_DIR, filePath: "../outside.ts" }),
+        /Path escapes project root/,
+      );
+    });
   });
 
   after(async () => {

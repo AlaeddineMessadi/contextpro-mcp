@@ -4,6 +4,8 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Ollama } from "ollama";
+import { reindex } from "../../build/tools/reindex.js";
+import { closeDB } from "../../build/core/db.js";
 import {
   invalidateSearchCache,
   semanticCodeSearch,
@@ -91,6 +93,42 @@ describe("semantic-search", () => {
           delete process.env.CONTEXTPLUS_MAX_EMBED_FILE_SIZE;
         else process.env.CONTEXTPLUS_MAX_EMBED_FILE_SIZE = previousSizeLimit;
         Ollama.prototype.embed = originalEmbed;
+        await rm(rootDir, { recursive: true, force: true });
+      }
+    });
+
+    it("uses indexed FTS results when embeddings are unavailable", async () => {
+      const rootDir = await mkdtemp(
+        join(tmpdir(), "contextplus-semantic-search-fts-"),
+      );
+      const originalEmbed = Ollama.prototype.embed;
+      Ollama.prototype.embed = async function () {
+        throw new Error("offline");
+      };
+
+      try {
+        await writeFile(
+          join(rootDir, "auth.ts"),
+          [
+            "// Auth token service",
+            "// FEATURE: auth token lifecycle",
+            "export function issue_token(subject: string): string {",
+            "  return `token:${subject}`;",
+            "}",
+            "",
+          ].join("\n"),
+        );
+        await reindex({ rootDir, force: true });
+        invalidateSearchCache();
+        const result = await semanticCodeSearch({
+          rootDir,
+          query: "issue token",
+          topK: 3,
+        });
+        assert.match(result, /auth\.ts/);
+      } finally {
+        Ollama.prototype.embed = originalEmbed;
+        closeDB(rootDir);
         await rm(rootDir, { recursive: true, force: true });
       }
     });

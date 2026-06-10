@@ -1,12 +1,12 @@
 // Structured git diff output with affected symbols and files
 // FEATURE: Diff — change awareness for agents without manual git commands
 
-import { exec } from "child_process";
+import { execFile } from "child_process";
 import { promisify } from "util";
 import { analyzeFile, flattenSymbols, isSupportedFile } from "../core/parser.js";
-import { resolve } from "path";
+import { resolveProjectPath, toProjectRelativePath } from "../core/path-guard.js";
 
-const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
 
 export interface DiffOptions {
   rootDir: string;
@@ -24,7 +24,7 @@ interface FileDiff {
 
 async function runGitDiff(rootDir: string, args: string[]): Promise<string> {
   try {
-    const { stdout } = await execAsync(`git diff ${args.join(" ")}`, { cwd: rootDir, timeout: 15000, maxBuffer: 1024 * 512 });
+    const { stdout } = await execFileAsync("git", ["diff", ...args], { cwd: rootDir, timeout: 15000, maxBuffer: 1024 * 512 });
     return stdout;
   } catch (err: any) {
     return err.stdout ?? "";
@@ -33,7 +33,7 @@ async function runGitDiff(rootDir: string, args: string[]): Promise<string> {
 
 async function getChangedFiles(rootDir: string, diffArgs: string[]): Promise<FileDiff[]> {
   try {
-    const { stdout } = await execAsync(`git diff --numstat ${diffArgs.join(" ")}`, { cwd: rootDir, timeout: 10000 });
+    const { stdout } = await execFileAsync("git", ["diff", "--numstat", ...diffArgs], { cwd: rootDir, timeout: 10000 });
     return stdout.trim().split("\n").filter((l) => l.trim()).map((line) => {
       const [add, del, ...pathParts] = line.split("\t");
       return {
@@ -50,7 +50,7 @@ async function getChangedFiles(rootDir: string, diffArgs: string[]): Promise<Fil
 
 async function getUntrackedFiles(rootDir: string): Promise<string[]> {
   try {
-    const { stdout } = await execAsync("git ls-files --others --exclude-standard", { cwd: rootDir, timeout: 5000 });
+    const { stdout } = await execFileAsync("git", ["ls-files", "--others", "--exclude-standard"], { cwd: rootDir, timeout: 5000 });
     return stdout.trim().split("\n").filter((l) => l.trim());
   } catch {
     return [];
@@ -58,7 +58,7 @@ async function getUntrackedFiles(rootDir: string): Promise<string[]> {
 }
 
 async function getAffectedSymbols(rootDir: string, filePath: string): Promise<string[]> {
-  const fullPath = resolve(rootDir, filePath);
+  const fullPath = resolveProjectPath(rootDir, filePath, "diff file");
   if (!isSupportedFile(fullPath)) return [];
   try {
     const analysis = await analyzeFile(fullPath);
@@ -72,7 +72,7 @@ export async function getDiff(options: DiffOptions): Promise<string> {
   const diffArgs: string[] = [];
 
   if (options.file) {
-    diffArgs.push("--", options.file);
+    diffArgs.push("--", toProjectRelativePath(options.rootDir, options.file, "file"));
   } else if (options.branch) {
     diffArgs.push(`${options.branch}...HEAD`);
   } else if (options.since) {

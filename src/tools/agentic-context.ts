@@ -1,8 +1,6 @@
 // Task-oriented retrieval and memory tools for multi-project agent workflows
 // FEATURE: High-leverage agent context assembly over project intelligence data
 
-import { exec } from "child_process";
-import { promisify } from "util";
 import { readFile } from "fs/promises";
 import { fetchEmbedding } from "../core/embeddings.js";
 import { getDB, type MemoryNodeInput, type MemoryNodeRow } from "../core/db.js";
@@ -22,8 +20,6 @@ import {
   buildExactIdentifierPathSet, rerankPlanningFiles, maybeChatRerankPlanningFiles, upsertRanked,
   detectCodeChangeIntent, extractIdentifierHints, isDocumentationPath, isHubPath, isSourcePath, isTestPath, splitQueryTerms, clamp01,
 } from "./planning-helpers.js";
-
-const execAsync = promisify(exec);
 
 type OutputFormat = "text" | "json";
 

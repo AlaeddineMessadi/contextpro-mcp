@@ -19,6 +19,7 @@ export interface UnifiedSearchOptions {
   rootDir: string;
   query: string;
   mode?: SearchMode;
+  preset?: "fast" | "balanced" | "exhaustive";
   format?: SearchFormat;
   topK?: number;
   topCallsPerIdentifier?: number;
@@ -216,6 +217,7 @@ export async function unifiedSearchData(options: UnifiedSearchOptions): Promise<
       semanticCodeSearchResults({
         rootDir: options.rootDir,
         query: options.query,
+        preset: options.preset,
         topK: options.topK,
         semanticWeight: options.semanticWeight,
         keywordWeight: options.keywordWeight,

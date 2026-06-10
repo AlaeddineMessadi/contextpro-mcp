@@ -4,6 +4,7 @@
 import { readdir, readFile, lstat } from "fs/promises";
 import { join, relative, resolve } from "path";
 import ignore, { type Ignore } from "ignore";
+import { resolveProjectPath } from "./path-guard.js";
 
 export interface WalkOptions {
   targetPath?: string;
@@ -105,7 +106,7 @@ async function walkRecursive(
 
 export async function walkDirectory(options: WalkOptions): Promise<FileEntry[]> {
   const rootDir = resolve(options.rootDir);
-  const startDir = options.targetPath ? resolve(rootDir, options.targetPath) : rootDir;
+  const startDir = options.targetPath ? resolveProjectPath(rootDir, options.targetPath, "targetPath") : rootDir;
   const results: FileEntry[] = [];
 
   const stats = await lstat(startDir).catch(() => null);

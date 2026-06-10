@@ -1,4 +1,4 @@
-// MCP tool registration — wires all 34 server.tool() calls to their handlers
+// MCP tool registration — wires all server.tool() calls to their handlers
 // FEATURE: Tool registration layer extracted from index.ts for readability
 
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -21,6 +21,10 @@ import { getTestMap } from "./test-map.js";
 import { explain } from "./explain.js";
 import { getRepoMap } from "./repo-map.js";
 import { resolveSymbol } from "./resolve-symbol.js";
+import { exportProjectGraphTool, queryProjectGraphTool } from "./project-graph.js";
+import { impactDeltaTool } from "./impact-delta.js";
+import { exactReferencesTool } from "./exact-references.js";
+import { scipImportTool, scipStatusTool } from "./scip-index.js";
 import { buildTaskPack, buildChangeImpact, buildEditScope, buildDecisionBrief, buildValidateScope, recordTaskMemory, getWorkspaceContext, promotePattern } from "./agentic-context.js";
 import { listArtifacts, readArtifact } from "../core/artifacts.js";
 import { formatStartupHealthReport, runStartupHealthCheck } from "../core/startup-health.js";
@@ -122,6 +126,39 @@ export function registerTools(
   );
 
   server.tool(
+    "graph_export",
+    "Export the indexed project graph to portable artifacts: .contextplus/graph.json and .contextplus/GRAPH_REPORT.md. " +
+    "Use after reindex to share exact file, symbol, import, call, test, and confidence metadata across agents.",
+    {
+      format: z.enum(["text", "json"]).optional().describe("Return plain text or structured JSON. Default: text."),
+    },
+    withRequestActivity(async ({ format }) => ({
+      content: [{
+        type: "text" as const,
+        text: await exportProjectGraphTool({ rootDir, format }),
+      }],
+    }), { toolName: "graph_export" }),
+  );
+
+  server.tool(
+    "graph_query",
+    "Query the indexed project graph without reading source files. Supports summary, file neighborhood, symbol neighborhood, and impact views.",
+    {
+      kind: z.enum(["summary", "file", "symbol", "impact"]).optional().describe("Graph view to return. Default: summary."),
+      file: z.string().optional().describe("File path for file or impact views."),
+      symbol: z.string().optional().describe("Exact symbol name for symbol views."),
+      limit: z.number().optional().describe("Maximum nodes/edges to return. Default: 50, max: 200."),
+      format: z.enum(["text", "json"]).optional().describe("Return plain text or structured JSON. Default: text."),
+    },
+    withRequestActivity(async ({ kind, file, symbol, limit, format }) => ({
+      content: [{
+        type: "text" as const,
+        text: await queryProjectGraphTool({ rootDir, kind, file, symbol, limit, format }),
+      }],
+    }), { toolName: "graph_query" }),
+  );
+
+  server.tool(
     "resolve_symbol",
     "Resolve an identifier to the most likely definition with ambiguity scoring. Use this before explain/refactor work when a symbol name appears in multiple files.",
     {
@@ -144,6 +181,53 @@ export function registerTools(
         }),
       }],
     }), { toolName: "resolve_symbol" }),
+  );
+
+  server.tool(
+    "exact_references",
+    "Find exact references using the local TypeScript/JavaScript language service or an imported SCIP JSON index. Use before rename/delete/refactor operations when available.",
+    {
+      symbol_name: z.string().describe("Symbol name to resolve references for."),
+      file: z.string().optional().describe("Optional file containing the symbol. If omitted, the indexed symbol table is used."),
+      line: z.number().optional().describe("Optional 1-based line for the symbol inside file."),
+      limit: z.number().optional().describe("Maximum references to return. Default: 100, max: 500."),
+      format: z.enum(["text", "json"]).optional().describe("Return plain text or structured JSON. Default: text."),
+    },
+    withRequestActivity(async ({ symbol_name, file, line, limit, format }) => ({
+      content: [{
+        type: "text" as const,
+        text: await exactReferencesTool({ rootDir, symbolName: symbol_name, file, line, limit, format }),
+      }],
+    }), { toolName: "exact_references" }),
+  );
+
+  server.tool(
+    "scip_import",
+    "Import and normalize a project-provided SCIP JSON index into .contextplus/scip-index.json so graph_export, graph_query, and exact_references can use SCIP_RESOLVED evidence.",
+    {
+      index_path: z.string().describe("Project-relative path to a SCIP JSON index, for example .contextplus/index.scip.json."),
+      format: z.enum(["text", "json"]).optional().describe("Return plain text or structured JSON. Default: text."),
+    },
+    withRequestActivity(async ({ index_path, format }) => ({
+      content: [{
+        type: "text" as const,
+        text: await scipImportTool({ rootDir, indexPath: index_path, format }),
+      }],
+    }), { toolName: "scip_import", waitForIndexing: false }),
+  );
+
+  server.tool(
+    "scip_status",
+    "Report whether this project has an imported SCIP JSON index available for exact cross-language reference evidence.",
+    {
+      format: z.enum(["text", "json"]).optional().describe("Return plain text or structured JSON. Default: text."),
+    },
+    withRequestActivity(async ({ format }) => ({
+      content: [{
+        type: "text" as const,
+        text: await scipStatusTool({ rootDir, format }),
+      }],
+    }), { toolName: "scip_status", waitForIndexing: false }),
   );
 
   server.tool(
@@ -193,6 +277,7 @@ export function registerTools(
     {
       query: z.string().describe("Natural language description of what you're looking for."),
       mode: z.enum(["file", "identifier", "hybrid"]).optional().describe("Search mode: 'file' for files, 'identifier' for functions/classes, 'hybrid' for both. Default: hybrid."),
+      preset: z.enum(["fast", "balanced", "exhaustive"]).optional().describe("Ranking preset. fast favors cheap lexical recall, balanced is default, exhaustive returns a wider set."),
       format: z.enum(["text", "json"]).optional().describe("Return plain text or structured JSON. Default: text."),
       top_k: z.number().optional().describe("Number of matches to return. Default: 5."),
       top_calls_per_identifier: z.number().optional().describe("How many ranked call sites per identifier (identifier/hybrid mode). Default: 10."),
@@ -212,6 +297,7 @@ export function registerTools(
           rootDir,
           query: args.query,
           mode: args.mode,
+          preset: args.preset,
           format: args.format,
           topK: args.top_k,
           topCallsPerIdentifier: args.top_calls_per_identifier,
@@ -616,6 +702,27 @@ export function registerTools(
   );
 
   server.tool(
+    "start_task",
+    "Primary workflow entry point. Returns a compact task packet with ranked files, tests, recent diffs, project memory, freshness, and risks.",
+    {
+      task: z.string().describe("Task description or engineering objective."),
+      max_files: z.number().optional().describe("Maximum ranked files to include. Default: 8."),
+      format: z.enum(["text", "json"]).optional().describe("Return plain text or structured JSON. Default: text."),
+    },
+    withRequestActivity(async ({ task, max_files, format }) => ({
+      content: [{
+        type: "text" as const,
+        text: await buildTaskPack({
+          rootDir,
+          task,
+          maxFiles: max_files,
+          format,
+        }),
+      }],
+    }), { useEmbeddingTracker: true, toolName: "start_task" }),
+  );
+
+  server.tool(
     "change_impact",
     "Estimate what could break if specific files or symbols change, including related files, tests, churn, and reasons.",
     {
@@ -638,6 +745,44 @@ export function registerTools(
         }),
       }],
     }), { toolName: "change_impact" }),
+  );
+
+  server.tool(
+    "impact",
+    "Primary impact workflow. Estimates what could break for changed files or symbols, including related files, tests, churn, and reasons.",
+    {
+      files: z.array(z.string()).optional().describe("Files to analyze for impact."),
+      symbols: z.array(z.string()).optional().describe("Symbols to analyze for impact."),
+      include_tests: z.boolean().optional().describe("Include likely impacted tests. Default: true."),
+      format: z.enum(["text", "json"]).optional().describe("Return plain text or structured JSON. Default: text."),
+    },
+    withRequestActivity(async ({ files, symbols, include_tests, format }) => ({
+      content: [{
+        type: "text" as const,
+        text: await buildChangeImpact({
+          rootDir,
+          files,
+          symbols,
+          includeTests: include_tests,
+          format,
+        }),
+      }],
+    }), { toolName: "impact" }),
+  );
+
+  server.tool(
+    "impact_delta",
+    "Compare a saved graph export with the current indexed graph after edits. Use graph_export before editing, then reindex and call this to see actual structural changes.",
+    {
+      baseline_path: z.string().optional().describe("Baseline graph path relative to root. Default: .contextplus/graph.json."),
+      format: z.enum(["text", "json"]).optional().describe("Return plain text or structured JSON. Default: text."),
+    },
+    withRequestActivity(async ({ baseline_path, format }) => ({
+      content: [{
+        type: "text" as const,
+        text: await impactDeltaTool({ rootDir, baselinePath: baseline_path, format }),
+      }],
+    }), { toolName: "impact_delta" }),
   );
 
   server.tool(
@@ -664,6 +809,28 @@ export function registerTools(
   );
 
   server.tool(
+    "plan_edit",
+    "Primary edit planning workflow. Finds the smallest likely safe edit set for a task before reading or changing files.",
+    {
+      task: z.string().describe("Task description or intended change."),
+      max_files: z.number().optional().describe("Maximum files to recommend. Default: 5."),
+      format: z.enum(["text", "json"]).optional().describe("Return plain text or structured JSON. Default: text."),
+    },
+    withRequestActivity(async ({ task, max_files, format }) => ({
+      content: [{
+        type: "text" as const,
+        text: await buildEditScope({
+          rootDir,
+          task,
+          maxFiles: max_files,
+          preferSmallestScope: true,
+          format,
+        }),
+      }],
+    }), { useEmbeddingTracker: true, toolName: "plan_edit" }),
+  );
+
+  server.tool(
     "validate_scope",
     "After edit_scope, recommend the most relevant validation checks and commands for the scoped files.",
     {
@@ -682,6 +849,27 @@ export function registerTools(
         }),
       }],
     }), { useEmbeddingTracker: true, toolName: "validate_scope" }),
+  );
+
+  server.tool(
+    "validate",
+    "Primary validation workflow. Recommends the smallest relevant checks and commands for a task's likely edit scope.",
+    {
+      task: z.string().describe("Task description or intended change."),
+      max_files: z.number().optional().describe("Maximum files to inspect when building validation guidance. Default: 5."),
+      format: z.enum(["text", "json"]).optional().describe("Return plain text or structured JSON. Default: text."),
+    },
+    withRequestActivity(async ({ task, max_files, format }) => ({
+      content: [{
+        type: "text" as const,
+        text: await buildValidateScope({
+          rootDir,
+          task,
+          maxFiles: max_files,
+          format,
+        }),
+      }],
+    }), { useEmbeddingTracker: true, toolName: "validate" }),
   );
 
   server.tool(
@@ -738,6 +926,35 @@ export function registerTools(
         }),
       }],
     }), { useEmbeddingTracker: true, toolName: "memory_record_task" }),
+  );
+
+  server.tool(
+    "remember",
+    "Primary memory workflow. Records a task outcome with linked files, assumptions, evidence, and open risks for future sessions.",
+    {
+      task: z.string().describe("Task or issue name."),
+      summary: z.string().describe("What changed or was learned."),
+      files: z.array(z.string()).optional().describe("Files touched or relevant to the task."),
+      assumptions: z.array(z.string()).optional().describe("Assumptions made during the task."),
+      evidence: z.array(z.string()).optional().describe("Evidence supporting the outcome."),
+      open_risks: z.array(z.string()).optional().describe("Risks that remain unresolved."),
+      format: z.enum(["text", "json"]).optional().describe("Return plain text or structured JSON. Default: text."),
+    },
+    withRequestActivity(async ({ task, summary, files, assumptions, evidence, open_risks, format }) => ({
+      content: [{
+        type: "text" as const,
+        text: await recordTaskMemory({
+          rootDir,
+          task,
+          summary,
+          files,
+          assumptions,
+          evidence,
+          openRisks: open_risks,
+          format,
+        }),
+      }],
+    }), { useEmbeddingTracker: true, toolName: "remember" }),
   );
 
   server.tool(

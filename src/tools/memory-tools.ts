@@ -158,6 +158,7 @@ export async function toolUpsertMemoryNode(options: UpsertMemoryNodeOptions): Pr
     // Embedding provider unavailable — store without vector; keyword search still works.
   }
   const node = {
+    id: `mn-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     type: options.type,
     label: options.label,
     content: options.content,

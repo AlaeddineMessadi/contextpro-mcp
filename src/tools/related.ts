@@ -4,7 +4,8 @@
 import { getDB } from "../core/db.js";
 import { walkDirectory } from "../core/walker.js";
 import { discoverHubs, parseHubFile } from "../core/hub.js";
-import { dirname, extname, resolve, relative } from "path";
+import { dirname } from "path";
+import { resolveProjectPath, toProjectRelativePath } from "../core/path-guard.js";
 
 export interface RelatedOptions {
   rootDir: string;
@@ -36,13 +37,14 @@ function findTestFile(filePath: string, allFiles: string[]): string | null {
 }
 
 export async function getRelated(options: RelatedOptions): Promise<string> {
+  const requestedFile = toProjectRelativePath(options.rootDir, options.file, "file");
   const db = await getDB(options.rootDir);
-  const file = db.getFile(options.file);
+  const file = db.getFile(requestedFile);
 
   const entries = await walkDirectory({ rootDir: options.rootDir, depthLimit: 0 });
   const allFiles = entries.filter((e) => !e.isDirectory).map((e) => e.relativePath);
 
-  const lines: string[] = [`=== Related to: ${options.file} ===`, ""];
+  const lines: string[] = [`=== Related to: ${requestedFile} ===`, ""];
 
   if (file) {
     const allDbFiles = db.getAllFiles();
@@ -77,8 +79,8 @@ export async function getRelated(options: RelatedOptions): Promise<string> {
     lines.push("");
   }
 
-  const dir = dirname(options.file);
-  const siblings = allFiles.filter((f) => dirname(f) === dir && f !== options.file);
+  const dir = dirname(requestedFile);
+  const siblings = allFiles.filter((f) => dirname(f) === dir && f !== requestedFile);
   if (siblings.length > 0) {
     lines.push(`Same directory (${dir}):`);
     for (const s of siblings.slice(0, 15)) lines.push(`  ${s}`);
@@ -86,7 +88,7 @@ export async function getRelated(options: RelatedOptions): Promise<string> {
     lines.push("");
   }
 
-  const testFile = findTestFile(options.file, allFiles);
+  const testFile = findTestFile(requestedFile, allFiles);
   if (testFile) {
     lines.push(`Test file: ${testFile}`);
     lines.push("");
@@ -96,8 +98,8 @@ export async function getRelated(options: RelatedOptions): Promise<string> {
     const hubs = await discoverHubs(options.rootDir);
     const matchingHubs: string[] = [];
     for (const hubPath of hubs) {
-      const hub = await parseHubFile(resolve(options.rootDir, hubPath));
-      if (hub.links.some((l) => l.target === options.file)) {
+      const hub = await parseHubFile(resolveProjectPath(options.rootDir, hubPath, "hubPath"));
+      if (hub.links.some((l) => l.target === requestedFile)) {
         matchingHubs.push(`${hubPath} (${hub.title})`);
       }
     }

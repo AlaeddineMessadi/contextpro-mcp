@@ -1,14 +1,14 @@
 // Project identity, verification, registry, and pattern promotion utilities
 // FEATURE: Trust foundation for multi-project and multi-client Context+ usage
 
-import { exec } from "child_process";
+import { execFile } from "child_process";
 import { createHash } from "crypto";
 import { mkdir, readFile, writeFile } from "fs/promises";
 import { homedir } from "os";
 import { basename, join, resolve } from "path";
 import { promisify } from "util";
 
-const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
 const CONTEXTPLUS_DIR = ".contextplus";
 const CONFIG_FILE = "config.json";
 const REGISTRY_DIR = ".contextplus";
@@ -111,7 +111,7 @@ async function writeJsonFile(path: string, value: unknown): Promise<void> {
 
 async function detectGitRoot(rootDir: string): Promise<string> {
   try {
-    const { stdout } = await execAsync("git rev-parse --show-toplevel", {
+    const { stdout } = await execFileAsync("git", ["rev-parse", "--show-toplevel"], {
       cwd: rootDir,
       timeout: 4000,
     });
@@ -124,7 +124,7 @@ async function detectGitRoot(rootDir: string): Promise<string> {
 
 async function detectGitRemote(rootDir: string): Promise<string> {
   try {
-    const { stdout } = await execAsync("git remote get-url origin", {
+    const { stdout } = await execFileAsync("git", ["remote", "get-url", "origin"], {
       cwd: rootDir,
       timeout: 4000,
     });

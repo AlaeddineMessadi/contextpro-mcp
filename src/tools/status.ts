@@ -4,14 +4,14 @@
 import { walkDirectory } from "../core/walker.js";
 import { isSupportedFile } from "../core/parser.js";
 import { getDB } from "../core/db.js";
-import { exec } from "child_process";
+import { execFile } from "child_process";
 import { promisify } from "util";
 import { extname } from "path";
 import { loadProjectConfig } from "../core/project-config.js";
 import { getIndexState } from "../core/context-metadata.js";
 import { getToolTimingSnapshots } from "../core/tool-metrics.js";
 
-const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
 
 export interface StatusOptions {
   rootDir: string;
@@ -61,10 +61,10 @@ export interface StatusSnapshot {
 
 async function gitInfo(rootDir: string): Promise<{ branch: string; uncommitted: number; recentCommits: string[] }> {
   try {
-    const { stdout: branch } = await execAsync("git rev-parse --abbrev-ref HEAD", { cwd: rootDir, timeout: 5000 });
-    const { stdout: status } = await execAsync("git status --porcelain", { cwd: rootDir, timeout: 5000 });
+    const { stdout: branch } = await execFileAsync("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd: rootDir, timeout: 5000 });
+    const { stdout: status } = await execFileAsync("git", ["status", "--porcelain"], { cwd: rootDir, timeout: 5000 });
     const uncommitted = status.trim().split("\n").filter((l) => l.trim()).length;
-    const { stdout: log } = await execAsync("git log --oneline -5", { cwd: rootDir, timeout: 5000 });
+    const { stdout: log } = await execFileAsync("git", ["log", "--oneline", "-5"], { cwd: rootDir, timeout: 5000 });
     const recentCommits = log.trim().split("\n").filter((l) => l.trim());
     return { branch: branch.trim(), uncommitted, recentCommits };
   } catch {

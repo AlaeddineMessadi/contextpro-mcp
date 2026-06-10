@@ -1,13 +1,14 @@
 // Auto-detecting static analysis runner using native linters and compilers
 // FEATURE: Lint — runs project-specific linters plus skill score checking
 
-import { exec } from "child_process";
+import { execFile } from "child_process";
 import { readFile, stat as fsStat } from "fs/promises";
 import { resolve, extname } from "path";
 import { promisify } from "util";
 import { walkDirectory } from "../core/walker.js";
+import { resolveProjectPath } from "../core/path-guard.js";
 
-const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
 
 export interface StaticAnalysisOptions {
   rootDir: string;
@@ -50,7 +51,7 @@ async function exists(path: string): Promise<boolean> {
 
 async function commandExists(cmd: string): Promise<boolean> {
   try {
-    await execAsync(`which ${cmd}`, { timeout: 5000 });
+    await execFileAsync("which", [cmd], { timeout: 5000 });
     return true;
   } catch {
     return false;
@@ -93,9 +94,8 @@ async function detectLinters(rootDir: string): Promise<LinterConfig[]> {
 }
 
 async function runCommand(cmd: string, args: string[], cwd: string): Promise<LintResult> {
-  const fullCmd = `${cmd} ${args.join(" ")}`;
   try {
-    const { stdout, stderr } = await execAsync(fullCmd, { cwd, timeout: 60000, maxBuffer: 1024 * 1024 });
+    const { stdout, stderr } = await execFileAsync(cmd, args, { cwd, timeout: 60000, maxBuffer: 1024 * 1024 });
     return { tool: cmd, output: (stdout + stderr).trim(), exitCode: 0 };
   } catch (err: any) {
     return { tool: cmd, output: ((err.stdout ?? "") + (err.stderr ?? "")).trim(), exitCode: err.code ?? 1 };
@@ -195,7 +195,7 @@ async function checkFileSkill(filePath: string, rootDir: string): Promise<SkillS
 }
 
 export async function runStaticAnalysis(options: StaticAnalysisOptions): Promise<string> {
-  const targetPath = options.targetPath ? resolve(options.rootDir, options.targetPath) : options.rootDir;
+  const targetPath = options.targetPath ? resolveProjectPath(options.rootDir, options.targetPath, "targetPath") : resolve(options.rootDir);
   const results: string[] = [];
 
   const linters = await detectLinters(options.rootDir);

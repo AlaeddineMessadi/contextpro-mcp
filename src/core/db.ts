@@ -114,11 +114,16 @@ export interface CallSiteRow {
   context: string;
 }
 
+export interface FileTextSearchMatch {
+  path: string;
+  score: number;
+}
+
 // Re-export native storage types and helpers so callers keep a single import point
 export type { NativeStorageDiagnostic, NativeStorageProbe } from "./db-native.js";
 export { describeNativeStorageError, probeNativeStorage } from "./db-native.js";
 
-const SCHEMA_VERSION = "3";
+const SCHEMA_VERSION = "4";
 const DECAY_LAMBDA = 0.05;
 const STALE_EDGE_THRESHOLD = 0.15;
 const STALE_NODE_DAYS = 7;
@@ -198,6 +203,15 @@ CREATE TABLE IF NOT EXISTS call_sites (
 );
 CREATE INDEX IF NOT EXISTS idx_call_sites_file ON call_sites(file_id);
 CREATE INDEX IF NOT EXISTS idx_call_sites_callee ON call_sites(callee);
+
+CREATE VIRTUAL TABLE IF NOT EXISTS file_search_fts USING fts5(
+  path UNINDEXED,
+  header,
+  symbols,
+  language,
+  body,
+  tokenize='porter unicode61'
+);
 `;
 
 function generateId(prefix: string): string {
@@ -276,6 +290,18 @@ export class ContextPlusDB {
         );
         CREATE INDEX IF NOT EXISTS idx_call_sites_file ON call_sites(file_id);
         CREATE INDEX IF NOT EXISTS idx_call_sites_callee ON call_sites(callee);
+      `);
+    }
+    if (current < "4") {
+      this.db.exec(`
+        CREATE VIRTUAL TABLE IF NOT EXISTS file_search_fts USING fts5(
+          path UNINDEXED,
+          header,
+          symbols,
+          language,
+          body,
+          tokenize='porter unicode61'
+        );
       `);
     }
     this.db.prepare("INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', ?)").run(SCHEMA_VERSION);
@@ -371,6 +397,7 @@ export class ContextPlusDB {
         this.db.prepare("DELETE FROM embeddings WHERE source_type = 'file' AND source_id = ?").run(String(file.id));
         this.db.prepare("DELETE FROM embeddings WHERE source_type = 'symbol' AND source_id IN (SELECT CAST(id AS TEXT) FROM symbols WHERE file_id = ?)").run(file.id);
       }
+      this.deleteFileSearchDocument(path);
       this.db.prepare("DELETE FROM symbols WHERE file_id = ?").run(file.id);
       this.db.prepare("DELETE FROM files WHERE id = ?").run(file.id);
     }
@@ -430,13 +457,10 @@ export class ContextPlusDB {
   searchEmbeddings(queryVector: number[] | Float32Array, topK: number, sourceType?: string): EmbeddingMatch[] {
     if (!this.vecDimension) return [];
     const buf = vecToBuffer(queryVector);
-    const sql = sourceType
-      ? "SELECT rowid, source_type, source_id, content_hash, distance FROM embeddings WHERE vector MATCH ? AND source_type = ? ORDER BY distance LIMIT ?"
-      : "SELECT rowid, source_type, source_id, content_hash, distance FROM embeddings WHERE vector MATCH ? ORDER BY distance LIMIT ?";
-    const raw = sourceType
-      ? this.db.prepare(sql).all(buf, sourceType, topK) as { rowid: number; source_type: string; source_id: string; content_hash: string; distance: number }[]
-      : this.db.prepare(sql).all(buf, topK) as { rowid: number; source_type: string; source_id: string; content_hash: string; distance: number }[];
-    return raw.map(r => ({
+    const limit = sourceType ? Math.max(topK * 8, topK + 32) : topK;
+    const raw = this.db.prepare("SELECT rowid, source_type, source_id, content_hash, distance FROM embeddings WHERE vector MATCH ? ORDER BY distance LIMIT ?")
+      .all(buf, limit) as { rowid: number; source_type: string; source_id: string; content_hash: string; distance: number }[];
+    return raw.filter((r) => !sourceType || r.source_type === sourceType).slice(0, topK).map(r => ({
       rowid: r.rowid,
       sourceType: r.source_type,
       sourceId: r.source_id,
@@ -484,12 +508,16 @@ export class ContextPlusDB {
     return id;
   }
 
+  peekMemoryNode(id: string): MemoryNodeRow | null {
+    return this.db.prepare("SELECT * FROM memory_nodes WHERE id = ?").get(id) as MemoryNodeRow | undefined ?? null;
+  }
+
   getMemoryNode(id: string): MemoryNodeRow | null {
-    const row = this.db.prepare("SELECT * FROM memory_nodes WHERE id = ?").get(id) as MemoryNodeRow | undefined;
+    const row = this.peekMemoryNode(id);
     if (row) {
       this.db.prepare("UPDATE memory_nodes SET last_accessed = ?, access_count = access_count + 1 WHERE id = ?").run(Date.now(), id);
     }
-    return row ?? null;
+    return row;
   }
 
   listMemoryNodes(): MemoryNodeRow[] {
@@ -663,6 +691,41 @@ export class ContextPlusDB {
 
   getCallersOf(callee: string): CallSiteRow[] {
     return this.db.prepare("SELECT * FROM call_sites WHERE callee = ?").all(callee) as CallSiteRow[];
+  }
+
+  upsertFileSearchDocument(input: {
+    path: string;
+    header?: string | null;
+    language?: string | null;
+    symbols?: Array<{ name: string; kind?: string; signature?: string | null }>;
+  }): void {
+    const symbolText = (input.symbols ?? [])
+      .map((symbol) => `${symbol.name} ${symbol.kind ?? ""} ${symbol.signature ?? ""}`)
+      .join(" ");
+    const body = `${input.path} ${input.header ?? ""} ${input.language ?? ""} ${symbolText}`;
+    this.db.prepare("DELETE FROM file_search_fts WHERE path = ?").run(input.path);
+    this.db.prepare("INSERT INTO file_search_fts (path, header, symbols, language, body) VALUES (?, ?, ?, ?, ?)")
+      .run(input.path, input.header ?? "", symbolText, input.language ?? "", body);
+  }
+
+  deleteFileSearchDocument(path: string): void {
+    this.db.prepare("DELETE FROM file_search_fts WHERE path = ?").run(path);
+  }
+
+  searchFileText(query: string, topK: number = 10): FileTextSearchMatch[] {
+    const terms = (query.match(/[A-Za-z0-9_]+/g) ?? [])
+      .map((term) => term.toLowerCase())
+      .filter((term) => term.length > 1)
+      .slice(0, 12);
+    if (terms.length === 0) return [];
+    const ftsQuery = terms.map((term) => `${term}*`).join(" OR ");
+    try {
+      const rows = this.db.prepare("SELECT path, bm25(file_search_fts) as score FROM file_search_fts WHERE file_search_fts MATCH ? ORDER BY score LIMIT ?")
+        .all(ftsQuery, Math.max(1, topK)) as FileTextSearchMatch[];
+      return rows;
+    } catch {
+      return [];
+    }
   }
 
   getGraphStats(): { totalNodes: number; totalEdges: number } {
