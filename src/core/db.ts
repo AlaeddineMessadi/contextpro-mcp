@@ -455,12 +455,16 @@ export class ContextPlusDB {
   }
 
   searchEmbeddings(queryVector: number[] | Float32Array, topK: number, sourceType?: string): EmbeddingMatch[] {
-    if (!this.vecDimension) return [];
+    if (!this.vecDimension || queryVector.length !== this.vecDimension) return [];
     const buf = vecToBuffer(queryVector);
-    const limit = sourceType ? Math.max(topK * 8, topK + 32) : topK;
-    const raw = this.db.prepare("SELECT rowid, source_type, source_id, content_hash, distance FROM embeddings WHERE vector MATCH ? ORDER BY distance LIMIT ?")
-      .all(buf, limit) as { rowid: number; source_type: string; source_id: string; content_hash: string; distance: number }[];
-    return raw.filter((r) => !sourceType || r.source_type === sourceType).slice(0, topK).map(r => ({
+    const count = sourceType
+      ? (this.db.prepare("SELECT count(*) as n FROM embeddings").get() as { n: number }).n
+      : topK;
+    const fetchK = Math.max(topK, count);
+    const sql = "SELECT rowid, source_type, source_id, content_hash, distance FROM embeddings WHERE vector MATCH ? ORDER BY distance LIMIT ?";
+    const raw = this.db.prepare(sql).all(buf, fetchK) as { rowid: number; source_type: string; source_id: string; content_hash: string; distance: number }[];
+    const filtered = sourceType ? raw.filter((r) => r.source_type === sourceType) : raw;
+    return filtered.slice(0, topK).map((r) => ({
       rowid: r.rowid,
       sourceType: r.source_type,
       sourceId: r.source_id,
@@ -556,7 +560,7 @@ export class ContextPlusDB {
   }
 
   searchMemoryNodes(queryVector: number[], topK: number = 5): MemorySearchResult[] {
-    if (!this.vecDimension) return [];
+    if (!this.vecDimension || queryVector.length !== this.vecDimension) return [];
     const buf = vecToBuffer(queryVector);
     const vecResults = this.db.prepare("SELECT node_id, distance FROM memory_embeddings WHERE vector MATCH ? ORDER BY distance LIMIT ?")
       .all(buf, topK) as { node_id: string; distance: number }[];

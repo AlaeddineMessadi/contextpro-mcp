@@ -2,6 +2,7 @@
 // FEATURE: Agent memory operations over project-scoped persistent storage
 
 import { fetchEmbedding } from "../core/embeddings.js";
+import { createMemoryEdgeId, createMemoryNodeId } from "../core/memory-graph.js";
 import { getDB, type MemoryNodeInput, type MemoryNodeRow, type TraversalResult } from "../core/db.js";
 import { type ContextScope, loadProjectConfig } from "../core/project-config.js";
 
@@ -158,7 +159,7 @@ export async function toolUpsertMemoryNode(options: UpsertMemoryNodeOptions): Pr
     // Embedding provider unavailable — store without vector; keyword search still works.
   }
   const node = {
-    id: `mn-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    id: createMemoryNodeId(),
     type: options.type,
     label: options.label,
     content: options.content,
@@ -181,6 +182,7 @@ export async function toolCreateRelation(options: CreateRelationOptions): Promis
   let edgeId: string | null = null;
   try {
     edgeId = db.upsertMemoryEdge({
+      id: createMemoryEdgeId(),
       source: options.sourceId,
       target: options.targetId,
       relation: options.relation,
@@ -287,6 +289,7 @@ export async function toolAddInterlinkedContext(options: AddInterlinkedContextOp
       // Embedding provider unavailable — store without vector; keyword search still works.
     }
     const id = db.upsertMemoryNode({
+      id: createMemoryNodeId(),
       type: item.type,
       label: item.label,
       content: item.content,
@@ -303,6 +306,7 @@ export async function toolAddInterlinkedContext(options: AddInterlinkedContextOp
         const similarity = cosine(createdVectors.get(nodes[i].id) ?? [], createdVectors.get(nodes[j].id) ?? []);
         if (similarity < 0.72) continue;
         db.upsertMemoryEdge({
+          id: createMemoryEdgeId(),
           source: nodes[i].id,
           target: nodes[j].id,
           relation: "similar_to",

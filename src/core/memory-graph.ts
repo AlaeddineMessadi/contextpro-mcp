@@ -39,6 +39,18 @@ function parseMetadata(raw: string): Record<string, string> {
   }
 }
 
+function createMemoryId(prefix: "mn" | "me"): string {
+  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+export function createMemoryNodeId(): string {
+  return createMemoryId("mn");
+}
+
+export function createMemoryEdgeId(): string {
+  return createMemoryId("me");
+}
+
 function legacyNode(row: MemoryNodeRow, embedding: number[] = []): LegacyMemoryNode {
   return {
     id: row.id,
@@ -83,7 +95,7 @@ export async function upsertNode(
 ): Promise<LegacyMemoryNode> {
   const db = await getDB(rootDir);
   const embedding = await embedText(`${label} ${content}`);
-  const input = { id: `mn-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, type, label, content, metadata } satisfies MemoryNodeInput;
+  const input = { id: createMemoryNodeId(), type, label, content, metadata } satisfies MemoryNodeInput;
   const id = db.upsertMemoryNode(input, embedding);
   const node = db.peekMemoryNode(id);
   if (!node) throw new Error(`Memory node was not created: ${label}`);
@@ -101,7 +113,7 @@ export async function createRelation(
   const db = await getDB(rootDir);
   if (!db.peekMemoryNode(source) || !db.peekMemoryNode(target)) return null;
   const id = db.upsertMemoryEdge({
-    id: `me-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    id: createMemoryEdgeId(),
     source,
     target,
     relation,

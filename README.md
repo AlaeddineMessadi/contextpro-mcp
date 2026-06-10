@@ -175,7 +175,17 @@ npm run build
 
 Use this when you want an MCP client to run a local checkout instead of the published `npx` / `bunx` package.
 
-For MCP clients that use JSON config:
+### Local MCP From Source
+
+1. Install dependencies and build the generated server entrypoint:
+
+```bash
+cd /absolute/path/to/contextplus
+npm install
+npm run build
+```
+
+2. Add the built server to your MCP config. For Claude Code, Cursor, Windsurf, Antigravity, and other clients that use `mcpServers`, use an absolute path to `build/index.js`:
 
 ```json
 {
@@ -194,6 +204,30 @@ For MCP clients that use JSON config:
       }
     }
   }
+}
+```
+
+For VS Code (`.vscode/mcp.json`), use the same command and args inside `servers`:
+
+```json
+{
+  "servers": {
+    "contextplus": {
+      "type": "stdio",
+      "command": "node",
+      "args": [
+        "/absolute/path/to/contextplus/build/index.js",
+        "--root",
+        "/absolute/path/to/your/project"
+      ],
+      "env": {
+        "CONTEXTPLUS_EMBED_PROVIDER": "ollama",
+        "OLLAMA_EMBED_MODEL": "nomic-embed-text",
+        "CONTEXTPLUS_EMBED_TRACKER": "lazy"
+      }
+    }
+  },
+  "inputs": []
 }
 ```
 
