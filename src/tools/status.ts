@@ -161,7 +161,7 @@ export async function getStatus(options: StatusOptions): Promise<string> {
   const projectType = detectProjectType((await walkDirectory({ rootDir: options.rootDir, depthLimit: 0 })).filter((e) => !e.isDirectory));
 
   const lines = [
-    `=== Context+ Status ===`,
+    `=== ContextPro Status ===`,
     ``,
     `Project: ${options.rootDir.split("/").pop()} (${projectType})`,
     `Project ID: ${snapshot.repo.projectId ?? "unknown"} | Client ID: ${snapshot.repo.clientId ?? "none"}`,

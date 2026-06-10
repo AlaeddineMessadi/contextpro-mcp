@@ -646,7 +646,7 @@ export function formatGraphReport(graph: ProjectGraph): string {
     .slice(0, 12);
 
   return [
-    "# Context+ Graph Report",
+    "# ContextPro Graph Report",
     "",
     `Generated: ${graph.generatedAt}`,
     `Index generation: ${graph.indexGeneration}`,
@@ -719,7 +719,7 @@ export function formatGraphDashboard(graph: ProjectGraph): string {
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Context+ Graph Dashboard</title>
+  <title>ContextPro Graph Dashboard</title>
   <style>
     body { margin: 0; font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #1f2937; background: #f8fafc; }
     main { max-width: 1120px; margin: 0 auto; padding: 32px 20px 48px; }
@@ -743,7 +743,7 @@ export function formatGraphDashboard(graph: ProjectGraph): string {
 </head>
 <body>
   <main>
-    <h1>Context+ Graph Dashboard</h1>
+    <h1>ContextPro Graph Dashboard</h1>
     <div class="meta">Generated ${escapeHtml(graph.generatedAt)} | Index generation ${graph.indexGeneration}</div>
     <section class="stats">
       <div class="stat"><span>Nodes</span><strong>${graph.stats.nodes}</strong></div>

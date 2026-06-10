@@ -46,6 +46,6 @@ export function validateSelectedRoot(selection: RootSelection): RootSelection {
   const allowUnsafe = (process.env.CONTEXTPLUS_ALLOW_UNSAFE_ROOT ?? "").trim().toLowerCase();
   if (allowUnsafe === "1" || allowUnsafe === "true" || allowUnsafe === "yes") return selection;
   throw new Error(
-    `Unsafe implicit root "${selection.rootDir}". Context+ will not start from process.cwd() when cwd is filesystem root or home-level. Pass --root <project-path> or a positional project path, or set CONTEXTPLUS_ALLOW_UNSAFE_ROOT=true to override.`,
+    `Unsafe implicit root "${selection.rootDir}". ContextPro will not start from process.cwd() when cwd is filesystem root or home-level. Pass --root <project-path> or a positional project path, or set CONTEXTPLUS_ALLOW_UNSAFE_ROOT=true to override.`,
   );
 }

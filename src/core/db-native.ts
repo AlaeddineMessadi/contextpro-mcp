@@ -46,8 +46,8 @@ function normalizeSqliteVecModule(candidate: unknown): SqliteVecModule {
 export function describeNativeStorageError(error: unknown): NativeStorageDiagnostic {
   const message = error instanceof Error ? error.message : String(error);
   const remediation = [
-    `Run npm install in the Context+ repo to restore native dependencies.`,
-    `Rebuild better-sqlite3 with the same Node runtime that launches Context+ (${process.execPath}).`,
+    `Run npm install in the ContextPro repo to restore native dependencies.`,
+    `Rebuild better-sqlite3 with the same Node runtime that launches ContextPro (${process.execPath}).`,
     `Restart the MCP host after fixing native dependencies so it respawns the server cleanly.`,
   ];
 
@@ -70,7 +70,7 @@ export function loadNativeStorageBindings(): { Database: BetterSqlite3Constructo
   } catch (error) {
     const diagnostic = describeNativeStorageError(error);
     throw new Error(
-      `Context+ native storage unavailable [${diagnostic.code}]: ${diagnostic.message}\n${diagnostic.remediation.join("\n")}`,
+      `ContextPro native storage unavailable [${diagnostic.code}]: ${diagnostic.message}\n${diagnostic.remediation.join("\n")}`,
     );
   }
 }

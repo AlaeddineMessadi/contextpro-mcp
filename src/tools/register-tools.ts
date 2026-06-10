@@ -43,7 +43,7 @@ export function registerTools(
 ): void {
   server.tool(
     "health",
-    "Report Context+ startup health, including active root, project identity, Node ABI, native storage status, and database readiness.",
+    "Report ContextPro startup health, including active root, project identity, Node ABI, native storage status, and database readiness.",
     {
       format: z.enum(["text", "json"]).optional().describe("Return plain text or structured JSON. Default: text."),
     },

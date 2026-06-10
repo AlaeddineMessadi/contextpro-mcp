@@ -1,4 +1,4 @@
-// Doctor diagnostics and optional repair actions for Context+ runtime health
+// Doctor diagnostics and optional repair actions for ContextPro runtime health
 // FEATURE: Explicit remediation — inspect startup health and repair native storage dependencies
 
 import { resolve } from "path";
@@ -41,7 +41,7 @@ export async function runDoctor(rootDir: string, fix: boolean): Promise<DoctorRe
 
 export function formatDoctorReport(report: DoctorReport): string {
   const lines = [
-    `Context+ Doctor`,
+    `ContextPro Doctor`,
     ``,
     `Root: ${report.rootDir}`,
     `Fix Applied: ${report.fixApplied ? "yes" : "no"}`,

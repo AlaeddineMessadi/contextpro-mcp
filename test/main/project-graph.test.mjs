@@ -106,7 +106,7 @@ describe("project graph", () => {
     const dashboard = await readFile(result.dashboardPath, "utf-8");
     assert.ok(JSON.parse(graphJson).nodes.length > 0);
     assert.ok(report.includes("Confidence Notes"));
-    assert.ok(dashboard.includes("Context+ Graph Dashboard"));
+    assert.ok(dashboard.includes("ContextPro Graph Dashboard"));
   });
 
   it("queries graph neighborhoods without reading files", async () => {

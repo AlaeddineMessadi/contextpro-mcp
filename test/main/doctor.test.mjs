@@ -31,7 +31,7 @@ describe("doctor", () => {
     const report = await mod.runDoctor(fixtureRoot, false);
     const text = mod.formatDoctorReport(report);
 
-    assert.match(text, /Context\+ Doctor/);
+    assert.match(text, /ContextPro Doctor/);
     assert.match(text, /Before: ok/);
     assert.match(text, /After: ok/);
   });
