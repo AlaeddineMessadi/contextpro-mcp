@@ -1,8 +1,8 @@
 # Context+
 
-Semantic Intelligence for Large-Scale Engineering.
+Standalone code intelligence MCP for coding agents.
 
-Context+ is an MCP server designed for developers who demand 99% accuracy. By combining RAG, Tree-sitter AST, Spectral Clustering, and Obsidian-style linking, Context+ turns a massive codebase into a searchable, hierarchical feature graph.
+Context+ helps AI coding agents work across real projects with less token waste and fewer blind edits. It combines semantic search, Tree-sitter AST indexing, exact TypeScript/JavaScript references, optional SCIP evidence, reusable task artifacts, project memory, safe restore points, and graph-based impact analysis so agents can plan, edit, and validate without reading every file.
 
 https://github.com/user-attachments/assets/a97a451f-c9b4-468d-b036-15b65fc13e79
 
