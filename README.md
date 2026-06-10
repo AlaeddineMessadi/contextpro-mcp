@@ -4,6 +4,8 @@ Standalone code intelligence MCP for coding agents.
 
 ContextPro helps AI coding agents work across real projects with less token waste and fewer blind edits. It combines semantic search, Tree-sitter AST indexing, exact TypeScript/JavaScript references, optional SCIP evidence, reusable task artifacts, project memory, safe restore points, and graph-based impact analysis so agents can plan, edit, and validate without reading every file.
 
+ContextPro is a private fork and expanded evolution of [Context+](https://github.com/ForLoopCodes/contextplus), with additional agentic planning, graph intelligence, project isolation, packaging, safety, and workflow features layered on top.
+
 https://github.com/user-attachments/assets/a97a451f-c9b4-468d-b036-15b65fc13e79
 
 ## Tools
