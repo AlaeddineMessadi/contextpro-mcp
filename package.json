@@ -31,6 +31,7 @@
     "CHANGELOG.md",
     "LICENSE",
     "INSTRUCTIONS.md",
+    "agent-instructions.md",
     "docs/roadmaps"
   ],
   "bin": {

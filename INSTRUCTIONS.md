@@ -33,7 +33,7 @@ The MCP server is built with TypeScript and communicates over stdio using the Mo
 - `static-analysis.ts` - Native linter runner (tsc, eslint, py_compile, cargo check, go vet).
 - `propose-commit.ts` - Code gatekeeper validating headers, FEATURE tag, no inline comments, nesting, file length.
 - `feature-hub.ts` - Obsidian-style feature hub navigator with bundled skeleton views and query scoring.
-- `memory-tools.ts` - Memory graph MCP wrappers: upsert, relate, search, prune, interlink, traverse, delete, list.
+- `memory-tools.ts` - Memory graph MCP wrappers: upsert, relate, search, prune, interlink, traverse, delete, list. The long-term memory graph architecture is also adapted by the complementary [pmll-memory-mcp](https://www.npmjs.com/package/pmll-memory-mcp) server (`npx pmll-memory-mcp`), which adds short-term KV memory and a solution engine — see [drQedwards/PPM](https://github.com/drQedwards/PPM).
 - `agentic-context.ts` - High-level context assembly: task_pack, repo_map, decision_brief, change_impact, edit_scope, workspace_context.
 - `reindex.ts` - Full or incremental reindex with SQLite persistence and stale-file detection.
 - `status.ts` - Instant project overview dashboard: file counts, index state, memory stats, git info.
@@ -44,11 +44,11 @@ The MCP server is built with TypeScript and communicates over stdio using the Mo
 - `resolve-symbol.ts` - Resolve an identifier to the most likely definition with ambiguity scoring.
 - `planning-helpers.ts` - Task pack assembly: ranked files, tests, memory hits, recent diffs.
 - `retrieval-helpers.ts` - Shared retrieval utilities: memory hits, freshness, context hydration.
-- `register-tools.ts` - MCP tool registration: wires all 36 tools with Zod schemas and `withRequestActivity` wrapper.
+- `register-tools.ts` - MCP tool registration: wires all 47 tools with Zod schemas and `withRequestActivity` wrapper.
 
 The memory graph is a **Retrieval-Augmented Generation (RAG)** system backed by SQLite + sqlite-vec. Agents MUST use `memory_search` at the start of every task to retrieve prior context, and persist learnings with `memory_create` and `memory_link` after completing work. This prevents redundant exploration and builds cumulative knowledge across sessions.
 
-**Entry Point**: `src/index.ts` initializes the SQLite database, registers 36 MCP tools, and starts the stdio transport. Accepts `--root <path>` or an optional positional project root. Without explicit root, it falls back to `process.cwd()`, but now refuses dangerous cwd values like `/` or home-level dirs unless `CONTEXTPLUS_ALLOW_UNSAFE_ROOT=true`.
+**Entry Point**: `src/index.ts` initializes the SQLite database, registers 47 MCP tools, serves MCP manifest instructions, and starts the stdio transport. Accepts `--root <path>` or an optional positional project root. Without explicit root, it falls back to `process.cwd()`, but now refuses dangerous cwd values like `/` or home-level dirs unless `CONTEXTPLUS_ALLOW_UNSAFE_ROOT=true`.
 
 ## Environment Variables
 

@@ -87,6 +87,8 @@ Use these first. They wrap lower-level discovery and analysis into compact packe
 | `workspace_context`  | List registered projects and recent sessions without merging raw code context.                                        |
 | `promote_pattern`    | Promote project memory into client/global reusable patterns.                                                          |
 
+> **Complementary server:** [pmll-memory-mcp](https://www.npmjs.com/package/pmll-memory-mcp) (`npx pmll-memory-mcp`) is a separate MCP server by [@drQedwards](https://github.com/drQedwards) that adapts Context+'s long-term memory graph and adds short-term KV context memory, Q-promise deduplication, and a solution engine on top. See [drQedwards/PPM](https://github.com/drQedwards/PPM) for details.
+
 ## Setup
 
 ### Quick Start (npx / bunx)

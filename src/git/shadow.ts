@@ -71,10 +71,10 @@ export async function restorePoint(rootDir: string, pointId: string): Promise<st
   const restoredFiles: string[] = [];
 
   for (const file of point.files) {
+    const targetPath = resolveProjectPath(rootDir, file, "restore file");
     const backupPath = join(backupDir, file.replace(/[\\/]/g, "__"));
     try {
       const content = await readFile(backupPath, "utf-8");
-      const targetPath = resolveProjectPath(rootDir, file, "restore file");
       await mkdir(dirname(targetPath), { recursive: true });
       await writeFile(targetPath, content);
       restoredFiles.push(file);
