@@ -4,6 +4,27 @@ All notable changes to this project are recorded here. The project follows [Sema
 
 ## [Unreleased]
 
+## [1.2.2] - 2026-06-18
+
+Verification follow-up to 1.2.1. Closes 8 issues from the dev-lifecycle audit and adds a literal-string `grep` tool to fill the keyword-search gap.
+
+### Added
+
+- **`grep` tool** — fast literal or regex string search across the project's indexed file set. Closes the gap where `search` (semantic) and `search` mode `identifier` aren't a fit: log-message lookups, config-key searches, error-message tracing. Supports case-sensitivity, regex, target_path scoping, glob filter, per-file and total caps, file-size skip, and context-window control. Skips binary files; respects `.gitignore` via the indexed walker. (`AUDIT.md` 2026-06-18 dev-lifecycle audit, `src/tools/grep.ts`)
+
+### Fixed — Validation gaps
+
+- **Empty-input rejection.** All required string params now enforce `z.string().min(1)`: `blast_radius.symbol_name`, `resolve_symbol.symbol_name`, `exact_references.symbol_name`, `search.query`, `memory_search.query`, `memory_create.label`, `memory_create.content`, `memory_link.source_id`/`target_id`, `memory_explore.start_node_id`, `memory_delete.node_id`, `task_pack.task`, `start_task.task`, `edit_scope.task`, `plan_edit.task`, `validate.task`, `validate_scope.task`, `decision_brief.query`, `memory_record_task.task` and `.summary`, `remember.task` and `.summary`, `promote_pattern.source_memory_id` and `.summary`, `artifact_read.artifact_id`, `scip_import.index_path`, `skeleton.file_path`, `checkpoint.file_path` and `.new_content`, `restore.point_id`, `related.file`. Closes audit findings #26, #27, #29. (`src/tools/register-tools.ts`)
+- **`blast_radius` defense in depth.** Handler-level guard rejects empty/whitespace `symbolName` even if Zod is bypassed — previously empty input returned 29,573 usages / 1.5MB output. (Audit #26, `src/tools/blast-radius.ts`)
+- **`memory_delete` explicitly drops edges.** Existing schema has `ON DELETE CASCADE` but the delete now also runs `DELETE FROM memory_edges WHERE source = ? OR target = ?` defensively in case foreign-keys PRAGMA is disabled per-connection. (Audit #28, `src/core/db.ts`)
+
+### Fixed — Output and error quality
+
+- **`change_impact` truncation explicit.** When the importer or test list is shortened, output now appends `... and N more affected file(s) (full list in artifact <id>)`. (Audit #33, `src/tools/agentic-context.ts`)
+- **`graph_query` missing-file error.** Empty result for `kind="file"` or `kind="impact"` returns "No graph nodes found for file '...'. The file may not be indexed yet — run reindex, or check the path is correct (project-relative)." instead of leaking the DB-not-open internal error. Same disambiguated message for `kind="symbol"`. Required-arg checks added (`kind="file"` requires `file`; `kind="symbol"` requires `symbol`). (Audit #32, `src/tools/project-graph.ts`)
+- **`reindex(target_path=non-existent)` warns.** Returns `Reindex: target_path "X" matched no files (path may not exist, or is fully gitignored). No-op.` instead of silently completing in 1ms with zero indexed. (Audit #31, `src/tools/reindex.ts`)
+- **`cluster` label fallback.** When the chat model is unavailable or returns malformed JSON, cluster labels now derive from the most-frequent path/header tokens instead of generic "Cluster 1/2". Also writes a `[contextpro/cluster] degraded:` line to stderr so users know to configure or fix the chat model. (Audit #30, `src/tools/semantic-navigate.ts`)
+
 ## [1.2.1] - 2026-06-18
 
 Verification follow-up to 1.2.0. Three findings surfaced during the post-release audit are resolved.

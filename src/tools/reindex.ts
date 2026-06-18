@@ -233,6 +233,10 @@ export async function reindex(options: ReindexOptions): Promise<string> {
   setIndexStatus(db, INDEXING_STATUS, { targetPath: options.targetPath });
   try {
     const entries = await walkDirectory({ rootDir: options.rootDir, targetPath: options.targetPath, depthLimit: 0 });
+    if (options.targetPath && entries.length === 0) {
+      setIndexStatus(db, IDLE_STATUS, { targetPath: options.targetPath, error: null });
+      return `Reindex: target_path "${options.targetPath}" matched no files (path may not exist, or is fully gitignored). No-op.`;
+    }
     const files = entries.filter((e) => !e.isDirectory);
     const sourceFiles = files.filter((file) => isSupportedFile(file.path));
     const currentPaths = new Set(sourceFiles.map((f) => f.relativePath));

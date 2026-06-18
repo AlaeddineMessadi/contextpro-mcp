@@ -4,7 +4,7 @@
 > Update on every release and after any audit. Pair with `CHANGELOG.md` (what changed, when) and `AUDIT.md` (deep findings).
 
 **Last updated:** 2026-06-18
-**Current version:** 1.2.1
+**Current version:** 1.2.2
 **Branch:** `main`
 **Node target:** `>=20 <27`
 
@@ -16,7 +16,7 @@
 |---|---|---|
 | Core indexing (SQLite + sqlite-vec) | ✅ Stable | 768-dim vectors, FTS5 fallback, schema v4 |
 | Walker / parser (tree-sitter + regex) | ✅ Stable | 36 langs via WASM grammars, regex fallback |
-| Tool surface (47 tools) | 🟡 Working, slimming | 5 alias tools deprecated in 1.2.0 (still wired) |
+| Tool surface (48 tools) | 🟡 Working, slimming | 5 alias tools deprecated in 1.2.0 (still wired); new `grep` tool added in 1.2.2 |
 | Memory graph | ✅ Stable | Auto-prune on access, decay-weighted edges |
 | Embeddings (Ollama / OpenAI-compatible) | ✅ Stable | Lazy tracker, dim-drift now surfaced to clients |
 | Restore points (`checkpoint` / `restore`) | ✅ Stable | JSON manifest under `.contextpro/backups/` |
@@ -31,6 +31,7 @@
 
 ## Recent trajectory
 
+- **1.2.2 — Dev-lifecycle audit fixes + literal grep.** Closes 8 issues from the 47-tool audit: empty-input validation across 25+ params, `change_impact` truncation explicit, `graph_query` not-found messaging, `reindex` non-existent target warning, `cluster` heuristic label fallback, `memory_delete` belt-and-suspenders edge cleanup. Adds the `grep` tool for fast literal/regex search.
 - **1.2.1 — Verification follow-up.** All three findings from the 1.2.0 verification pass resolved: reindex eagerly populates embeddings, `status` warning disambiguated, dual-Node ABI quirk documented.
 - **1.2.0 — Audit pass.** Comprehensive audit identified 25 issues across 5 severities. All Critical and High items resolved. New tracking docs (`STATUS.md`, `AUDIT.md`, expanded `CHANGELOG.md`) added so trajectory stays auditable.
 - **1.1.0 — Agent workflow + graph intelligence.** Added `start_task`, `plan_edit`, `impact`, `validate`, `remember`. Portable graph export, `impact_delta`, exact references, SCIP import, FTS5 fallback.

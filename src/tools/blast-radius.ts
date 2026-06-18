@@ -58,6 +58,9 @@ async function scanFileForSymbol(
 }
 
 export async function getBlastRadius(options: BlastRadiusOptions): Promise<string> {
+  if (!options.symbolName || options.symbolName.trim().length === 0) {
+    return "Error: symbol_name must be a non-empty string. blast_radius traces a specific named symbol and cannot run on an empty value.";
+  }
   const db = await getDB(options.rootDir);
   const usages: SymbolUsage[] = [];
   const seenUsageKeys = new Set<string>();

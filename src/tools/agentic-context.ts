@@ -481,11 +481,17 @@ export async function buildChangeImpact(options: ChangeImpactOptions): Promise<s
     for (const file of payload.affectedFiles.slice(0, 12)) {
       lines.push(`  ${file.path} [${file.kind}] (${Math.round(file.score * 100)}%) - ${file.reason}`);
     }
+    if (payload.affectedFiles.length > 12) {
+      lines.push(`  ... and ${payload.affectedFiles.length - 12} more affected file(s) (full list in artifact ${artifact?.id ?? "n/a"})`);
+    }
     if (payload.affectedTests.length > 0) {
       lines.push("");
       lines.push("Affected Tests:");
       for (const test of payload.affectedTests.slice(0, 8)) {
         lines.push(`  ${test.path} (${Math.round(test.score * 100)}%) - ${test.reason}`);
+      }
+      if (payload.affectedTests.length > 8) {
+        lines.push(`  ... and ${payload.affectedTests.length - 8} more affected test(s)`);
       }
     }
     if (payload.reasons.length > 0) {

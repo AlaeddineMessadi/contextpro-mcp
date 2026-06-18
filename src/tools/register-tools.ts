@@ -21,6 +21,7 @@ import { getTestMap } from "./test-map.js";
 import { explain } from "./explain.js";
 import { getRepoMap } from "./repo-map.js";
 import { resolveSymbol } from "./resolve-symbol.js";
+import { grepProject } from "./grep.js";
 import { exportProjectGraphTool, queryProjectGraphTool } from "./project-graph.js";
 import { impactDeltaTool } from "./impact-delta.js";
 import { exactReferencesTool } from "./exact-references.js";
@@ -70,7 +71,7 @@ export function registerTools(
     "artifact_read",
     "Load a previously generated context artifact by ID so agents can reuse earlier task packets, repo maps, and decisions without regenerating them.",
     {
-      artifact_id: z.string().describe("Artifact ID returned by repo_map, search, task_pack, change_impact, edit_scope, or decision_brief."),
+      artifact_id: z.string().min(1).describe("Artifact ID returned by repo_map, search, task_pack, change_impact, edit_scope, or decision_brief."),
     },
     withRequestActivity(async ({ artifact_id }) => {
       const artifact = await readArtifact(rootDir, artifact_id);
@@ -162,7 +163,7 @@ export function registerTools(
     "resolve_symbol",
     "Resolve an identifier to the most likely definition with ambiguity scoring. Use this before explain/refactor work when a symbol name appears in multiple files.",
     {
-      symbol_name: z.string().describe("The symbol or identifier name to resolve."),
+      symbol_name: z.string().min(1).describe("The symbol or identifier name to resolve."),
       file_context: z.string().optional().describe("Optional current file path to bias resolution using import context and locality."),
       kind: z.string().optional().describe("Optional expected kind, e.g. function, method, class, interface."),
       limit: z.number().optional().describe("Maximum candidates to return. Default: 8."),
@@ -187,7 +188,7 @@ export function registerTools(
     "exact_references",
     "Find exact references using the local TypeScript/JavaScript language service, Python import/call index evidence, or an imported SCIP JSON index. Use before rename/delete/refactor operations when available.",
     {
-      symbol_name: z.string().describe("Symbol name to resolve references for."),
+      symbol_name: z.string().min(1).describe("Symbol name to resolve references for."),
       file: z.string().optional().describe("Optional file containing the symbol. If omitted, the indexed symbol table is used."),
       line: z.number().optional().describe("Optional 1-based line for the symbol inside file."),
       limit: z.number().optional().describe("Maximum references to return. Default: 100, max: 500."),
@@ -205,7 +206,7 @@ export function registerTools(
     "scip_import",
     "Import and normalize a project-provided SCIP JSON index into .contextpro/scip-index.json so graph_export, graph_query, and exact_references can use SCIP_RESOLVED evidence.",
     {
-      index_path: z.string().describe("Project-relative path to a SCIP JSON index, for example .contextpro/index.scip.json."),
+      index_path: z.string().min(1).describe("Project-relative path to a SCIP JSON index, for example .contextpro/index.scip.json."),
       format: z.enum(["text", "json"]).optional().describe("Return plain text or structured JSON. Default: text."),
     },
     withRequestActivity(async ({ index_path, format }) => ({
@@ -260,7 +261,7 @@ export function registerTools(
     "Get detailed function signatures, class methods, and type definitions of a specific file WITHOUT reading the full body. " +
     "Shows the API surface: function names, parameters, return types, and line ranges. Perfect for understanding how to use code without loading it all.",
     {
-      file_path: z.string().describe("Path to the file to inspect (relative to project root)."),
+      file_path: z.string().min(1).describe("Path to the file to inspect (relative to project root)."),
     },
     withRequestActivity(async ({ file_path }) => ({
       content: [{
@@ -275,7 +276,7 @@ export function registerTools(
     "Search the codebase by MEANING. Modes: 'file' searches file headers/symbols, 'identifier' searches function/class definitions with call chains, " +
     "'hybrid' (default) runs both and returns combined results. Uses embeddings for semantic matching plus keyword overlap scoring.",
     {
-      query: z.string().describe("Natural language description of what you're looking for."),
+      query: z.string().min(1).describe("Natural language description of what you're looking for."),
       mode: z.enum(["file", "identifier", "hybrid"]).optional().describe("Search mode: 'file' for files, 'identifier' for functions/classes, 'hybrid' for both. Default: hybrid."),
       preset: z.enum(["fast", "balanced", "exhaustive"]).optional().describe("Ranking preset. fast favors cheap lexical recall, balanced is default, exhaustive returns a wider set."),
       format: z.enum(["text", "json"]).optional().describe("Return plain text or structured JSON. Default: text."),
@@ -315,11 +316,44 @@ export function registerTools(
   );
 
   server.tool(
+    "grep",
+    "Fast literal or regex string search across the project's indexed file set. Use this for log-message lookups, config-key searches, error-message tracing, or any time you know the exact characters you want to find. Use 'search' instead for semantic intent queries. Skips binary files; respects .gitignore via the indexed walker.",
+    {
+      pattern: z.string().min(1).describe("Literal string to search for (or regex when regex=true)."),
+      regex: z.boolean().optional().describe("Treat pattern as a regular expression. Default: false (literal match)."),
+      case_sensitive: z.boolean().optional().describe("Match case-sensitively. Default: false."),
+      target_path: z.string().optional().describe("Optional subdirectory to scope the search."),
+      glob: z.string().optional().describe("Optional file glob filter, e.g. \"src/**/*.ts\" or \"*.md\". Comma-separated for multiple."),
+      max_matches_per_file: z.number().optional().describe("Max matches per file. Default: 10."),
+      max_total_matches: z.number().optional().describe("Max total matches across all files. Default: 200."),
+      max_file_bytes: z.number().optional().describe("Skip files larger than this (bytes). Default: 1000000."),
+      context_chars: z.number().optional().describe("Characters of surrounding context per match. Default: 160."),
+    },
+    withRequestActivity(async (args) => ({
+      content: [{
+        type: "text" as const,
+        text: await grepProject({
+          rootDir,
+          pattern: args.pattern,
+          regex: args.regex,
+          caseSensitive: args.case_sensitive,
+          targetPath: args.target_path,
+          glob: args.glob,
+          maxMatchesPerFile: args.max_matches_per_file,
+          maxTotalMatches: args.max_total_matches,
+          maxFileBytes: args.max_file_bytes,
+          contextChars: args.context_chars,
+        }),
+      }],
+    }), { toolName: "grep", waitForIndexing: false }),
+  );
+
+  server.tool(
     "blast_radius",
     "Before deleting or modifying code, check the BLAST RADIUS. Traces every file and line where a specific symbol " +
     "(function, class, variable) is imported or used. Prevents orphaned code. Also warns if usage count is low (candidate for inlining).",
     {
-      symbol_name: z.string().describe("The function, class, or variable name to trace across the codebase."),
+      symbol_name: z.string().min(1).describe("The function, class, or variable name to trace across the codebase."),
       file_context: z.string().optional().describe("The file where the symbol is defined. Excludes the definition line from results."),
     },
     withRequestActivity(async ({ symbol_name, file_context }) => ({
@@ -352,8 +386,8 @@ export function registerTools(
     "Save code with optional validation. Creates a shadow restore point before writing. " +
     "Use during long work sessions for safe mid-work saves. Pass strict: true to enforce style rules (header, no inline comments, nesting, length); otherwise issues are advisory warnings only.",
     {
-      file_path: z.string().describe("Where to save the file (relative to project root)."),
-      new_content: z.string().describe("The complete file content to save."),
+      file_path: z.string().min(1).describe("Where to save the file (relative to project root)."),
+      new_content: z.string().min(1).describe("The complete file content to save."),
       strict: z.boolean().optional().describe("If true, reject on any style violation. Default: false (warnings only)."),
     },
     withRequestActivity(async ({ file_path, new_content, strict }) => {
@@ -389,7 +423,7 @@ export function registerTools(
     "Restore files to their state before a specific change. Uses the shadow restore point system. " +
     "Does NOT affect git history. Call checkpoints first to find the point ID.",
     {
-      point_id: z.string().describe("The restore point ID (format: rp-timestamp-hash). Get from list_restore_points."),
+      point_id: z.string().min(1).describe("The restore point ID (format: rp-timestamp-hash). Get from list_restore_points."),
     },
     withRequestActivity(async ({ point_id }) => {
       const restored = await restorePoint(rootDir, point_id);
@@ -452,8 +486,8 @@ export function registerTools(
     "If a node with the same label and type exists, it updates content. Returns the node ID for use in memory_link.",
     {
       type: z.enum(["concept", "file", "symbol", "note"]).describe("Node type: concept (abstract ideas), file (source files), symbol (functions/classes), note (free-form)."),
-      label: z.string().describe("Short identifier for the node. Used for deduplication with type."),
-      content: z.string().describe("Detailed content for the node. Used for embedding generation."),
+      label: z.string().min(1).describe("Short identifier for the node. Used for deduplication with type."),
+      content: z.string().min(1).describe("Detailed content for the node. Used for embedding generation."),
       metadata: z.record(z.string()).optional().describe("Optional key-value metadata pairs."),
       scope: z.enum(["session", "project", "client", "global"]).optional().describe("Memory scope. Defaults to project."),
     },
@@ -470,8 +504,8 @@ export function registerTools(
     "Create a typed edge between two memory nodes. Supports: relates_to, depends_on, implements, references, similar_to, contains, resolved_by, contradicts. " +
     "Edges have weights (0-1) that decay over time. Duplicate edges update weight.",
     {
-      source_id: z.string().describe("ID of the source memory node."),
-      target_id: z.string().describe("ID of the target memory node."),
+      source_id: z.string().min(1).describe("ID of the source memory node."),
+      target_id: z.string().min(1).describe("ID of the target memory node."),
       relation: z.enum(["relates_to", "depends_on", "implements", "references", "similar_to", "contains", "resolved_by", "contradicts"]).describe("Relationship type between nodes."),
       weight: z.number().optional().describe("Edge weight 0-1. Higher = stronger relationship. Default: 1.0."),
       metadata: z.record(z.string()).optional().describe("Optional key-value metadata for the edge."),
@@ -489,7 +523,7 @@ export function registerTools(
     "Search the memory graph by meaning with graph traversal. Finds direct matches via embedding similarity, " +
     "then traverses neighbors to discover linked context. Returns hits and graph-connected neighbors with relevance scores.",
     {
-      query: z.string().describe("Natural language query to search the memory graph."),
+      query: z.string().min(1).describe("Natural language query to search the memory graph."),
       max_depth: z.number().optional().describe("How many hops to traverse from direct matches. Default: 1."),
       top_k: z.number().optional().describe("Number of direct matches to return. Default: 5."),
       scope: z.enum(["session", "project", "client", "global"]).optional().describe("Retrieval scope. Defaults to project."),
@@ -531,7 +565,7 @@ export function registerTools(
     "Start from a memory node and traverse outward. Returns the starting node plus all reachable neighbors " +
     "within the depth limit, scored by edge weight decay and depth penalty. Use after memory_search to explore a node's neighborhood.",
     {
-      start_node_id: z.string().describe("ID of the memory node to start traversal from."),
+      start_node_id: z.string().min(1).describe("ID of the memory node to start traversal from."),
       max_depth: z.number().optional().describe("Maximum traversal depth from start node. Default: 2."),
       edge_filter: z.array(z.enum(["relates_to", "depends_on", "implements", "references", "similar_to", "contains", "resolved_by", "contradicts"])).optional()
         .describe("Only traverse edges of these types. Omit for all."),
@@ -549,7 +583,7 @@ export function registerTools(
     "Delete a memory node and all its edges from the memory graph by node ID. " +
     "Use to remove stale, incorrect, or outdated nodes that are polluting search results.",
     {
-      node_id: z.string().describe("ID of the memory node to delete."),
+      node_id: z.string().min(1).describe("ID of the memory node to delete."),
     },
     withRequestActivity(async ({ node_id }) => ({
       content: [{
@@ -633,7 +667,7 @@ export function registerTools(
     "Show files related to a given file: what it imports, what imports it, same-directory siblings, test file, and hub membership. " +
     "Requires reindex to have been run for import graph data.",
     {
-      file: z.string().describe("File path to find related files for (relative to root)."),
+      file: z.string().min(1).describe("File path to find related files for (relative to root)."),
     },
     withRequestActivity(async ({ file }) => ({
       content: [{
@@ -681,7 +715,7 @@ export function registerTools(
     "task_pack",
     "Assemble the minimum useful working set for a task: ranked files, nearby tests, recent diffs, memory, and risks.",
     {
-      task: z.string().describe("Task description or engineering objective."),
+      task: z.string().min(1).describe("Task description or engineering objective."),
       max_files: z.number().optional().describe("Maximum ranked files to include. Default: 8."),
       max_memory: z.number().optional().describe("Maximum memory hits to include. Default: 3, max: 10."),
       include_tests: z.boolean().optional().describe("Include nearby tests. Default: true."),
@@ -710,7 +744,7 @@ export function registerTools(
     "start_task",
     "[deprecated, prefer task_pack] Primary workflow entry point. Returns a compact task packet with ranked files, tests, recent diffs, project memory, freshness, and risks.",
     {
-      task: z.string().describe("Task description or engineering objective."),
+      task: z.string().min(1).describe("Task description or engineering objective."),
       max_files: z.number().optional().describe("Maximum ranked files to include. Default: 8."),
       format: z.enum(["text", "json"]).optional().describe("Return plain text or structured JSON. Default: text."),
     },
@@ -794,7 +828,7 @@ export function registerTools(
     "edit_scope",
     "Identify the smallest likely safe edit set for a task, including likely source files and nearby tests.",
     {
-      task: z.string().describe("Task description or intended change."),
+      task: z.string().min(1).describe("Task description or intended change."),
       max_files: z.number().optional().describe("Maximum files to recommend. Default: 5."),
       prefer_smallest_scope: z.boolean().optional().describe("Bias toward the smallest safe scope. Default: true."),
       format: z.enum(["text", "json"]).optional().describe("Return plain text or structured JSON. Default: text."),
@@ -817,7 +851,7 @@ export function registerTools(
     "plan_edit",
     "[deprecated, prefer edit_scope] Primary edit planning workflow. Finds the smallest likely safe edit set for a task before reading or changing files.",
     {
-      task: z.string().describe("Task description or intended change."),
+      task: z.string().min(1).describe("Task description or intended change."),
       max_files: z.number().optional().describe("Maximum files to recommend. Default: 5."),
       format: z.enum(["text", "json"]).optional().describe("Return plain text or structured JSON. Default: text."),
     },
@@ -839,7 +873,7 @@ export function registerTools(
     "validate_scope",
     "After edit_scope, recommend the most relevant validation checks and commands for the scoped files.",
     {
-      task: z.string().describe("Task description or intended change."),
+      task: z.string().min(1).describe("Task description or intended change."),
       max_files: z.number().optional().describe("Maximum files to inspect when building validation guidance. Default: 5."),
       format: z.enum(["text", "json"]).optional().describe("Return plain text or structured JSON. Default: text."),
     },
@@ -860,7 +894,7 @@ export function registerTools(
     "validate",
     "[deprecated, prefer validate_scope] Primary validation workflow. Recommends the smallest relevant checks and commands for a task's likely edit scope.",
     {
-      task: z.string().describe("Task description or intended change."),
+      task: z.string().min(1).describe("Task description or intended change."),
       max_files: z.number().optional().describe("Maximum files to inspect when building validation guidance. Default: 5."),
       format: z.enum(["text", "json"]).optional().describe("Return plain text or structured JSON. Default: text."),
     },
@@ -881,7 +915,7 @@ export function registerTools(
     "decision_brief",
     "Compress a subsystem or task into a short decision-oriented brief with ranked files, symbols, tests, hubs, and memory.",
     {
-      query: z.string().describe("Subsystem, area, or task query."),
+      query: z.string().min(1).describe("Subsystem, area, or task query."),
       include_hubs: z.boolean().optional().describe("Include matching hubs. Default: true."),
       include_memory: z.boolean().optional().describe("Include project memory. Default: true."),
       include_tests: z.boolean().optional().describe("Include nearby tests. Default: true."),
@@ -908,8 +942,8 @@ export function registerTools(
     "memory_record_task",
     "Persist useful task outcomes with linked files, assumptions, evidence, and open risks for future sessions.",
     {
-      task: z.string().describe("Task or issue name."),
-      summary: z.string().describe("What changed or was learned."),
+      task: z.string().min(1).describe("Task or issue name."),
+      summary: z.string().min(1).describe("What changed or was learned."),
       files: z.array(z.string()).optional().describe("Files touched or relevant to the task."),
       assumptions: z.array(z.string()).optional().describe("Assumptions made during the task."),
       evidence: z.array(z.string()).optional().describe("Evidence supporting the outcome."),
@@ -937,8 +971,8 @@ export function registerTools(
     "remember",
     "[deprecated, prefer memory_record_task] Primary memory workflow. Records a task outcome with linked files, assumptions, evidence, and open risks for future sessions.",
     {
-      task: z.string().describe("Task or issue name."),
-      summary: z.string().describe("What changed or was learned."),
+      task: z.string().min(1).describe("Task or issue name."),
+      summary: z.string().min(1).describe("What changed or was learned."),
       files: z.array(z.string()).optional().describe("Files touched or relevant to the task."),
       assumptions: z.array(z.string()).optional().describe("Assumptions made during the task."),
       evidence: z.array(z.string()).optional().describe("Evidence supporting the outcome."),
@@ -988,10 +1022,10 @@ export function registerTools(
     "promote_pattern",
     "Promote a project memory item into a client-level or global reusable pattern record.",
     {
-      source_memory_id: z.string().describe("Memory node ID to promote."),
+      source_memory_id: z.string().min(1).describe("Memory node ID to promote."),
       target_scope: z.enum(["client", "global"]).describe("Where to promote the pattern."),
       sanitize: z.boolean().optional().describe("Mark the promoted pattern as sanitized. Default: true."),
-      summary: z.string().describe("Reusable pattern summary."),
+      summary: z.string().min(1).describe("Reusable pattern summary."),
       format: z.enum(["text", "json"]).optional().describe("Return plain text or structured JSON. Default: text."),
     },
     withRequestActivity(async ({ source_memory_id, target_scope, sanitize, summary, format }) => ({

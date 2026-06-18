@@ -175,6 +175,23 @@ function formatLineRange(line: number, endLine: number): string {
   return endLine > line ? `L${line}-L${endLine}` : `L${line}`;
 }
 
+function deriveHeuristicLabel(cluster: { files: FileInfo[]; pathPattern: string | null }, index: number): string {
+  if (cluster.pathPattern) return cluster.pathPattern;
+  const tokens = new Map<string, number>();
+  const stop = new Set(["the", "and", "for", "src", "test", "main", "tools", "core", "lib", "index", "is", "of", "to", "a", "in", "on", "with"]);
+  for (const file of cluster.files) {
+    const segs = file.relativePath.toLowerCase().split(/[\/_.\-\s]+/).filter((t) => t.length > 2 && !stop.has(t));
+    for (const seg of segs) tokens.set(seg, (tokens.get(seg) ?? 0) + 1);
+    if (file.header) {
+      const headerWords = file.header.toLowerCase().split(/\s+/).filter((t) => t.length > 3 && !stop.has(t));
+      for (const w of headerWords) tokens.set(w, (tokens.get(w) ?? 0) + 1);
+    }
+  }
+  const top = [...tokens.entries()].sort((a, b) => b[1] - a[1]).slice(0, 2).map(([t]) => t);
+  if (top.length === 0) return `Cluster ${index + 1}`;
+  return top.join(" ");
+}
+
 async function labelSiblingClusters(clusters: { files: FileInfo[]; pathPattern: string | null }[]): Promise<string[]> {
   if (clusters.length === 0) return [];
   if (clusters.length === 1) {
@@ -182,6 +199,8 @@ async function labelSiblingClusters(clusters: { files: FileInfo[]; pathPattern: 
     if (pp) return [pp];
     return [clusters[0].files.map((f) => f.relativePath.split("/").pop()).join(", ").substring(0, 40)];
   }
+
+  const heuristicLabels = clusters.map((c, i) => deriveHeuristicLabel(c, i));
 
   const clusterDescriptions = clusters.map((c, i) => {
     const fileList = c.files.map((f) => `${f.relativePath}: ${f.header || "no description"}`).join("\n  ");
@@ -201,15 +220,20 @@ Respond with ONLY a JSON array of ${clusters.length} objects. No other text.`;
   try {
     const response = await chatCompletion(prompt);
     const jsonMatch = response.match(/\[[\s\S]*\]/);
-    if (!jsonMatch) return clusters.map((_, i) => `Cluster ${i + 1}`);
+    if (!jsonMatch) {
+      process.stderr.write(`[contextpro/cluster] degraded: chat model returned no JSON; using heuristic labels\n`);
+      return heuristicLabels;
+    }
     const labels = JSON.parse(jsonMatch[0]) as { label: string }[];
     return labels.map((l, i) => {
       const pp = clusters[i].pathPattern;
-      const base = l.label || `Cluster ${i + 1}`;
+      const base = (l.label && l.label.trim().length > 0) ? l.label : heuristicLabels[i];
       return pp ? `${base} (${pp})` : base;
     });
-  } catch {
-    return clusters.map((c, i) => c.pathPattern ?? `Cluster ${i + 1}`);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    process.stderr.write(`[contextpro/cluster] degraded: chat-model labeling failed (${message}); using heuristic labels\n`);
+    return heuristicLabels;
   }
 }
 

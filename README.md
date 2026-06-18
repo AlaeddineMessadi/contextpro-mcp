@@ -169,7 +169,7 @@ Run independent reads in parallel. Trust the confidence/freshness envelope every
 
 ## Tool surface
 
-ContextPro exposes **47 MCP tools** organized into seven categories.
+ContextPro exposes **48 MCP tools** organized into seven categories.
 
 ### Orientation
 | Tool | What it does |
@@ -184,6 +184,7 @@ ContextPro exposes **47 MCP tools** organized into seven categories.
 | Tool | What it does |
 | --- | --- |
 | `search` | Hybrid (default), file, or identifier search with confidence scoring |
+| `grep` | Fast literal or regex string search (log lines, config keys, error messages) |
 | `skeleton` | Function/class signatures and line ranges, no bodies |
 | `explain` | Specific symbol body with immediate dependencies |
 | `resolve_symbol` | Resolve a name to its definition with ambiguity scoring |
@@ -359,6 +360,7 @@ Three docs work together so the project's history stays auditable:
 
 ### Recent releases
 
+- **1.2.2** — `grep` tool for literal/regex search; closes 8 dev-lifecycle audit findings (input validation, output disambiguation, `cluster` heuristic fallback).
 - **1.2.1** — Eager embedding population in reindex; disambiguated `status` warning; Node ABI documentation.
 - **1.2.0** — Comprehensive 25-issue audit; tracking docs added; legacy env-var aliases.
 - **1.1.0** — Agentic workflow aliases, project graph export/query, `impact_delta`, exact references, SCIP import, FTS5/BM25 fallback.

@@ -128,3 +128,47 @@ When a fix lands, the corresponding `CHANGELOG.md` entry references the audit ID
 - **Symptom:** Concurrent-reindex probe script crashed with `NODE_MODULE_VERSION 137` vs `147` when invoked via `node` from PATH.
 - **Severity:** Documentation gap rather than a defect. The MCP itself runs fine on the NVM Node it was built against, and the auto-repair handles it on real MCP start.
 - **Status:** ✅ Documented in 1.2.1. `README.md` now has a "Node version" subsection explaining ABI mismatch causes, auto-repair behavior, and the manual fix command.
+
+---
+
+## 2026-06-18 — Dev-lifecycle audit (post-1.2.1)
+
+**Scope.** Wiped index, ran fresh reindex with 1.2.1's eager-embedding feature (110.7s for 126 files; 124 file embeds + 3876 identifier embeds). Exercised every tool category against the rebuilt index in 8 parallel probes. Rated the MCP across 8 dev-lifecycle dimensions.
+
+**Verdict at start.** 7.8/10. Strong product, four input-validation gaps, one missing capability (literal/grep search), one broken tool (`cluster` labels).
+
+**Resolution summary (1.2.2).** All 8 findings resolved.
+
+### Dimension scores (baseline)
+
+| Dimension | Score | Strength | Weakness |
+|---|---|---|---|
+| Discovery | 8/10 | `task_pack` + `repo_map` give right granularity in 50–180ms | `cluster` ships broken |
+| Planning | 7/10 | Confidence-labeled scoped picks, no full-file dumps | Semantic ranking dead-spots |
+| Implementation | 8/10 | `resolve_symbol(file_context)` adds locality bonus | `skeleton` truncation, `checkpoint` path requirement |
+| Validation | 9/10 | `change_impact` returns risk score + churn + tests | Importer list silently truncated |
+| Refactoring | 9/10 | `exact_references` LSP-grade with column accuracy | `blast_radius('')` DoS |
+| Debugging | 8/10 | `related` returns full neighborhood in one call | Hybrid search keyword-dominant |
+| Knowledge persistence | 7/10 | `memory_bulk` auto-similarity edges | No input validation on memory nodes |
+| Multi-project | 8/10 | `graph_export` is a real shareable artifact | Workspace doesn't ping for liveness |
+
+### New findings
+
+| # | Finding | File | Status |
+|---|---|---|---|
+| 26 | `blast_radius('')` returns 29,573 usages / 1.5MB | `src/tools/blast-radius.ts` | ✅ Fixed in 1.2.2 (Zod `.min(1)` + handler-level guard) |
+| 27 | `memory_create` accepts empty label and content | `src/tools/register-tools.ts` | ✅ Fixed in 1.2.2 (Zod `.min(1)`) |
+| 28 | `memory_delete` may leave dangling `similar_to` edges | `src/core/db.ts` | ✅ Fixed in 1.2.2 (defense-in-depth explicit edge delete; FK cascade was already correct but per-connection PRAGMA risk) |
+| 29 | `search('')` returns medium-confidence results | `src/tools/register-tools.ts` | ✅ Fixed in 1.2.2 (Zod `.min(1)`) |
+| 30 | `cluster` falls back to generic "Cluster 1/2" labels | `src/tools/semantic-navigate.ts` | ✅ Fixed in 1.2.2 (heuristic-token fallback + stderr degradation log) |
+| 31 | `reindex(non-existent-folder)` silent no-op | `src/tools/reindex.ts` | ✅ Fixed in 1.2.2 (explicit "matched no files" return) |
+| 32 | `graph_query(no-such-file)` leaks DB internals | `src/tools/project-graph.ts` | ✅ Fixed in 1.2.2 (required-arg checks + clear not-found message) |
+| 33 | `change_impact` silently truncates importer list | `src/tools/agentic-context.ts` | ✅ Fixed in 1.2.2 (explicit "+N more" line with artifact ref) |
+
+### New capability (closes audit-identified gap)
+
+- **Literal/regex `grep` tool.** The audit rated `Find a literal log string` as a "Wash" between vanilla grep and ContextPro because hybrid search underperforms on intent-free literal queries. 1.2.2 ships a dedicated `grep` tool that walks the indexed file set, scans literally or via regex, supports glob filtering and target_path scoping, caps output to prevent context blowup, and returns ripgrep-style `path:L:col context` output. (`src/tools/grep.ts`, audit "Comparison vs vanilla Read/Grep/Glob".)
+
+### Items considered but rejected
+
+- "graph_query(kind='file') Project fingerprint mismatch" from the workflow report. Direct probe could not reproduce; returned proper file view with 50 nodes + 50 edges. Likely transient state from a prior probe contaminating the workflow agent — not a real bug.

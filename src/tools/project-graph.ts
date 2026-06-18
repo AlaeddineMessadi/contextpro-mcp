@@ -69,16 +69,31 @@ export async function exportProjectGraphTool(options: GraphExportOptions): Promi
 }
 
 export async function queryProjectGraphTool(options: GraphQueryOptions): Promise<string> {
+  const kind = options.kind ?? "summary";
+  if ((kind === "file" || kind === "impact") && !options.file) {
+    return `Error: graph_query kind="${kind}" requires a "file" argument.`;
+  }
+  if (kind === "symbol" && !options.symbol) {
+    return `Error: graph_query kind="symbol" requires a "symbol" argument.`;
+  }
   const file = options.file ? toProjectRelativePath(options.rootDir, options.file, "file") : undefined;
   const result = await queryProjectGraph(options.rootDir, {
-    kind: options.kind,
+    kind,
     file,
     symbol: options.symbol,
     limit: options.limit,
   });
   if (options.format === "json") return JSON.stringify(result, null, 2);
-  if ((options.kind ?? "summary") === "summary" && !options.file && !options.symbol) {
+  if (kind === "summary" && !options.file && !options.symbol) {
     return formatGraphReport(await buildProjectGraph(options.rootDir));
+  }
+  if (kind === "file" || kind === "impact") {
+    if (result.nodes.length === 0) {
+      return `No graph nodes found for file "${file}". The file may not be indexed yet — run reindex, or check the path is correct (project-relative).`;
+    }
+  }
+  if (kind === "symbol" && result.nodes.length === 0) {
+    return `No graph nodes found for symbol "${options.symbol}". The symbol may not be indexed yet, or the name is wrong (case-sensitive exact match).`;
   }
   return formatQueryResult(result);
 }

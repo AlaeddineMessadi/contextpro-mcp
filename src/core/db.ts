@@ -611,6 +611,7 @@ export class ContextPlusDB {
         this.db.prepare("DELETE FROM memory_embeddings WHERE node_id = ?").run(id);
       } catch {}
     }
+    this.db.prepare("DELETE FROM memory_edges WHERE source = ? OR target = ?").run(id, id);
     this.db.prepare("DELETE FROM memory_nodes WHERE id = ?").run(id);
   }
 
