@@ -48,6 +48,14 @@ export interface StatusSnapshot {
     nodes: number;
     edges: number;
   };
+  embeddings: {
+    vectorTablesReady: boolean;
+    dimension: number | null;
+    total: number;
+    fileSearch: number;
+    identifiers: number;
+    memory: number;
+  };
   git: {
     branch: string;
     uncommitted: number;
@@ -106,6 +114,7 @@ export async function getStatusData(options: StatusOptions): Promise<StatusSnaps
   ]);
   const indexedFiles = db.getAllFiles().filter((file) => isSupportedFile(file.path));
   const graphStats = db.getGraphStats();
+  const embeddingStats = db.getEmbeddingStats();
   const staleCount = indexedFiles.filter((f) => !allFiles.some((e) => e.relativePath === f.path)).length;
   const warnings: string[] = [];
   if (indexState.state === "empty") warnings.push("Index is empty. Run reindex to populate the database.");
@@ -114,6 +123,9 @@ export async function getStatusData(options: StatusOptions): Promise<StatusSnaps
   if (indexState.missingIndexedFiles > 0) warnings.push(`${indexState.missingIndexedFiles} supported source files are not indexed yet.`);
   if (indexState.removedIndexedFiles > 0 || staleCount > 0) warnings.push(`${Math.max(indexState.removedIndexedFiles, staleCount)} indexed files no longer match the current workspace.`);
   if (indexState.state === "stale" && warnings.length === 0) warnings.push("Index is stale. Run reindex to refresh.");
+  if (indexedFiles.length > 0 && embeddingStats.fileSearch === 0) {
+    warnings.push("Semantic file embeddings are empty. Search/start_task will fall back to keyword ranking until an embedding model is reachable.");
+  }
 
   return {
     repo: {
@@ -145,6 +157,7 @@ export async function getStatusData(options: StatusOptions): Promise<StatusSnaps
       nodes: graphStats.totalNodes,
       edges: graphStats.totalEdges,
     },
+    embeddings: embeddingStats,
     git,
     tools: {
       timings: getToolTimingSnapshots(options.rootDir),
@@ -186,6 +199,10 @@ export async function getStatus(options: StatusOptions): Promise<string> {
     `--- Memory Graph ---`,
     `Nodes: ${snapshot.memory.nodes}`,
     `Edges: ${snapshot.memory.edges}`,
+    ``,
+    `--- Embeddings ---`,
+    `Vector tables: ${snapshot.embeddings.vectorTablesReady ? "ready" : "not initialized"} | Dimension: ${snapshot.embeddings.dimension ?? "unknown"}`,
+    `File search: ${snapshot.embeddings.fileSearch} | Identifiers: ${snapshot.embeddings.identifiers} | Memory: ${snapshot.embeddings.memory}`,
     ``,
     `--- Git ---`,
     `Uncommitted changes: ${snapshot.git.uncommitted}`,

@@ -29,8 +29,8 @@ interface ClusterNode {
 }
 
 const EMBED_PROVIDER = (process.env.CONTEXTPLUS_EMBED_PROVIDER ?? "ollama").toLowerCase();
-const EMBED_MODEL = process.env.OLLAMA_EMBED_MODEL ?? "nomic-embed-text";
-const CHAT_MODEL = process.env.OLLAMA_CHAT_MODEL ?? "llama3.2";
+const EMBED_MODEL = process.env.OLLAMA_EMBED_MODEL ?? "nomic-embed-text:latest";
+const CHAT_MODEL = process.env.OLLAMA_CHAT_MODEL ?? "gemma4:12b";
 const OPENAI_CHAT_MODEL = process.env.CONTEXTPLUS_OPENAI_CHAT_MODEL ?? process.env.OPENAI_CHAT_MODEL ?? "gpt-4o-mini";
 const OPENAI_API_KEY = process.env.CONTEXTPLUS_OPENAI_API_KEY ?? process.env.OPENAI_API_KEY ?? "";
 const OPENAI_BASE_URL = process.env.CONTEXTPLUS_OPENAI_BASE_URL ?? process.env.OPENAI_BASE_URL ?? "https://api.openai.com/v1";
@@ -58,6 +58,33 @@ async function getOllamaClient(): Promise<OllamaChatClient> {
     ollamaClient = new Ollama({ host: process.env.OLLAMA_HOST }) as unknown as OllamaChatClient;
   }
   return ollamaClient;
+}
+
+function getErrorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  return String(error);
+}
+
+function formatOllamaChatError(error: unknown, model: string): string {
+  const message = getErrorMessage(error);
+  const lower = message.toLowerCase();
+  const installHint = "Install Ollama from https://ollama.com/download, then run `ollama serve`.";
+  const modelHint = `Run \`ollama pull ${model}\`, or set OLLAMA_CHAT_MODEL to any chat model shown by \`ollama list\`.`;
+
+  if (
+    lower.includes("econnrefused")
+    || lower.includes("fetch failed")
+    || lower.includes("connection refused")
+    || lower.includes("connect")
+  ) {
+    return `Ollama is not reachable while loading the chat model "${model}". ${installHint} ${modelHint} Original error: ${message}`;
+  }
+
+  if (lower.includes("not found") || lower.includes("no such model") || lower.includes("model")) {
+    return `Ollama chat model "${model}" is not available. ${modelHint} Original error: ${message}`;
+  }
+
+  return `Ollama chat model "${model}" failed. ${installHint} ${modelHint} Original error: ${message}`;
 }
 
 async function fetchEmbeddings(inputs: string[]): Promise<number[][]> {
@@ -94,12 +121,16 @@ async function chatCompletion(prompt: string): Promise<string> {
   }
 
   const client = await getOllamaClient();
-  const response = await client.chat({
-    model: CHAT_MODEL,
-    messages: [{ role: "user", content: prompt }],
-    stream: false,
-  });
-  return response.message.content;
+  try {
+    const response = await client.chat({
+      model: CHAT_MODEL,
+      messages: [{ role: "user", content: prompt }],
+      stream: false,
+    });
+    return response.message.content;
+  } catch (error) {
+    throw new Error(formatOllamaChatError(error, CHAT_MODEL));
+  }
 }
 
 async function embedFilesWithFallback(files: FileInfo[]): Promise<{ files: FileInfo[]; vectors: number[][]; skipped: number }> {

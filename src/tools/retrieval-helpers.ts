@@ -38,18 +38,72 @@ export function parseJsonArray(raw: string | null): string[] {
   }
 }
 
+export function isTestFile(path: string): boolean {
+  const name = basename(path).toLowerCase();
+  return /\.test\.\w+$|\.spec\.\w+$|\.demo\.\w+$/.test(path)
+    || /^test_[^/]+\.py$/.test(name)
+    || /_test\.py$/.test(name);
+}
+
+function baseNameWithoutTestAffixes(path: string): string {
+  const base = path.replace(/\.\w+$/, "").split("/").pop() ?? "";
+  return base
+    .replace(/\.(test|spec|demo)$/i, "")
+    .replace(/^test_/i, "")
+    .replace(/_test$/i, "");
+}
+
 async function findConventionTests(rootDir: string, sourceFile: string, allFiles: string[]): Promise<string[]> {
-  const base = sourceFile.replace(/\.\w+$/, "").split("/").pop() ?? "";
+  const base = baseNameWithoutTestAffixes(sourceFile);
   return allFiles.filter((file) => {
-    const isTest = /\.test\.\w+$|\.spec\.\w+$|\.demo\.\w+$/.test(file);
-    if (!isTest) return false;
-    const testBase = file.replace(/\.\w+$/, "").replace(/\.(test|spec|demo)$/, "").split("/").pop() ?? "";
+    if (!isTestFile(file)) return false;
+    const testBase = baseNameWithoutTestAffixes(file);
     return testBase === base;
   });
 }
 
-export async function findTestsForFiles(rootDir: string, files: string[]): Promise<Array<{ path: string; reason: string; score: number }>> {
+async function findImporterTests(
+  rootDir: string,
+  file: string,
+  maxDepth: number,
+): Promise<Array<{ path: string; reason: string; score: number }>> {
   const db = await getDB(rootDir);
+  const target = db.getFile(file);
+  if (!target) return [];
+
+  const indexedFiles = db.getAllFiles();
+  const fileById = new Map(indexedFiles.map((candidate) => [candidate.id, candidate]));
+  const queue: Array<{ fileId: number; via: string[]; depth: number }> = [{ fileId: target.id, via: [file], depth: 0 }];
+  const visited = new Set<number>([target.id]);
+  const results: Array<{ path: string; reason: string; score: number }> = [];
+
+  while (queue.length > 0) {
+    const current = queue.shift()!;
+    if (current.depth >= maxDepth) continue;
+
+    for (const importer of db.getImportersOf(current.fileId)) {
+      const source = fileById.get(importer.source_file_id);
+      if (!source || visited.has(source.id)) continue;
+      visited.add(source.id);
+      const path = source.path;
+      const via = [...current.via, path];
+      const depth = current.depth + 1;
+      if (isTestFile(path)) {
+        results.push({
+          path,
+          reason: depth === 1 ? "Imports target module" : `Imports dependent chain: ${via.join(" <- ")}`,
+          score: Math.max(0.68, 0.9 - depth * 0.08),
+        });
+        continue;
+      }
+      queue.push({ fileId: source.id, via, depth });
+    }
+  }
+
+  return results;
+}
+
+export async function findTestsForFiles(rootDir: string, files: string[]): Promise<Array<{ path: string; reason: string; score: number }>> {
   const entries = await walkDirectory({ rootDir, depthLimit: 0 });
   const allFiles = entries.filter((entry) => !entry.isDirectory).map((entry) => entry.relativePath);
   const results: Array<{ path: string; reason: string; score: number }> = [];
@@ -59,16 +113,7 @@ export async function findTestsForFiles(rootDir: string, files: string[]): Promi
     for (const testPath of convention) {
       results.push({ path: testPath, reason: "Matched by test naming convention", score: 0.68 });
     }
-    const dbFile = db.getFile(file);
-    if (!dbFile) continue;
-    const importers = db.getImportersOf(dbFile.id);
-    const indexedFiles = db.getAllFiles();
-    for (const importer of importers) {
-      const source = indexedFiles.find((candidate) => candidate.id === importer.source_file_id);
-      if (!source) continue;
-      if (!/\.test\.\w+$|\.spec\.\w+$|\.demo\.\w+$/.test(source.path)) continue;
-      results.push({ path: source.path, reason: "Imports target module", score: 0.82 });
-    }
+    results.push(...await findImporterTests(rootDir, file, 5));
   }
 
   const deduped = new Map<string, { path: string; reason: string; score: number }>();

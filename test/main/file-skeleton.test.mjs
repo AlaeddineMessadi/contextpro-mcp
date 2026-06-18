@@ -109,6 +109,27 @@ describe("file-skeleton", async () => {
       assert.ok(result.includes("Dog") || result.includes("bark"));
     });
 
+    it("detects React memo wrapper components in TSX files", async () => {
+      await writeFile(
+        join(FIXTURE_DIR, "component.tsx"),
+        [
+          "import React from 'react';",
+          "type ImageSelectionAreaProps = { value: string };",
+          "const ImageSelectionArea = React.memo(function ImageSelectionArea(props: ImageSelectionAreaProps) {",
+          "  return <div>{props.value}</div>;",
+          "});",
+          "export default ImageSelectionArea;",
+          "",
+        ].join("\n"),
+      );
+      const result = await getFileSkeleton({
+        rootDir: FIXTURE_DIR,
+        filePath: "component.tsx",
+      });
+      assert.match(result, /ImageSelectionArea/);
+      assert.match(result, /React\.memo|function ImageSelectionArea/);
+    });
+
     it("rejects reads outside the project root", async () => {
       await assert.rejects(
         () => getFileSkeleton({ rootDir: FIXTURE_DIR, filePath: "../outside.ts" }),

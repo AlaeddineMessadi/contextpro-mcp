@@ -9,7 +9,7 @@ let fixtureRoot = "";
 describe("doctor", () => {
   beforeEach(async () => {
     fixtureRoot = await mkdtemp(join(tmpdir(), "contextplus-doctor-"));
-    await mkdir(join(fixtureRoot, ".contextplus"), { recursive: true });
+    await mkdir(join(fixtureRoot, ".contextpro"), { recursive: true });
   });
 
   afterEach(async () => {

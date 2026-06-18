@@ -22,11 +22,15 @@ interface ExactReference {
   column: number;
   context: string;
   isDefinition: boolean;
-  confidence: "LSP_RESOLVED" | "SCIP_RESOLVED";
+  confidence: "LSP_RESOLVED" | "SCIP_RESOLVED" | "PYTHON_INDEX_RESOLVED";
 }
 
 function isTypeScriptLike(path: string): boolean {
   return [".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"].includes(extname(path).toLowerCase());
+}
+
+function isPython(path: string): boolean {
+  return extname(path).toLowerCase() === ".py";
 }
 
 function offsetAtLineSymbol(content: string, line: number, symbolName: string): number {
@@ -60,7 +64,7 @@ async function resolveTarget(options: ExactReferencesOptions): Promise<{ file: s
 function formatReferencePayload(input: {
   symbolName: string;
   target?: { file: string; line: number } | null;
-  confidence: "LSP_RESOLVED" | "SCIP_RESOLVED";
+  confidence: "LSP_RESOLVED" | "SCIP_RESOLVED" | "PYTHON_INDEX_RESOLVED";
   references: ExactReference[];
   format?: "text" | "json";
   scipSymbols?: string[];
@@ -116,6 +120,108 @@ async function formatScipFallback(options: ExactReferencesOptions, target?: { fi
   });
 }
 
+function symbolPattern(symbolName: string): RegExp {
+  return new RegExp(`\\b${symbolName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "g");
+}
+
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+async function pythonIndexReferences(options: ExactReferencesOptions, target: { file: string; line: number }): Promise<string | null> {
+  const db = await getDB(options.rootDir);
+  const targetFile = db.getFile(target.file);
+  if (!targetFile) return null;
+
+  const indexedFiles = db.getAllFiles();
+  const fileById = new Map(indexedFiles.map((file) => [file.id, file]));
+  const candidates = new Set<number>([targetFile.id]);
+  const queue: Array<{ fileId: number; depth: number }> = [{ fileId: targetFile.id, depth: 0 }];
+
+  while (queue.length > 0) {
+    const current = queue.shift()!;
+    if (current.depth >= 6) continue;
+    for (const importer of db.getImportersOf(current.fileId)) {
+      const source = fileById.get(importer.source_file_id);
+      if (!source || !isPython(source.path) || candidates.has(source.id)) continue;
+      candidates.add(source.id);
+      queue.push({ fileId: source.id, depth: current.depth + 1 });
+    }
+  }
+
+  const graphCandidateCount = candidates.size;
+  for (const call of db.getCallersOf(options.symbolName)) {
+    const source = fileById.get(call.file_id);
+    if (!source || !isPython(source.path)) continue;
+    if (graphCandidateCount > 1 && !candidates.has(source.id)) continue;
+    candidates.add(source.id);
+  }
+
+  const definitionLines = new Set(
+    db.getSymbolsByFile(targetFile.id)
+      .filter((symbol) => symbol.name === options.symbolName)
+      .map((symbol) => symbol.line_start),
+  );
+  const references: ExactReference[] = [];
+  const pattern = symbolPattern(options.symbolName);
+  const escapedSymbol = escapeRegex(options.symbolName);
+
+  for (const fileId of candidates) {
+    const file = fileById.get(fileId);
+    if (!file) continue;
+    let content = "";
+    try {
+      content = await readFile(resolveProjectPath(options.rootDir, file.path, "python reference file"), "utf-8");
+    } catch {
+      continue;
+    }
+    const lines = content.split("\n");
+    for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
+      const line = lines[lineIndex];
+      pattern.lastIndex = 0;
+      let match: RegExpExecArray | null;
+      while ((match = pattern.exec(line)) !== null) {
+        const lineNumber = lineIndex + 1;
+        const trimmed = line.trim();
+        const isDefinition = file.path === target.file && (
+          definitionLines.has(lineNumber)
+          || new RegExp(`^def\\s+${escapedSymbol}\\b`).test(trimmed)
+          || new RegExp(`^class\\s+${escapedSymbol}\\b`).test(trimmed)
+        );
+        const looksRelevant = isDefinition
+          || /^from\s+[\w.]+\s+import\b/.test(trimmed)
+          || /^import\s+[\w.]+/.test(trimmed)
+          || /\w+\s*\(/.test(trimmed)
+          || trimmed.includes(options.symbolName);
+        if (!looksRelevant) continue;
+        references.push({
+          file: file.path,
+          line: lineNumber,
+          column: match.index + 1,
+          context: trimmed.slice(0, 160),
+          isDefinition,
+          confidence: "PYTHON_INDEX_RESOLVED",
+        });
+      }
+    }
+  }
+
+  const unique = new Map<string, ExactReference>();
+  for (const ref of references) unique.set(`${ref.file}:${ref.line}:${ref.column}:${ref.isDefinition}`, ref);
+  const limited = [...unique.values()]
+    .sort((a, b) => Number(b.isDefinition) - Number(a.isDefinition) || a.file.localeCompare(b.file) || a.line - b.line || a.column - b.column)
+    .slice(0, Math.max(1, Math.min(options.limit ?? 100, 500)));
+
+  if (limited.length === 0) return null;
+  return formatReferencePayload({
+    symbolName: options.symbolName,
+    target,
+    confidence: "PYTHON_INDEX_RESOLVED",
+    references: limited,
+    format: options.format,
+  });
+}
+
 export async function exactReferencesTool(options: ExactReferencesOptions): Promise<string> {
   const target = await resolveTarget(options);
   if (!target) {
@@ -126,7 +232,11 @@ export async function exactReferencesTool(options: ExactReferencesOptions): Prom
   if (!isTypeScriptLike(target.file)) {
     const scipResult = await formatScipFallback(options, target);
     if (scipResult) return scipResult;
-    return `Exact references require TypeScript/JavaScript language-service support or an imported SCIP JSON index. Target file: ${target.file}`;
+    if (isPython(target.file)) {
+      const pythonResult = await pythonIndexReferences(options, target);
+      if (pythonResult) return pythonResult;
+    }
+    return `Exact references require TypeScript/JavaScript language-service support, Python import/call index evidence, or an imported SCIP JSON index. Target file: ${target.file}`;
   }
 
   const ts = await import("typescript");

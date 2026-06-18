@@ -10,7 +10,7 @@ describe("repo-map and resolve-symbol", () => {
   beforeEach(async () => {
     fixtureRoot = await mkdtemp(join(tmpdir(), "contextplus-repo-map-"));
     await mkdir(join(fixtureRoot, "src"), { recursive: true });
-    await mkdir(join(fixtureRoot, ".contextplus"), { recursive: true });
+    await mkdir(join(fixtureRoot, ".contextpro"), { recursive: true });
 
     await writeFile(
       join(fixtureRoot, "src", "foo.ts"),

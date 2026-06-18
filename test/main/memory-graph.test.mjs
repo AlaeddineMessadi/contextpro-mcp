@@ -48,7 +48,7 @@ function mockEmbedding() {
 
 before(async () => {
   await rm(FIXTURE, { recursive: true, force: true });
-  await mkdir(join(FIXTURE, ".contextplus"), { recursive: true });
+  await mkdir(join(FIXTURE, ".contextpro"), { recursive: true });
 });
 
 after(async () => {
@@ -151,7 +151,7 @@ describe("memory-graph core", () => {
 
     it("returns empty for empty graph in fresh dir", async () => {
       const emptyDir = resolve("test/_memory_empty");
-      await mkdir(join(emptyDir, ".contextplus"), { recursive: true });
+      await mkdir(join(emptyDir, ".contextpro"), { recursive: true });
       const restore = mockEmbedding();
       try {
         const result = await searchGraph(emptyDir, "anything", 1, 5);

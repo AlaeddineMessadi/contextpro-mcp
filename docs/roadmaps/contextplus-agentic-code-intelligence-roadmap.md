@@ -20,12 +20,12 @@ First hardening pass started on 2026-06-09:
 - [x] Built the first exact typed graph core for project, folder, file, test, config, document, package, and symbol nodes.
 - [x] Added typed graph edges for contains, defines, imports, calls, references, tests, and configures with confidence/evidence metadata.
 - [x] Added `graph_export` and `graph_query` MCP tools.
-- [x] Added portable `.contextplus/graph.json` and `.contextplus/GRAPH_REPORT.md` exports.
+- [x] Added portable `.contextpro/graph.json` and `.contextpro/GRAPH_REPORT.md` exports.
 - [x] Added SQLite FTS5/BM25 warm retrieval over indexed paths, headers, signatures, symbols, and languages.
 - [x] Fused persisted FTS hits into semantic file search so indexed projects can still search when embeddings are unavailable.
 - [x] Added search ranking presets (`fast`, `balanced`, `exhaustive`) while keeping raw weights available for advanced callers.
 - [x] Added `impact_delta` to compare a saved graph export with the current indexed graph after edits.
-- [x] Added a standalone `.contextplus/graph-dashboard.html` dashboard export.
+- [x] Added a standalone `.contextpro/graph-dashboard.html` dashboard export.
 - [x] Added heuristic route, inheritance, implementation, and recent co-change graph edges.
 - [x] Added SCIP JSON import/status tools and graph merge for `SCIP_RESOLVED` definition, reference, and implementation evidence.
 - [x] Added TypeScript/JavaScript language-service exact references with `LSP_RESOLVED` confidence.
@@ -105,8 +105,8 @@ Existing low-level tools should be grouped as advanced discovery, analysis, memo
 
 ### Phase 6: Human Visibility
 
-- Export `.contextplus/graph.json` for team sharing.
-- Export `.contextplus/GRAPH_REPORT.md` with architecture, hubs, risks, suggested questions, and confidence notes.
+- Export `.contextpro/graph.json` for team sharing.
+- Export `.contextpro/GRAPH_REPORT.md` with architecture, hubs, risks, suggested questions, and confidence notes.
 - Add a local dashboard or TUI for graph, hubs, restore points, memory, and impact paths.
 - Keep generated graph artifacts portable across checkouts by using relative paths.
 

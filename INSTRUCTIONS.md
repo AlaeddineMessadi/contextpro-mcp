@@ -52,14 +52,13 @@ The memory graph is a **Retrieval-Augmented Generation (RAG)** system backed by 
 
 ## Environment Variables
 
-| Variable                                | Default              | Description                                                      |
+| Variable                                | Recommended          | Description                                                      |
 | --------------------------------------- | -------------------- | ---------------------------------------------------------------- |
-| `OLLAMA_EMBED_MODEL`                    | `nomic-embed-text`   | Embedding model name                                             |
-| `OLLAMA_API_KEY`                        | (empty)              | Cloud auth (auto-detected by SDK)                                |
-| `OLLAMA_CHAT_MODEL`                     | `llama3.2`           | Chat model for cluster labeling and hub name derivation          |
 | `CONTEXTPLUS_EMBED_PROVIDER`            | `ollama`             | Embedding provider: `ollama` or `openai`                         |
+| `OLLAMA_EMBED_MODEL`                    | `nomic-embed-text:latest` | Embedding model name                                             |
+| `OLLAMA_CHAT_MODEL`                     | `nemotron-3-ultra:cloud` | Chat model for cluster labeling and hub name derivation          |
 | `CONTEXTPLUS_EMBED_BATCH_SIZE`          | `8`                  | Embedding batch per GPU call (hard-capped to 5-10)               |
-| `CONTEXTPLUS_EMBED_TRACKER`             | `true`               | Enable realtime embedding updates for changed files/functions    |
+| `CONTEXTPLUS_EMBED_TRACKER`             | `lazy`               | Enable realtime embedding updates for changed files/functions    |
 | `CONTEXTPLUS_EMBED_TRACKER_MAX_FILES`   | `8`                  | Max changed files per tracker tick (hard-capped to 5-10)         |
 | `CONTEXTPLUS_EMBED_TRACKER_DEBOUNCE_MS` | `700`                | Debounce before applying tracker refresh                         |
 | `CONTEXTPLUS_SESSION_ID`                | (empty)              | Session identifier for session-scoped memory isolation           |
@@ -68,7 +67,7 @@ The memory graph is a **Retrieval-Augmented Generation (RAG)** system backed by 
 | `CONTEXTPLUS_NATIVE_AUTO_REPAIR`        | `true`               | Auto-repair native SQLite bindings for the current Node runtime  |
 | `CONTEXTPLUS_ALLOW_UNSAFE_ROOT`         | `false`              | Allow cwd fallback from `/` or home-level directories            |
 
-Runtime cache: `.contextplus/` is created at MCP startup and stores reusable embedding vectors for files, identifiers, call sites, and artifact payloads. A realtime tracker watches file updates and refreshes changed function/file embeddings incrementally.
+Runtime cache: `.contextpro/` is created at MCP startup and stores reusable embedding vectors for files, identifiers, call sites, and artifact payloads. A realtime tracker watches file updates and refreshes changed function/file embeddings incrementally.
 
 ## Fast Execute Mode (Mandatory)
 

@@ -1,7 +1,8 @@
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { mkdir, rm } from "fs/promises";
+import { mkdir, mkdtemp, rm } from "fs/promises";
 import { join } from "path";
+import { tmpdir } from "os";
 
 const FIXTURE_DIR = join(process.cwd(), "test", "_db_fixtures");
 
@@ -12,7 +13,7 @@ before(async () => {
   ContextPlusDB = mod.ContextPlusDB;
   hashContent = mod.hashContent;
   await rm(FIXTURE_DIR, { recursive: true, force: true });
-  await mkdir(join(FIXTURE_DIR, ".contextplus"), { recursive: true });
+  await mkdir(join(FIXTURE_DIR, ".contextpro"), { recursive: true });
 });
 
 after(async () => {
@@ -160,6 +161,21 @@ describe("ContextPlusDB", () => {
       assert.equal(hash, "hash2");
       db.close();
     });
+
+    it("returns empty embedding results when vec metadata exists but tables are missing", async () => {
+      const root = await mkdtemp(join(tmpdir(), "contextpro-db-missing-vec-"));
+      await mkdir(join(root, ".contextpro"), { recursive: true });
+      const db = new ContextPlusDB(root);
+      try {
+        db.upsertEmbedding("file", "orphaned", [1, 0, 0, 0], "hash");
+        db.db.exec("DROP TABLE embeddings");
+        db.db.exec("DROP TABLE memory_embeddings");
+        assert.deepEqual(db.searchEmbeddings([1, 0, 0, 0], 5, "file"), []);
+      } finally {
+        db.close();
+        await rm(root, { recursive: true, force: true });
+      }
+    });
   });
 
   describe("memory graph operations", () => {
@@ -176,6 +192,24 @@ describe("ContextPlusDB", () => {
       assert.equal(node.type, "concept");
       assert.equal(node.label, "auth");
       db.close();
+    });
+
+    it("stores memory nodes without vector tables when embedding is unavailable", () => {
+      return (async () => {
+        const root = await mkdtemp(join(tmpdir(), "contextpro-db-no-vectors-"));
+        await mkdir(join(root, ".contextpro"), { recursive: true });
+        const db = new ContextPlusDB(root);
+        try {
+          const id = db.upsertMemoryNode({ type: "note", label: "offline-memory", content: "Stored without embedding" }, []);
+          const node = db.getMemoryNode(id);
+          assert.ok(node);
+          assert.equal(node.label, "offline-memory");
+          assert.equal(db.getEmbeddingStats().vectorTablesReady, false);
+        } finally {
+          db.close();
+          await rm(root, { recursive: true, force: true });
+        }
+      })();
     });
 
     it("updates existing node with same label+type", () => {

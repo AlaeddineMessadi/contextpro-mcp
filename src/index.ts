@@ -5,7 +5,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { readFileSync } from "fs";
-import { copyFile, mkdir, readdir, stat, writeFile } from "fs/promises";
+import { mkdir, stat, writeFile } from "fs/promises";
 import { dirname, join, resolve } from "path";
 import { fileURLToPath } from "url";
 import { cancelAllEmbeddings } from "./core/embeddings.js";
@@ -19,6 +19,7 @@ import { formatDoctorReport, runDoctor } from "./core/doctor.js";
 import { recordToolTiming } from "./core/tool-metrics.js";
 import { registerTools } from "./tools/register-tools.js";
 import { selectRootDir, validateSelectedRoot } from "./core/root-guard.js";
+import { CONTEXTPRO_DIR, ensureContextProDir } from "./core/data-dir.js";
 
 type AgentTarget = "claude" | "cursor" | "vscode" | "windsurf" | "opencode";
 
@@ -188,53 +189,6 @@ function parseRunner(args: string[]): "npx" | "bunx" {
   return "npx";
 }
 
-async function migrateFromMcpData(rootDir: string): Promise<void> {
-  const oldDir = join(rootDir, ".mcp_data");
-  const newDir = join(rootDir, ".contextplus");
-  try {
-    await stat(oldDir);
-  } catch {
-    return;
-  }
-  try {
-    await stat(newDir);
-    return;
-  } catch {}
-
-  console.error("Migrating .mcp_data/ → .contextplus/ ...");
-  await mkdir(join(newDir, "backups"), { recursive: true });
-  await mkdir(join(newDir, "hubs"), { recursive: true });
-
-  const entries = await readdir(oldDir, { withFileTypes: true });
-  for (const entry of entries) {
-    if (entry.name === "backups" && entry.isDirectory()) {
-      const backupEntries = await readdir(join(oldDir, "backups"), { withFileTypes: true });
-      for (const be of backupEntries) {
-        const src = join(oldDir, "backups", be.name);
-        const dst = join(newDir, "backups", be.name);
-        if (be.isDirectory()) {
-          await mkdir(dst, { recursive: true });
-          const files = await readdir(src);
-          for (const f of files) {
-            await copyFile(join(src, f), join(dst, f));
-          }
-        } else {
-          await copyFile(src, dst);
-        }
-      }
-    } else if (entry.isFile()) {
-      await copyFile(join(oldDir, entry.name), join(newDir, entry.name));
-    }
-  }
-  console.error("Migration complete. You can safely delete .mcp_data/");
-}
-
-async function ensureContextPlusDir(rootDir: string): Promise<void> {
-  await migrateFromMcpData(rootDir);
-  await mkdir(join(rootDir, ".contextplus", "backups"), { recursive: true });
-  await mkdir(join(rootDir, ".contextplus", "hubs"), { recursive: true });
-}
-
 function buildMcpConfig(runner: "npx" | "bunx") {
   const commandArgs = runner === "npx" ? ["-y", "contextpro-mcp"] : ["contextpro-mcp"];
   return JSON.stringify(
@@ -244,9 +198,9 @@ function buildMcpConfig(runner: "npx" | "bunx") {
           command: runner,
           args: commandArgs,
           env: {
-            OLLAMA_EMBED_MODEL: "nomic-embed-text",
-            OLLAMA_CHAT_MODEL: "gemma2:27b",
-            OLLAMA_API_KEY: "YOUR_OLLAMA_API_KEY",
+            CONTEXTPLUS_EMBED_PROVIDER: "ollama",
+            OLLAMA_EMBED_MODEL: "nomic-embed-text:latest",
+            OLLAMA_CHAT_MODEL: "nemotron-3-ultra:cloud",
             CONTEXTPLUS_EMBED_BATCH_SIZE: "8",
             CONTEXTPLUS_EMBED_TRACKER: "lazy",
           },
@@ -275,9 +229,9 @@ function buildOpenCodeConfig(runner: "npx" | "bunx") {
           command,
           enabled: true,
           environment: {
-            OLLAMA_EMBED_MODEL: "nomic-embed-text",
-            OLLAMA_CHAT_MODEL: "gemma2:27b",
-            OLLAMA_API_KEY: "YOUR_OLLAMA_API_KEY",
+            CONTEXTPLUS_EMBED_PROVIDER: "ollama",
+            OLLAMA_EMBED_MODEL: "nomic-embed-text:latest",
+            OLLAMA_CHAT_MODEL: "nemotron-3-ultra:cloud",
             CONTEXTPLUS_EMBED_BATCH_SIZE: "8",
             CONTEXTPLUS_EMBED_TRACKER: "lazy",
           },
@@ -298,14 +252,13 @@ async function runInitCommand(args: string[]) {
   await mkdir(dirname(outputPath), { recursive: true });
   await writeFile(outputPath, `${content}\n`, "utf8");
 
-  const contextPlusDir = join(process.cwd(), ".contextplus");
-  await mkdir(join(contextPlusDir, "backups"), { recursive: true });
-  await mkdir(join(contextPlusDir, "hubs"), { recursive: true });
-  const configPath = join(contextPlusDir, "config.json");
+  const migratedFrom = await ensureContextProDir(process.cwd());
+  const contextProDir = join(process.cwd(), CONTEXTPRO_DIR);
+  const configPath = join(contextProDir, "config.json");
   try {
     await stat(configPath);
   } catch {
-    await writeFile(configPath, JSON.stringify({ provider: "ollama", embedModel: "nomic-embed-text", chatModel: "llama3.2" }, null, 2) + "\n");
+    await writeFile(configPath, JSON.stringify({ provider: "ollama", embedModel: "nomic-embed-text:latest", chatModel: "nemotron-3-ultra:cloud" }, null, 2) + "\n");
   }
   await ensureProjectConfig({
     rootDir: process.cwd(),
@@ -316,7 +269,8 @@ async function runInitCommand(args: string[]) {
 
   console.error(`ContextPro initialized for ${target} using ${runner}.`);
   console.error(`Wrote MCP config: ${outputPath}`);
-  console.error(`Created .contextplus/ directory with config.json`);
+  if (migratedFrom) console.error(`Migrated ${migratedFrom}/ to ${CONTEXTPRO_DIR}/.`);
+  console.error(`Created .contextpro/ directory with config.json`);
 }
 
 const server = new McpServer({
@@ -364,7 +318,8 @@ async function main() {
     process.stdout.write(tree + "\n");
     return;
   }
-  await ensureContextPlusDir(ROOT_DIR);
+  const migratedFrom = await ensureContextProDir(ROOT_DIR);
+  if (migratedFrom) console.error(`[contextpro/startup] migrated ${migratedFrom}/ to ${CONTEXTPRO_DIR}/`);
   const projectConfig = await ensureProjectConfig({
     rootDir: ROOT_DIR,
     projectId: parsedCliArgs.projectId ?? process.env.CONTEXTPLUS_PROJECT_ID,

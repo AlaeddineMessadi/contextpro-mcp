@@ -59,6 +59,7 @@ const TEXT_INDEX_EXTENSIONS = new Set([
   ".env",
 ]);
 const MAX_TEXT_DOC_CHARS = 4000;
+const MAX_CODE_SEARCH_BODY_CHARS = 4000;
 const DEFAULT_MAX_EMBED_FILE_SIZE = 50 * 1024;
 
 function applySearchPreset(options: SemanticSearchOptions): SemanticSearchOptions {
@@ -115,6 +116,21 @@ function extractPlainTextHeader(content: string): string {
   return headerLines.join(" | ");
 }
 
+function buildCodeSearchBody(content: string): string {
+  const selected: string[] = [];
+  for (const line of content.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    const isComment = /^(\/\/|#|--|\/\*|\*)/.test(trimmed);
+    const isMeaningfulCode = /\b(function|class|interface|type|const|let|var|def|return|if|for|while|match|case|filter|map|reduce|where|select)\b/.test(trimmed);
+    if (!isComment && !isMeaningfulCode) continue;
+    selected.push(trimmed.slice(0, 180));
+    if (selected.join("\n").length >= MAX_CODE_SEARCH_BODY_CHARS) break;
+  }
+  const summary = selected.join("\n");
+  return (summary || content).slice(0, MAX_CODE_SEARCH_BODY_CHARS);
+}
+
 function hashContent(text: string): string {
   let h = 0;
   for (let i = 0; i < text.length; i++) h = ((h << 5) - h + text.charCodeAt(i)) | 0;
@@ -149,6 +165,7 @@ async function buildSearchDocumentForFile(rootDir: string, relativePath: string)
 
   try {
     const analysis = await analyzeFile(fullPath);
+    const raw = await readFile(fullPath, "utf-8");
     const flatSymbols = flattenSymbols(analysis.symbols);
     return {
       path: normalized,
@@ -161,14 +178,20 @@ async function buildSearchDocumentForFile(rootDir: string, relativePath: string)
         endLine: s.endLine,
         signature: s.signature,
       })),
-      content: flatSymbols.map((s) => s.signature).join(" "),
+      content: `${flatSymbols.map((s) => s.signature).join(" ")}\n${buildCodeSearchBody(raw)}`,
     };
   } catch {
     return null;
   }
 }
 
-function buildSearchDocumentFromIndexedFile(file: FileRow, symbols: SymbolRow[]): SearchDocument {
+async function buildSearchDocumentFromIndexedFile(rootDir: string, file: FileRow, symbols: SymbolRow[]): Promise<SearchDocument> {
+  let sourceBody = "";
+  try {
+    if ((await stat(resolveProjectPath(rootDir, file.path, "indexed file"))).size <= getMaxEmbedFileSize()) {
+      sourceBody = buildCodeSearchBody(await readFile(resolveProjectPath(rootDir, file.path, "indexed file"), "utf-8"));
+    }
+  } catch {}
   return {
     path: normalizeRelativePath(file.path),
     header: file.header ?? "",
@@ -180,7 +203,7 @@ function buildSearchDocumentFromIndexedFile(file: FileRow, symbols: SymbolRow[])
       endLine: symbol.line_end ?? undefined,
       signature: symbol.signature ?? undefined,
     })),
-    content: symbols.map((symbol) => symbol.signature ?? symbol.name).join(" "),
+    content: `${symbols.map((symbol) => symbol.signature ?? symbol.name).join(" ")}\n${sourceBody}`,
   };
 }
 
@@ -188,7 +211,7 @@ async function buildSearchDocumentsFromDB(rootDir: string): Promise<SearchDocume
   const db = await getDB(rootDir);
   const files = db.getAllFiles();
   if (files.length === 0) return [];
-  return files.map((file) => buildSearchDocumentFromIndexedFile(file, db.getSymbolsByFile(file.id)));
+  return Promise.all(files.map((file) => buildSearchDocumentFromIndexedFile(rootDir, file, db.getSymbolsByFile(file.id))));
 }
 
 async function buildIndex(rootDir: string): Promise<SearchIndex> {
@@ -218,6 +241,31 @@ async function buildIndex(rootDir: string): Promise<SearchIndex> {
 
 function queryTerms(query: string): string[] {
   return (query.match(/[A-Za-z0-9_]+/g) ?? []).map((term) => term.toLowerCase()).filter((term) => term.length > 1);
+}
+
+function hasTestIntent(query: string): boolean {
+  return /\b(test|tests|spec|coverage|regression|assert|fixture)\b/i.test(query);
+}
+
+function isLikelyTestPath(path: string): boolean {
+  const name = path.split("/").pop()?.toLowerCase() ?? path.toLowerCase();
+  return /\.test\.\w+$|\.spec\.\w+$|\.demo\.\w+$/.test(path)
+    || /^test_[^/]+\.py$/.test(name)
+    || /_test\.py$/.test(name);
+}
+
+function rankSearchResults(query: string, results: SearchResult[], topK: number | undefined): SearchResult[] {
+  const queryWantsTests = hasTestIntent(query);
+  return results
+    .map((result) => {
+      if (queryWantsTests || !isLikelyTestPath(result.path)) return result;
+      return {
+        ...result,
+        score: Math.round(result.score * 8.2) / 10,
+      };
+    })
+    .sort((a, b) => b.score - a.score || b.semanticScore - a.semanticScore || b.keywordScore - a.keywordScore || a.path.localeCompare(b.path))
+    .slice(0, topK ?? 5);
 }
 
 async function fuseFtsMatches(rootDir: string, query: string, results: SearchResult[], topK: number | undefined, options: SemanticSearchOptions): Promise<SearchResult[]> {
@@ -280,7 +328,8 @@ export async function semanticCodeSearchResults(options: SemanticSearchOptions):
     requireSemanticMatch: resolvedOptions.requireSemanticMatch,
   };
   const rawResults = await index.search(options.query, searchOptions);
-  const results = await fuseFtsMatches(options.rootDir, options.query, rawResults, searchOptions.topK, resolvedOptions);
+  const fusedResults = await fuseFtsMatches(options.rootDir, options.query, rawResults, Math.max((searchOptions.topK ?? 5) * 2, 10), resolvedOptions);
+  const results = rankSearchResults(options.query, fusedResults, searchOptions.topK);
 
   return {
     query: options.query,

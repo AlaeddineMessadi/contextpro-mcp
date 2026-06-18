@@ -6,7 +6,7 @@ import { mkdir, readFile, writeFile } from "fs/promises";
 import { dirname } from "path";
 import { resolveProjectPath, toProjectRelativePath } from "./path-guard.js";
 
-export const DEFAULT_SCIP_CACHE_PATH = ".contextplus/scip-index.json";
+export const DEFAULT_SCIP_CACHE_PATH = ".contextpro/scip-index.json";
 
 export interface NormalizedScipRelationship {
   targetSymbol: string;
@@ -302,7 +302,7 @@ export async function importScipIndex(rootDir: string, indexPath: string): Promi
 export async function loadScipIndex(rootDir: string, indexPath?: string): Promise<NormalizedScipIndex | null> {
   const candidates = indexPath
     ? [indexPath]
-    : [DEFAULT_SCIP_CACHE_PATH, ".contextplus/index.scip.json", "index.scip.json"];
+    : [DEFAULT_SCIP_CACHE_PATH, ".contextpro/index.scip.json", "index.scip.json"];
   for (const candidate of candidates) {
     try {
       const fullPath = resolveProjectPath(rootDir, candidate, "scip index");

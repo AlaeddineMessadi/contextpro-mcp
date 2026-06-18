@@ -63,7 +63,7 @@ describe("shadow path traversal (CWE-22)", async () => {
       const point = await createRestorePoint(FIXTURE_DIR, [testFile], "legit backup");
 
       // Now manually tamper with the manifest to inject a traversal path
-      const manifestPath = join(FIXTURE_DIR, ".contextplus", "backups", "restore-points.json");
+      const manifestPath = join(FIXTURE_DIR, ".contextpro", "backups", "restore-points.json");
       const manifest = JSON.parse(await readFile(manifestPath, "utf-8"));
 
       // Add a traversal file to the existing restore point
@@ -76,7 +76,7 @@ describe("shadow path traversal (CWE-22)", async () => {
       };
 
       // Create backup content for the tampered point
-      const backupDir = join(FIXTURE_DIR, ".contextplus", "backups", "backups", tamperedPoint.id);
+      const backupDir = join(FIXTURE_DIR, ".contextpro", "backups", "backups", tamperedPoint.id);
       await mkdir(backupDir, { recursive: true });
       const backupFileName = traversalFile.replace(/[\\/]/g, "__");
       await writeFile(join(backupDir, backupFileName), "MALICIOUS CONTENT");

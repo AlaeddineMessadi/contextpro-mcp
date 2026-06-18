@@ -2,11 +2,11 @@
 
 import { useState } from "react";
 
-const INSTRUCTIONS = `# Context+ MCP - Agent Instructions
+const INSTRUCTIONS = `# ContextPro MCP - Agent Instructions
 
 ## Purpose
 
-You are equipped with the Context+ MCP server. It gives you structural awareness of the entire codebase without reading every file. Follow this workflow strictly to conserve context and maximize accuracy.
+You are equipped with the ContextPro MCP server. It gives you structural awareness of the entire codebase without reading every file. Follow this workflow strictly to conserve context and maximize accuracy.
 
 ## Architecture
 
@@ -17,7 +17,7 @@ The MCP server is built with TypeScript and communicates over stdio using the Mo
 - \`parser.ts\` - Multi-language symbol extraction via tree-sitter AST with regex fallback. Supports 14+ languages.
 - \`tree-sitter.ts\` - WASM grammar loader for 43 file extensions using web-tree-sitter 0.20.8.
 - \`walker.ts\` - Gitignore-aware recursive directory traversal with depth and target path control.
-- \`embeddings.ts\` - Ollama vector embedding engine with disk cache, cosine similarity search, and API key support.
+- \`embeddings.ts\` - Multi-provider vector embedding engine with disk cache and cosine similarity search.
 
 **Tools Layer** (\`src/tools/\`):
 
@@ -43,21 +43,21 @@ The memory graph is a **Retrieval-Augmented Generation (RAG)** system. Agents MU
 
 - \`shadow.ts\` - Shadow restore point system for undo without touching git history.
 
-**Entry Point**: \`src/index.ts\` registers 17 MCP tools and starts the stdio transport. Accepts an optional CLI argument for the target project root directory (defaults to \`process.cwd()\`).
+**Entry Point**: \`src/index.ts\` registers 47 MCP tools and starts the stdio transport. Accepts an optional CLI argument for the target project root directory (defaults to \`process.cwd()\`).
 
 ## Environment Variables
 
-| Variable             | Default            | Description                       |
+| Variable             | Recommended        | Description                       |
 | -------------------- | ------------------ | --------------------------------- |
-| \`OLLAMA_EMBED_MODEL\` | \`nomic-embed-text\` | Embedding model name              |
-| \`OLLAMA_API_KEY\`     | (empty)            | Cloud auth (auto-detected by SDK) |
-| \`OLLAMA_CHAT_MODEL\`  | \`llama3.2\`         | Chat model for cluster labeling   |
+| \`CONTEXTPLUS_EMBED_PROVIDER\` | \`ollama\` | Embedding provider: \`ollama\` or \`openai\` |
+| \`OLLAMA_EMBED_MODEL\` | \`nomic-embed-text:latest\` | Embedding model name              |
+| \`OLLAMA_CHAT_MODEL\`  | \`nemotron-3-ultra:cloud\` | Chat model for cluster labeling   |
 | \`CONTEXTPLUS_EMBED_BATCH_SIZE\` | \`8\` | Embedding batch per GPU call (hard-capped to 5-10) |
-| \`CONTEXTPLUS_EMBED_TRACKER\` | \`true\` | Enable realtime embedding updates for changed files/functions |
+| \`CONTEXTPLUS_EMBED_TRACKER\` | \`lazy\` | Enable realtime embedding updates for changed files/functions |
 | \`CONTEXTPLUS_EMBED_TRACKER_MAX_FILES\` | \`8\` | Max changed files per tracker tick (hard-capped to 5-10) |
 | \`CONTEXTPLUS_EMBED_TRACKER_DEBOUNCE_MS\` | \`700\` | Debounce before applying tracker refresh |
 
-Runtime cache: \`.contextplus/\` is created at MCP startup and stores reusable embedding vectors for files, identifiers, and call sites. A realtime tracker watches file updates and refreshes changed function/file embeddings incrementally.
+Runtime cache: \`.contextpro/\` is created at MCP startup and stores reusable embedding vectors for files, identifiers, and call sites. A realtime tracker watches file updates and refreshes changed function/file embeddings incrementally.
 
 ## Fast Execute Mode (Mandatory)
 
@@ -262,7 +262,7 @@ export default function InstructionsSection() {
           >
             Copy the instruction file into your project root to teach your agent
             RAG memory traversal &amp; blast radius analysis that keep context
-            lean &amp; precise. Or don&apos;t, Context+ already includes the
+            lean &amp; precise. Or don&apos;t, ContextPro already includes the
             instructions in the new versions.
           </p>
 

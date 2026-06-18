@@ -171,16 +171,28 @@ describe("walker", () => {
       await rm(join(FIXTURE_DIR, "real_dir"), { recursive: true, force: true });
     });
 
-    it("respects .contextplusignore file", async () => {
+    it("respects .contextproignore file", async () => {
       await mkdir(join(FIXTURE_DIR, "vendor"), { recursive: true });
       await writeFile(join(FIXTURE_DIR, "vendor", "lib.js"), "module.exports = {}");
-      await writeFile(join(FIXTURE_DIR, ".contextplusignore"), "vendor/\n");
+      await writeFile(join(FIXTURE_DIR, ".contextproignore"), "vendor/\n");
 
       const entries = await walkDirectory({ rootDir: FIXTURE_DIR });
       const vendorFiles = entries.filter((e) => e.relativePath.includes("vendor"));
-      assert.equal(vendorFiles.length, 0, "vendor/ should be ignored by .contextplusignore");
+      assert.equal(vendorFiles.length, 0, "vendor/ should be ignored by .contextproignore");
 
       await rm(join(FIXTURE_DIR, "vendor"), { recursive: true, force: true });
+      await rm(join(FIXTURE_DIR, ".contextproignore"));
+    });
+
+    it("supports legacy .contextplusignore rules", async () => {
+      await mkdir(join(FIXTURE_DIR, "legacy-vendor"), { recursive: true });
+      await writeFile(join(FIXTURE_DIR, "legacy-vendor", "lib.js"), "module.exports = {}");
+      await writeFile(join(FIXTURE_DIR, ".contextplusignore"), "legacy-vendor/\n");
+
+      const entries = await walkDirectory({ rootDir: FIXTURE_DIR });
+      assert.equal(entries.some((entry) => entry.relativePath.includes("legacy-vendor")), false);
+
+      await rm(join(FIXTURE_DIR, "legacy-vendor"), { recursive: true, force: true });
       await rm(join(FIXTURE_DIR, ".contextplusignore"));
     });
   });

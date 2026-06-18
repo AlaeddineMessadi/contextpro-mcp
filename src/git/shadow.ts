@@ -7,7 +7,7 @@ import { join, dirname } from "path";
 import { resolveProjectPath, toProjectRelativePath } from "../core/path-guard.js";
 
 const SHADOW_BRANCH = "mcp-shadow-history";
-const DATA_DIR = ".contextplus/backups";
+const DATA_DIR = ".contextpro/backups";
 
 export interface RestorePoint {
   id: string;

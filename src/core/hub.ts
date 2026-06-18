@@ -82,10 +82,10 @@ export async function discoverHubs(rootDir: string): Promise<string[]> {
       const rel = relative(rootDir, full).replace(/\\/g, "/");
 
       if (entry.isDirectory()) {
-        const isContextPlusRoot = rel === ".contextplus";
-        const isAutoHubDir = rel === ".contextplus/hubs";
-        if (skip.has(entry.name) && !isContextPlusRoot && !isAutoHubDir) continue;
-        if (entry.name.startsWith(".") && !isContextPlusRoot && !isAutoHubDir) continue;
+        const isContextProRoot = rel === ".contextpro";
+        const isAutoHubDir = rel === ".contextpro/hubs";
+        if (skip.has(entry.name) && !isContextProRoot && !isAutoHubDir) continue;
+        if (entry.name.startsWith(".") && !isContextProRoot && !isAutoHubDir) continue;
         await walk(full);
         continue;
       }

@@ -21,6 +21,7 @@ dist/
 
 # Development
 .mcp_data/
+.contextpro/
 .contextplus/
 .turbo/
 .wrangler/

@@ -162,7 +162,7 @@ export default function ToolDiagram() {
             whiteSpace: "nowrap",
           }}
         >
-          Context+ MCP
+          ContextPro MCP
         </span>
         <div
           style={{

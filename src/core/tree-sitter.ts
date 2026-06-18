@@ -35,11 +35,13 @@ const DEFINITION_TYPES: Record<string, Record<string, string>> = {
   javascript: {
     function_declaration: "function", method_definition: "method",
     class_declaration: "class", variable_declaration: "const",
+    lexical_declaration: "const",
   },
   tsx: {
     function_declaration: "function", method_definition: "method",
     class_declaration: "class", interface_declaration: "interface",
     enum_declaration: "enum", type_alias_declaration: "type",
+    lexical_declaration: "const",
   },
   python: {
     function_definition: "function", class_definition: "class",

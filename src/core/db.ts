@@ -2,8 +2,8 @@
 // FEATURE: Core persistence — replaces JSON files with indexed, queryable storage
 
 import { createHash } from "crypto";
-import { mkdir } from "fs/promises";
 import { join, resolve } from "path";
+import { CONTEXTPRO_DIR, ensureContextProDir } from "./data-dir.js";
 import { loadNativeStorageBindings } from "./db-native.js";
 
 type DatabaseType = import("better-sqlite3").Database;
@@ -239,7 +239,7 @@ export class ContextPlusDB {
 
   constructor(rootDir: string) {
     this.rootDir = rootDir;
-    const dbPath = join(rootDir, ".contextplus", "index.db");
+    const dbPath = join(rootDir, CONTEXTPRO_DIR, "index.db");
     const { Database, sqliteVec } = loadNativeStorageBindings();
     this.db = new Database(dbPath);
     sqliteVec.load(this.db);
@@ -328,7 +328,10 @@ export class ContextPlusDB {
   }
 
   private ensureVecDimension(dim: number): void {
-    if (this.vecDimension === dim) return;
+    if (this.vecDimension === dim) {
+      if (!this.hasVectorTables()) this.createVecTablesIfNeeded(dim);
+      return;
+    }
     if (this.vecDimension !== null && this.vecDimension !== dim) {
       // Warn loudly: changing embedding dimension requires dropping all cached vectors.
       // This happens when switching embedding models (e.g. nomic-embed-text 768 → text-embedding-3-small 1536).
@@ -346,7 +349,16 @@ export class ContextPlusDB {
   }
 
   private hasVectorTables(): boolean {
-    return this.vecDimension !== null;
+    return this.vecDimension !== null && this.tableExists("embeddings") && this.tableExists("memory_embeddings");
+  }
+
+  private tableExists(name: string): boolean {
+    const row = this.db.prepare("SELECT name FROM sqlite_master WHERE name = ?").get(name) as { name: string } | undefined;
+    return row !== undefined;
+  }
+
+  private hasUsableEmbedding(value: number[] | undefined): value is number[] {
+    return Array.isArray(value) && value.length > 0;
   }
 
   upsertFile(path: string, hash: string, header: string | null, language: string | null, fileSize: number = 0): number {
@@ -446,7 +458,46 @@ export class ContextPlusDB {
 
   getEmbeddingsByType(sourceType: string): Array<{ sourceId: string; contentHash: string; vector: Buffer }> {
     if (!this.hasVectorTables()) return [];
-    return this.db.prepare("SELECT source_id as sourceId, content_hash as contentHash, vector FROM embeddings WHERE source_type = ?").all(sourceType) as Array<{ sourceId: string; contentHash: string; vector: Buffer }>;
+    try {
+      return this.db.prepare("SELECT source_id as sourceId, content_hash as contentHash, vector FROM embeddings WHERE source_type = ?").all(sourceType) as Array<{ sourceId: string; contentHash: string; vector: Buffer }>;
+    } catch {
+      return [];
+    }
+  }
+
+  getEmbeddingStats(): {
+    vectorTablesReady: boolean;
+    dimension: number | null;
+    total: number;
+    fileSearch: number;
+    identifiers: number;
+    memory: number;
+  } {
+    const empty = {
+      vectorTablesReady: false,
+      dimension: this.vecDimension,
+      total: 0,
+      fileSearch: 0,
+      identifiers: 0,
+      memory: 0,
+    };
+    if (!this.hasVectorTables()) return empty;
+    try {
+      const rows = this.db.prepare("SELECT source_type, count(*) as n FROM embeddings GROUP BY source_type").all() as { source_type: string; n: number }[];
+      const memory = this.db.prepare("SELECT count(*) as n FROM memory_embeddings").get() as { n: number };
+      const byType = new Map(rows.map((row) => [row.source_type, row.n]));
+      const total = rows.reduce((sum, row) => sum + row.n, 0);
+      return {
+        vectorTablesReady: true,
+        dimension: this.vecDimension,
+        total,
+        fileSearch: byType.get("file_search_cache") ?? 0,
+        identifiers: byType.get("identifier_cache") ?? 0,
+        memory: memory.n,
+      };
+    } catch {
+      return empty;
+    }
   }
 
   deleteEmbeddingsByPrefix(sourceType: string, prefix: string): void {
@@ -455,7 +506,7 @@ export class ContextPlusDB {
   }
 
   searchEmbeddings(queryVector: number[] | Float32Array, topK: number, sourceType?: string): EmbeddingMatch[] {
-    if (!this.vecDimension || queryVector.length !== this.vecDimension) return [];
+    if (!this.vecDimension || queryVector.length !== this.vecDimension || !this.hasVectorTables()) return [];
     const buf = vecToBuffer(queryVector);
     const count = sourceType
       ? (this.db.prepare("SELECT count(*) as n FROM embeddings").get() as { n: number }).n
@@ -494,7 +545,7 @@ export class ContextPlusDB {
     if (existing) {
       this.db.prepare("UPDATE memory_nodes SET content = ?, last_accessed = ?, access_count = access_count + 1, metadata = ? WHERE id = ?")
         .run(input.content, now, JSON.stringify(input.metadata ?? {}), existing.id);
-      if (embedding) {
+      if (this.hasUsableEmbedding(embedding)) {
         this.ensureVecDimension(embedding.length);
         this.db.prepare("DELETE FROM memory_embeddings WHERE node_id = ?").run(existing.id);
         this.db.prepare("INSERT INTO memory_embeddings (vector, node_id) VALUES (?, ?)").run(vecToBuffer(embedding), existing.id);
@@ -505,7 +556,7 @@ export class ContextPlusDB {
     const id = input.id ?? generateId("node");
     this.db.prepare("INSERT INTO memory_nodes (id, type, label, content, created_at, last_accessed, access_count, metadata) VALUES (?, ?, ?, ?, ?, ?, 1, ?)")
       .run(id, input.type, input.label, input.content, now, now, JSON.stringify(input.metadata ?? {}));
-    if (embedding) {
+    if (this.hasUsableEmbedding(embedding)) {
       this.ensureVecDimension(embedding.length);
       this.db.prepare("INSERT INTO memory_embeddings (vector, node_id) VALUES (?, ?)").run(vecToBuffer(embedding), id);
     }
@@ -530,7 +581,9 @@ export class ContextPlusDB {
 
   deleteMemoryNode(id: string): void {
     if (this.hasVectorTables()) {
-      this.db.prepare("DELETE FROM memory_embeddings WHERE node_id = ?").run(id);
+      try {
+        this.db.prepare("DELETE FROM memory_embeddings WHERE node_id = ?").run(id);
+      } catch {}
     }
     this.db.prepare("DELETE FROM memory_nodes WHERE id = ?").run(id);
   }
@@ -560,10 +613,15 @@ export class ContextPlusDB {
   }
 
   searchMemoryNodes(queryVector: number[], topK: number = 5): MemorySearchResult[] {
-    if (!this.vecDimension || queryVector.length !== this.vecDimension) return [];
+    if (!this.vecDimension || queryVector.length !== this.vecDimension || !this.hasVectorTables()) return [];
     const buf = vecToBuffer(queryVector);
-    const vecResults = this.db.prepare("SELECT node_id, distance FROM memory_embeddings WHERE vector MATCH ? ORDER BY distance LIMIT ?")
-      .all(buf, topK) as { node_id: string; distance: number }[];
+    let vecResults: { node_id: string; distance: number }[] = [];
+    try {
+      vecResults = this.db.prepare("SELECT node_id, distance FROM memory_embeddings WHERE vector MATCH ? ORDER BY distance LIMIT ?")
+        .all(buf, topK) as { node_id: string; distance: number }[];
+    } catch {
+      return [];
+    }
 
     const results: MemorySearchResult[] = [];
     for (const vr of vecResults) {
@@ -672,6 +730,10 @@ export class ContextPlusDB {
       .run(sourceFileId, targetPath, targetFileId, importType, symbolsImported ? JSON.stringify(symbolsImported) : null);
   }
 
+  deleteImportsForFile(fileId: number): void {
+    this.db.prepare("DELETE FROM imports WHERE source_file_id = ?").run(fileId);
+  }
+
   getImportsFrom(fileId: number): ImportRow[] {
     return this.db.prepare("SELECT * FROM imports WHERE source_file_id = ?").all(fileId) as ImportRow[];
   }
@@ -702,11 +764,12 @@ export class ContextPlusDB {
     header?: string | null;
     language?: string | null;
     symbols?: Array<{ name: string; kind?: string; signature?: string | null }>;
+    content?: string;
   }): void {
     const symbolText = (input.symbols ?? [])
       .map((symbol) => `${symbol.name} ${symbol.kind ?? ""} ${symbol.signature ?? ""}`)
       .join(" ");
-    const body = `${input.path} ${input.header ?? ""} ${input.language ?? ""} ${symbolText}`;
+    const body = `${input.path} ${input.header ?? ""} ${input.language ?? ""} ${symbolText} ${input.content ?? ""}`;
     this.db.prepare("DELETE FROM file_search_fts WHERE path = ?").run(input.path);
     this.db.prepare("INSERT INTO file_search_fts (path, header, symbols, language, body) VALUES (?, ?, ?, ?, ?)")
       .run(input.path, input.header ?? "", symbolText, input.language ?? "", body);
@@ -717,16 +780,25 @@ export class ContextPlusDB {
   }
 
   searchFileText(query: string, topK: number = 10): FileTextSearchMatch[] {
+    const stopwords = new Set([
+      "a", "an", "and", "are", "as", "at", "be", "by", "can", "do", "does", "for", "from",
+      "how", "i", "if", "in", "is", "it", "of", "on", "or", "the", "to", "what", "where",
+      "which", "who", "why", "with",
+    ]);
     const terms = (query.match(/[A-Za-z0-9_]+/g) ?? [])
       .map((term) => term.toLowerCase())
-      .filter((term) => term.length > 1)
+      .filter((term) => term.length > 1 && !stopwords.has(term))
       .slice(0, 12);
     if (terms.length === 0) return [];
-    const ftsQuery = terms.map((term) => `${term}*`).join(" OR ");
+    const limit = Math.max(1, topK);
+    const runQuery = (ftsQuery: string) => this.db.prepare("SELECT path, bm25(file_search_fts) as score FROM file_search_fts WHERE file_search_fts MATCH ? ORDER BY score LIMIT ?")
+      .all(ftsQuery, limit) as FileTextSearchMatch[];
     try {
-      const rows = this.db.prepare("SELECT path, bm25(file_search_fts) as score FROM file_search_fts WHERE file_search_fts MATCH ? ORDER BY score LIMIT ?")
-        .all(ftsQuery, Math.max(1, topK)) as FileTextSearchMatch[];
-      return rows;
+      if (terms.length > 1) {
+        const andRows = runQuery(terms.map((term) => `${term}*`).join(" "));
+        if (andRows.length > 0) return andRows;
+      }
+      return runQuery(terms.map((term) => `${term}*`).join(" OR "));
     } catch {
       return [];
     }
@@ -778,7 +850,7 @@ export async function getDB(rootDir: string): Promise<ContextPlusDB> {
   const normalizedRoot = resolve(rootDir);
   const existing = dbInstances.get(normalizedRoot);
   if (existing) return existing;
-  await mkdir(join(normalizedRoot, ".contextplus"), { recursive: true });
+  await ensureContextProDir(normalizedRoot);
   const db = new ContextPlusDB(normalizedRoot);
   dbInstances.set(normalizedRoot, db);
   return db;

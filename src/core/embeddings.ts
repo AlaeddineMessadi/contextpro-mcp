@@ -75,11 +75,11 @@ export interface EmbeddingCache {
 }
 
 const EMBED_PROVIDER = (process.env.CONTEXTPLUS_EMBED_PROVIDER ?? "ollama").toLowerCase();
-const EMBED_MODEL = process.env.OLLAMA_EMBED_MODEL ?? "nomic-embed-text";
+const EMBED_MODEL = process.env.OLLAMA_EMBED_MODEL ?? "nomic-embed-text:latest";
 const OPENAI_EMBED_MODEL = process.env.CONTEXTPLUS_OPENAI_EMBED_MODEL ?? process.env.OPENAI_EMBED_MODEL ?? "text-embedding-3-small";
 const OPENAI_API_KEY = process.env.CONTEXTPLUS_OPENAI_API_KEY ?? process.env.OPENAI_API_KEY ?? "";
 const OPENAI_BASE_URL = process.env.CONTEXTPLUS_OPENAI_BASE_URL ?? process.env.OPENAI_BASE_URL ?? "https://api.openai.com/v1";
-const CACHE_DIR = ".contextplus";
+const CACHE_DIR = ".contextpro";
 const MIN_EMBED_BATCH_SIZE = 5;
 const MAX_EMBED_BATCH_SIZE = 10;
 const DEFAULT_EMBED_BATCH_SIZE = 8;
@@ -106,8 +106,12 @@ async function callOllamaEmbed(input: string[], signal: AbortSignal): Promise<nu
   const options = getEmbedRuntimeOptions();
   const request: Record<string, unknown> = { model: EMBED_MODEL, input, signal };
   if (options) request.options = options;
-  const response = await client.embed(request);
-  return response.embeddings;
+  try {
+    const response = await client.embed(request);
+    return response.embeddings;
+  } catch (error) {
+    throw new Error(formatOllamaModelError(error, "embedding", EMBED_MODEL));
+  }
 }
 
 async function callOpenAIEmbed(input: string[], signal: AbortSignal): Promise<number[][]> {
@@ -186,6 +190,32 @@ export function getEmbedChunkChars(): number {
 function getErrorMessage(error: unknown): string {
   if (error instanceof Error) return error.message;
   return String(error);
+}
+
+function formatOllamaModelError(error: unknown, kind: "embedding" | "chat", model: string): string {
+  const message = getErrorMessage(error);
+  const lower = message.toLowerCase();
+  const installHint = "Install Ollama from https://ollama.com/download, then run `ollama serve`.";
+  const modelHint = `Run \`ollama pull ${model}\`, or set OLLAMA_${kind === "embedding" ? "EMBED" : "CHAT"}_MODEL to any model shown by \`ollama list\`.`;
+
+  if (
+    lower.includes("econnrefused")
+    || lower.includes("fetch failed")
+    || lower.includes("connection refused")
+    || lower.includes("connect")
+  ) {
+    return `Ollama is not reachable while loading the ${kind} model "${model}". ${installHint} ${modelHint} Original error: ${message}`;
+  }
+
+  if (
+    lower.includes("not found")
+    || lower.includes("no such model")
+    || lower.includes("model")
+  ) {
+    return `Ollama ${kind} model "${model}" is not available. ${modelHint} Original error: ${message}`;
+  }
+
+  return `Ollama ${kind} model "${model}" failed. ${installHint} ${modelHint} Original error: ${message}`;
 }
 
 function isContextLengthError(error: unknown): boolean {

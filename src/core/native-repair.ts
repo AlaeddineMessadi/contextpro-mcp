@@ -89,7 +89,7 @@ async function runCommand(rootDir: string, label: string, command: string, args:
 }
 
 function nativeRepairLockDir(rootDir: string): string {
-  return join(rootDir, ".contextplus");
+  return join(rootDir, ".contextpro");
 }
 
 function nativeRepairLockPath(rootDir: string): string {

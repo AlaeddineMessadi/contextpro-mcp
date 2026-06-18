@@ -91,7 +91,7 @@ function formatImpactDelta(delta: ImpactDelta): string {
 }
 
 export async function impactDeltaTool(options: ImpactDeltaOptions): Promise<string> {
-  const baselinePath = resolveProjectPath(options.rootDir, options.baselinePath ?? ".contextplus/graph.json", "baselinePath");
+  const baselinePath = resolveProjectPath(options.rootDir, options.baselinePath ?? ".contextpro/graph.json", "baselinePath");
   const before = JSON.parse(await readFile(baselinePath, "utf-8")) as ProjectGraph;
   const after = await buildProjectGraph(options.rootDir);
   const delta = compareGraphs(baselinePath, before, after);

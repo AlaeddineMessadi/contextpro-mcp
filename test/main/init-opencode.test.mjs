@@ -2,7 +2,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { access, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -33,9 +33,23 @@ describe("init-opencode", () => {
       ]);
       assert.equal(cfg.mcp.contextpro.enabled, true);
       assert.equal(
-        cfg.mcp.contextpro.environment.OLLAMA_EMBED_MODEL,
-        "nomic-embed-text",
+        cfg.mcp.contextpro.environment.CONTEXTPLUS_EMBED_PROVIDER,
+        "ollama",
       );
+      assert.equal(
+        cfg.mcp.contextpro.environment.OLLAMA_EMBED_MODEL,
+        "nomic-embed-text:latest",
+      );
+      assert.equal(
+        cfg.mcp.contextpro.environment.OLLAMA_CHAT_MODEL,
+        "nemotron-3-ultra:cloud",
+      );
+      assert.equal(
+        Object.hasOwn(cfg.mcp.contextpro.environment, "OLLAMA_API_KEY"),
+        false,
+      );
+      await access(join(cwd, ".contextpro", "config.json"));
+      await assert.rejects(access(join(cwd, ".contextplus")));
     } finally {
       await rm(cwd, { recursive: true, force: true });
     }

@@ -24,7 +24,7 @@ function isDocumentationPath(filePath: string): boolean {
 }
 
 function isHubPath(filePath: string): boolean {
-  return filePath.startsWith(".contextplus/hubs/");
+  return filePath.startsWith(".contextpro/hubs/");
 }
 
 function isSourcePath(filePath: string): boolean {

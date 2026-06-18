@@ -108,22 +108,22 @@ export async function runStartupHealthCheck(rootDir: string): Promise<StartupHea
 
 export function formatStartupHealthReport(report: StartupHealthReport): string {
   const lines = [
-    `[contextplus/startup] status=${report.status} root=${report.rootDir}`,
-    `[contextplus/startup] runtime node=${report.runtime.nodeVersion} abi=${report.runtime.nodeAbi} pid=${report.runtime.pid}`,
-    `[contextplus/startup] project ok=${report.project.ok} projectId=${report.project.projectId ?? "unknown"} gitRoot=${report.project.gitRoot ?? "unknown"} fingerprint=${report.project.fingerprint ?? "unknown"}`,
-    `[contextplus/startup] storage ok=${report.storage.ok} dbOpen=${report.storage.databaseOpen.ok}`,
+    `[contextpro/startup] status=${report.status} root=${report.rootDir}`,
+    `[contextpro/startup] runtime node=${report.runtime.nodeVersion} abi=${report.runtime.nodeAbi} pid=${report.runtime.pid}`,
+    `[contextpro/startup] project ok=${report.project.ok} projectId=${report.project.projectId ?? "unknown"} gitRoot=${report.project.gitRoot ?? "unknown"} fingerprint=${report.project.fingerprint ?? "unknown"}`,
+    `[contextpro/startup] storage ok=${report.storage.ok} dbOpen=${report.storage.databaseOpen.ok}`,
   ];
 
   if (!report.project.ok) {
-    lines.push(`[contextplus/startup] project_error ${report.project.message}`);
+    lines.push(`[contextpro/startup] project_error ${report.project.message}`);
   }
   if (!report.storage.ok && report.storage.diagnostic) {
-    lines.push(`[contextplus/startup] storage_error [${report.storage.diagnostic.code}] ${report.storage.diagnostic.message}`);
+    lines.push(`[contextpro/startup] storage_error [${report.storage.diagnostic.code}] ${report.storage.diagnostic.message}`);
     for (const step of report.storage.diagnostic.remediation) {
-      lines.push(`[contextplus/startup] remediation ${step}`);
+      lines.push(`[contextpro/startup] remediation ${step}`);
     }
   } else if (!report.storage.databaseOpen.ok) {
-    lines.push(`[contextplus/startup] storage_error ${report.storage.databaseOpen.message}`);
+    lines.push(`[contextpro/startup] storage_error ${report.storage.databaseOpen.message}`);
   }
 
   return lines.join("\n");

@@ -33,6 +33,11 @@ interface WaitForIndexingOptions {
   pollMs?: number;
 }
 
+interface PendingImportSet {
+  fileId: number;
+  imports: ReturnType<typeof extractImports>;
+}
+
 const INDEX_STATUS_KEY = "index_status";
 const INDEX_STARTED_AT_KEY = "index_started_at";
 const INDEX_FINISHED_AT_KEY = "index_finished_at";
@@ -40,6 +45,7 @@ const INDEX_TARGET_PATH_KEY = "index_target_path";
 const LAST_INDEX_ERROR_KEY = "last_index_error";
 const INDEXING_STATUS = "indexing";
 const IDLE_STATUS = "idle";
+const MAX_SEARCH_BODY_CHARS = 4000;
 
 function detectLanguage(filePath: string): string | null {
   const ext = extname(filePath).toLowerCase();
@@ -52,7 +58,101 @@ function detectLanguage(filePath: string): string | null {
   return map[ext] ?? null;
 }
 
-function resolveImportPath(importSource: string, fromFile: string, allFiles: Set<string>, rootDir: string): string | null {
+function buildSearchBody(content: string): string {
+  const lines = content.split("\n");
+  const selected: string[] = [];
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    const isComment = /^(\/\/|#|--|\/\*|\*)/.test(trimmed);
+    const isMeaningfulCode = /\b(function|class|interface|type|const|let|var|def|return|if|for|while|match|case|filter|map|reduce|where|select)\b/.test(trimmed);
+    if (!isComment && !isMeaningfulCode) continue;
+    selected.push(trimmed.slice(0, 180));
+    if (selected.join("\n").length >= MAX_SEARCH_BODY_CHARS) break;
+  }
+
+  const summary = selected.join("\n");
+  return (summary || content).slice(0, MAX_SEARCH_BODY_CHARS);
+}
+
+function toProjectRelative(rootDir: string, candidate: string): string | null {
+  const rel = relative(rootDir, candidate).replace(/\\/g, "/");
+  if (rel.startsWith("../") || rel === ".." || rel.startsWith("/")) return null;
+  return rel;
+}
+
+function firstExistingPath(candidates: string[], allFiles: Set<string>, rootDir: string): string | null {
+  for (const candidate of candidates) {
+    const rel = toProjectRelative(rootDir, candidate);
+    if (rel && allFiles.has(rel)) return rel;
+  }
+  return null;
+}
+
+function findUniqueSuffixPath(suffixes: string[], allFiles: Set<string>): string | null {
+  const matches = [...allFiles].filter((file) => suffixes.some((suffix) => file === suffix || file.endsWith(`/${suffix}`)));
+  return matches.length === 1 ? matches[0] : null;
+}
+
+function pythonModuleCandidates(moduleSource: string, fromFile: string, rootDir: string): { absolute: string[]; suffixes: string[] } {
+  const fromDir = dirname(resolve(rootDir, fromFile));
+  const leadingDots = moduleSource.match(/^\.+/)?.[0].length ?? 0;
+  const moduleName = moduleSource.slice(leadingDots);
+  const modulePath = moduleName.replace(/\./g, "/");
+  let relativeBase = fromDir;
+  if (leadingDots > 0) {
+    for (let i = 1; i < leadingDots; i++) relativeBase = resolve(relativeBase, "..");
+  }
+  const base = leadingDots > 0 ? relativeBase : resolve(rootDir);
+  const absolute = modulePath.length > 0
+    ? [
+        resolve(base, `${modulePath}.py`),
+        resolve(base, modulePath, "__init__.py"),
+      ]
+    : [resolve(base, "__init__.py")];
+
+  if (leadingDots === 0 && !moduleName.includes(".")) {
+    absolute.unshift(
+      resolve(fromDir, `${modulePath}.py`),
+      resolve(fromDir, modulePath, "__init__.py"),
+    );
+  }
+
+  const suffixes = modulePath.length > 0
+    ? [`${modulePath}.py`, `${modulePath}/__init__.py`]
+    : [];
+  return { absolute, suffixes };
+}
+
+function resolvePythonImportPath(importSource: string, fromFile: string, allFiles: Set<string>, rootDir: string, specifiers: string[] = []): string | null {
+  const moduleSources = [
+    importSource,
+    ...specifiers
+      .filter((specifier) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(specifier))
+      .map((specifier) => importSource === "." ? `.${specifier}` : `${importSource}.${specifier}`),
+  ];
+
+  for (const moduleSource of moduleSources) {
+    const candidates = pythonModuleCandidates(moduleSource, fromFile, rootDir);
+    const direct = firstExistingPath(candidates.absolute, allFiles, rootDir);
+    if (direct) return direct;
+    if (!moduleSource.startsWith(".")) {
+      const suffix = findUniqueSuffixPath(candidates.suffixes, allFiles);
+      if (suffix) return suffix;
+    }
+  }
+
+  return null;
+}
+
+function resolveImportPath(importSource: string, fromFile: string, allFiles: Set<string>, rootDir: string, specifiers: string[] = []): string | null {
+  const fromExt = extname(fromFile).toLowerCase();
+  if (fromExt === ".py") {
+    const pythonTarget = resolvePythonImportPath(importSource, fromFile, allFiles, rootDir, specifiers);
+    if (pythonTarget) return pythonTarget;
+  }
+
   if (!importSource.startsWith(".")) return null;
   const fromDir = dirname(resolve(rootDir, fromFile));
   const candidates = [
@@ -61,15 +161,13 @@ function resolveImportPath(importSource: string, fromFile: string, allFiles: Set
     resolve(fromDir, importSource + ".tsx"),
     resolve(fromDir, importSource + ".js"),
     resolve(fromDir, importSource + ".jsx"),
+    resolve(fromDir, importSource + ".py"),
     resolve(fromDir, importSource.replace(/\.js$/, ".ts")),
     resolve(fromDir, importSource + "/index.ts"),
     resolve(fromDir, importSource + "/index.js"),
+    resolve(fromDir, importSource, "__init__.py"),
   ];
-  for (const c of candidates) {
-    const rel = relative(rootDir, c).replace(/\\/g, "/");
-    if (allFiles.has(rel)) return rel;
-  }
-  return null;
+  return firstExistingPath(candidates, allFiles, rootDir);
 }
 
 function setIndexStatus(db: ContextPlusDB, status: string, input?: { targetPath?: string; error?: string | null }): void {
@@ -124,6 +222,7 @@ export async function reindex(options: ReindexOptions): Promise<string> {
     let totalImports = 0;
     let indexed = 0;
     let skipped = files.length - sourceFiles.length;
+    const pendingImports: PendingImportSet[] = [];
 
     for (const file of sourceFiles) {
       try {
@@ -133,6 +232,10 @@ export async function reindex(options: ReindexOptions): Promise<string> {
 
         const existing = db.getFile(file.relativePath);
         if (existing && existing.content_hash === hash && !options.force) {
+          pendingImports.push({
+            fileId: existing.id,
+            imports: extractImports(content, file.path),
+          });
           skipped++;
           continue;
         }
@@ -156,15 +259,13 @@ export async function reindex(options: ReindexOptions): Promise<string> {
           header: analysis.header,
           language: lang,
           symbols: flatSymbols.map((s) => ({ name: s.name, kind: s.kind, signature: s.signature })),
+          content: buildSearchBody(content),
         });
 
-        const imports = extractImports(content, file.path);
-        for (const imp of imports) {
-          const targetRel = resolveImportPath(imp.source, file.relativePath, currentPaths, options.rootDir);
-          const targetFile = targetRel ? db.getFile(targetRel) : null;
-          db.upsertImport(fileId, imp.source, targetFile?.id ?? null, imp.type, imp.specifiers.length > 0 ? imp.specifiers : undefined);
-          totalImports++;
-        }
+        pendingImports.push({
+          fileId,
+          imports: extractImports(content, file.path),
+        });
 
         db.upsertCallSites(fileId, extractCallSites(content));
 
@@ -172,6 +273,19 @@ export async function reindex(options: ReindexOptions): Promise<string> {
         indexed++;
       } catch {
         skipped++;
+      }
+    }
+
+    const resolvablePaths = new Set([...db.getAllFiles().map((file) => file.path), ...currentPaths]);
+    for (const pending of pendingImports) {
+      const sourceFile = db.getFileById(pending.fileId);
+      if (!sourceFile) continue;
+      db.deleteImportsForFile(pending.fileId);
+      for (const imp of pending.imports) {
+        const targetRel = resolveImportPath(imp.source, sourceFile.path, resolvablePaths, options.rootDir, imp.specifiers);
+        const targetFile = targetRel ? db.getFile(targetRel) : null;
+        db.upsertImport(pending.fileId, imp.source, targetFile?.id ?? null, imp.type, imp.specifiers.length > 0 ? imp.specifiers : undefined);
+        totalImports++;
       }
     }
 
@@ -261,11 +375,12 @@ export async function quickRefresh(rootDir: string): Promise<{
     return { staleCount: 0, refreshed: false, waitedForIndexing: waitState.waited, indexingTimedOut: false };
   }
 
-  const maxStale = Math.max(1, parseInt(process.env.CONTEXTPLUS_QUICKREFRESH_MAX_FILES ?? "30", 10));
-  if (totalStale <= maxStale) {
-    const changedSymbols: string[] = [];
-    for (const path of stale) {
-      try {
+    const maxStale = Math.max(1, parseInt(process.env.CONTEXTPLUS_QUICKREFRESH_MAX_FILES ?? "30", 10));
+    if (totalStale <= maxStale) {
+      const changedSymbols: string[] = [];
+      const pendingImports: PendingImportSet[] = [];
+      for (const path of stale) {
+        try {
         const fullPath = resolveProjectPath(rootDir, path, "indexed file");
         const content = await readFile(fullPath, "utf-8");
         const hash = hashContent(content);
@@ -293,15 +408,25 @@ export async function quickRefresh(rootDir: string): Promise<{
           header: analysis.header,
           language: lang,
           symbols: flatSymbols.map((s) => ({ name: s.name, kind: s.kind, signature: s.signature })),
+          content: buildSearchBody(content),
         });
-        const imports = extractImports(content, fullPath);
-        for (const imp of imports) {
-          const targetRel = resolveImportPath(imp.source, path, currentPaths, rootDir);
-          const targetFile = targetRel ? db.getFile(targetRel) : null;
-          db.upsertImport(fileId, imp.source, targetFile?.id ?? null, imp.type, imp.specifiers.length > 0 ? imp.specifiers : undefined);
-        }
+        pendingImports.push({
+          fileId,
+          imports: extractImports(content, fullPath),
+        });
         db.upsertCallSites(fileId, extractCallSites(content));
       } catch {}
+    }
+    const resolvablePaths = new Set([...db.getAllFiles().map((file) => file.path), ...currentPaths]);
+    for (const pending of pendingImports) {
+      const sourceFile = db.getFileById(pending.fileId);
+      if (!sourceFile) continue;
+      db.deleteImportsForFile(pending.fileId);
+      for (const imp of pending.imports) {
+        const targetRel = resolveImportPath(imp.source, sourceFile.path, resolvablePaths, rootDir, imp.specifiers);
+        const targetFile = targetRel ? db.getFile(targetRel) : null;
+        db.upsertImport(pending.fileId, imp.source, targetFile?.id ?? null, imp.type, imp.specifiers.length > 0 ? imp.specifiers : undefined);
+      }
     }
     for (const path of removed) db.deleteFile(path);
     db.bumpIndexGeneration();

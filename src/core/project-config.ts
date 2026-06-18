@@ -1,5 +1,5 @@
 // Project identity, verification, registry, and pattern promotion utilities
-// FEATURE: Trust foundation for multi-project and multi-client Context+ usage
+// FEATURE: Trust foundation for multi-project and multi-client ContextPro usage
 
 import { execFile } from "child_process";
 import { createHash } from "crypto";
@@ -7,11 +7,12 @@ import { mkdir, readFile, writeFile } from "fs/promises";
 import { homedir } from "os";
 import { basename, join, resolve } from "path";
 import { promisify } from "util";
+import { CONTEXTPRO_DIR } from "./data-dir.js";
 
 const execFileAsync = promisify(execFile);
-const CONTEXTPLUS_DIR = ".contextplus";
 const CONFIG_FILE = "config.json";
-const REGISTRY_DIR = ".contextplus";
+const REGISTRY_DIR = CONTEXTPRO_DIR;
+const LEGACY_REGISTRY_DIR = ".contextplus";
 const REGISTRY_FILE = "workspace-registry.json";
 const PATTERN_FILE = "promoted-patterns.json";
 const CONFIG_VERSION = 1;
@@ -96,12 +97,22 @@ function patternPath(): string {
   return join(registryBaseDir(), PATTERN_FILE);
 }
 
+function legacyRegistryPath(fileName: string): string {
+  return join(homedir(), LEGACY_REGISTRY_DIR, fileName);
+}
+
 async function readJsonFile<T>(path: string, fallback: T): Promise<T> {
   try {
     return JSON.parse(await readFile(path, "utf-8")) as T;
   } catch {
     return fallback;
   }
+}
+
+async function readRegistryFile<T>(fileName: string, fallback: T): Promise<T> {
+  const current = await readJsonFile<T | null>(join(registryBaseDir(), fileName), null);
+  if (current !== null) return current;
+  return readJsonFile<T>(legacyRegistryPath(fileName), fallback);
 }
 
 async function writeJsonFile(path: string, value: unknown): Promise<void> {
@@ -157,7 +168,7 @@ function stringField(record: Record<string, unknown> | null, key: string): strin
 }
 
 export async function loadProjectConfig(rootDir: string): Promise<ProjectConfig | null> {
-  const configPath = join(resolve(rootDir), CONTEXTPLUS_DIR, CONFIG_FILE);
+  const configPath = join(resolve(rootDir), CONTEXTPRO_DIR, CONFIG_FILE);
   const config = await readJsonFile<ProjectConfig | null>(configPath, null);
   return config;
 }
@@ -166,7 +177,7 @@ export async function ensureProjectConfig(options: EnsureProjectConfigOptions): 
   const workspaceRoot = resolve(options.rootDir);
   const gitRoot = await detectGitRoot(workspaceRoot);
   const remoteUrl = await detectGitRemote(workspaceRoot);
-  const configPath = join(workspaceRoot, CONTEXTPLUS_DIR, CONFIG_FILE);
+  const configPath = join(workspaceRoot, CONTEXTPRO_DIR, CONFIG_FILE);
   const existing = await readJsonFile<Record<string, unknown> | null>(configPath, null);
   const projectId = normalizeNullable(options.projectId) ?? stringField(existing, "projectId") ?? defaultProjectId(workspaceRoot);
   const clientId = normalizeNullable(options.clientId) ?? normalizeNullable(stringField(existing, "clientId")) ?? null;
@@ -191,7 +202,7 @@ export async function ensureProjectConfig(options: EnsureProjectConfigOptions): 
     createdAt,
     updatedAt: new Date().toISOString(),
   };
-  await mkdir(join(workspaceRoot, CONTEXTPLUS_DIR), { recursive: true });
+  await mkdir(join(workspaceRoot, CONTEXTPRO_DIR), { recursive: true });
   await writeFile(configPath, JSON.stringify(config, null, 2) + "\n", "utf-8");
   return config;
 }
@@ -220,7 +231,7 @@ export async function verifyProjectContext(rootDir: string): Promise<VerifiedPro
     remoteUrl,
   });
   if (config.repoFingerprint !== actualFingerprint) {
-    throw new Error(`Project fingerprint mismatch for ${workspaceRoot}. Re-run init or update .contextplus/config.json.`);
+    throw new Error(`Project fingerprint mismatch for ${workspaceRoot}. Re-run init or update .contextpro/config.json.`);
   }
   return {
     rootDir: workspaceRoot,
@@ -232,7 +243,7 @@ export async function verifyProjectContext(rootDir: string): Promise<VerifiedPro
 
 export async function registerWorkspace(entry: ProjectConfig): Promise<void> {
   const path = registryPath();
-  const items = await readJsonFile<WorkspaceRegistryEntry[]>(path, []);
+  const items = await readRegistryFile<WorkspaceRegistryEntry[]>(REGISTRY_FILE, []);
   const now = new Date().toISOString();
   const next: WorkspaceRegistryEntry = {
     clientId: entry.clientId,
@@ -251,7 +262,7 @@ export async function registerWorkspace(entry: ProjectConfig): Promise<void> {
 }
 
 export async function listRegisteredWorkspaces(clientId?: string): Promise<WorkspaceRegistryEntry[]> {
-  const items = await readJsonFile<WorkspaceRegistryEntry[]>(registryPath(), []);
+  const items = await readRegistryFile<WorkspaceRegistryEntry[]>(REGISTRY_FILE, []);
   if (!clientId) return items;
   return items.filter((item) => item.clientId === clientId);
 }
@@ -264,7 +275,7 @@ export async function createPromotedPattern(input: {
   summary: string;
   sanitize: boolean;
 }): Promise<PromotedPattern> {
-  const items = await readJsonFile<PromotedPattern[]>(patternPath(), []);
+  const items = await readRegistryFile<PromotedPattern[]>(PATTERN_FILE, []);
   const pattern: PromotedPattern = {
     patternId: generateId("pattern"),
     targetScope: input.targetScope,
@@ -284,7 +295,7 @@ export async function createPromotedPattern(input: {
 }
 
 export async function listPromotedPatterns(clientId?: string): Promise<PromotedPattern[]> {
-  const items = await readJsonFile<PromotedPattern[]>(patternPath(), []);
+  const items = await readRegistryFile<PromotedPattern[]>(PATTERN_FILE, []);
   if (!clientId) return items;
   return items.filter((item) => item.clientId === clientId || item.targetScope === "global");
 }

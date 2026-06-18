@@ -770,9 +770,9 @@ export function formatGraphDashboard(graph: ProjectGraph): string {
 
 export async function writeProjectGraphArtifacts(rootDir: string): Promise<{ graph: ProjectGraph; graphPath: string; reportPath: string; dashboardPath: string }> {
   const graph = await buildProjectGraph(rootDir);
-  const graphPath = resolveProjectPath(rootDir, ".contextplus/graph.json", "graphPath");
-  const reportPath = resolveProjectPath(rootDir, ".contextplus/GRAPH_REPORT.md", "reportPath");
-  const dashboardPath = resolveProjectPath(rootDir, ".contextplus/graph-dashboard.html", "dashboardPath");
+  const graphPath = resolveProjectPath(rootDir, ".contextpro/graph.json", "graphPath");
+  const reportPath = resolveProjectPath(rootDir, ".contextpro/GRAPH_REPORT.md", "reportPath");
+  const dashboardPath = resolveProjectPath(rootDir, ".contextpro/graph-dashboard.html", "dashboardPath");
   await mkdir(dirname(graphPath), { recursive: true });
   await writeFile(graphPath, JSON.stringify(graph, null, 2) + "\n", "utf-8");
   await writeFile(reportPath, formatGraphReport(graph), "utf-8");

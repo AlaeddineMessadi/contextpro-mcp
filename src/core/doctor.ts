@@ -4,6 +4,7 @@
 import { resolve } from "path";
 import { runStartupHealthCheck, type StartupHealthReport } from "./startup-health.js";
 import { getContextPlusPackageRoot, isRepairableNativeError, repairNativeDependencies, type NativeRepairAction } from "./native-repair.js";
+import { ensureContextProDir } from "./data-dir.js";
 
 export type DoctorAction = NativeRepairAction;
 
@@ -22,6 +23,7 @@ function needsNativeRepair(report: StartupHealthReport): boolean {
 
 export async function runDoctor(rootDir: string, fix: boolean): Promise<DoctorReport> {
   const normalizedRoot = resolve(rootDir);
+  await ensureContextProDir(normalizedRoot);
   const before = await runStartupHealthCheck(normalizedRoot);
   const actions: DoctorAction[] = [];
 

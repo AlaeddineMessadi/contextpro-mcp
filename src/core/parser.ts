@@ -325,6 +325,52 @@ function parseGeneric(lines: string[]): CodeSymbol[] {
   return symbols;
 }
 
+function lineNumberAt(content: string, index: number): number {
+  return content.slice(0, index).split("\n").length;
+}
+
+function findStatementEnd(lines: string[], startLine: number): number {
+  for (let i = startLine - 1; i < lines.length; i++) {
+    const trimmed = lines[i].trim();
+    if (trimmed.endsWith(");") || trimmed === ");" || trimmed.endsWith(";")) {
+      return i + 1;
+    }
+  }
+  return startLine;
+}
+
+function addReactWrapperSymbols(content: string, lines: string[], symbols: CodeSymbol[]): CodeSymbol[] {
+  const existing = new Set(symbols.map((symbol) => symbol.name));
+  const additions: CodeSymbol[] = [];
+  const patterns = [
+    /(?:export\s+)?(?:const|let|var)\s+([A-Z][A-Za-z0-9_]*)\s*=\s*(?:React\.)?(?:memo|forwardRef)\s*\(/g,
+    /export\s+default\s+(?:React\.)?(?:memo|forwardRef)\s*\(\s*function\s+([A-Z][A-Za-z0-9_]*)\s*\(/g,
+  ];
+
+  for (const pattern of patterns) {
+    let match: RegExpExecArray | null;
+    while ((match = pattern.exec(content)) !== null) {
+      const name = match[1];
+      if (!name || existing.has(name)) continue;
+      const line = lineNumberAt(content, match.index);
+      const signature = lines[line - 1]?.trim().slice(0, 180) ?? name;
+      additions.push({
+        name,
+        kind: SymbolKind.Function,
+        line,
+        endLine: findStatementEnd(lines, line),
+        signature,
+        children: [],
+      });
+      existing.add(name);
+    }
+  }
+
+  return additions.length > 0
+    ? [...symbols, ...additions].sort((left, right) => left.line - right.line || left.name.localeCompare(right.name))
+    : symbols;
+}
+
 export async function analyzeFile(filePath: string): Promise<FileAnalysis> {
   const content = await readFile(filePath, "utf-8");
   const lines = content.split("\n");
@@ -350,6 +396,10 @@ export async function analyzeFile(filePath: string): Promise<FileAnalysis> {
       kotlin: parseJava,
     };
     symbols = (parsers[lang ?? ""] ?? parseGeneric)(lines);
+  }
+
+  if ([".ts", ".tsx", ".js", ".jsx", ".mjs"].includes(ext)) {
+    symbols = addReactWrapperSymbols(content, lines, symbols);
   }
 
   return {

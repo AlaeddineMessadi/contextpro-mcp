@@ -127,7 +127,7 @@ export function registerTools(
 
   server.tool(
     "graph_export",
-    "Export the indexed project graph to portable artifacts: .contextplus/graph.json and .contextplus/GRAPH_REPORT.md. " +
+    "Export the indexed project graph to portable artifacts: .contextpro/graph.json and .contextpro/GRAPH_REPORT.md. " +
     "Use after reindex to share exact file, symbol, import, call, test, and confidence metadata across agents.",
     {
       format: z.enum(["text", "json"]).optional().describe("Return plain text or structured JSON. Default: text."),
@@ -185,7 +185,7 @@ export function registerTools(
 
   server.tool(
     "exact_references",
-    "Find exact references using the local TypeScript/JavaScript language service or an imported SCIP JSON index. Use before rename/delete/refactor operations when available.",
+    "Find exact references using the local TypeScript/JavaScript language service, Python import/call index evidence, or an imported SCIP JSON index. Use before rename/delete/refactor operations when available.",
     {
       symbol_name: z.string().describe("Symbol name to resolve references for."),
       file: z.string().optional().describe("Optional file containing the symbol. If omitted, the indexed symbol table is used."),
@@ -203,9 +203,9 @@ export function registerTools(
 
   server.tool(
     "scip_import",
-    "Import and normalize a project-provided SCIP JSON index into .contextplus/scip-index.json so graph_export, graph_query, and exact_references can use SCIP_RESOLVED evidence.",
+    "Import and normalize a project-provided SCIP JSON index into .contextpro/scip-index.json so graph_export, graph_query, and exact_references can use SCIP_RESOLVED evidence.",
     {
-      index_path: z.string().describe("Project-relative path to a SCIP JSON index, for example .contextplus/index.scip.json."),
+      index_path: z.string().describe("Project-relative path to a SCIP JSON index, for example .contextpro/index.scip.json."),
       format: z.enum(["text", "json"]).optional().describe("Return plain text or structured JSON. Default: text."),
     },
     withRequestActivity(async ({ index_path, format }) => ({
@@ -641,11 +641,11 @@ export function registerTools(
   server.tool(
     "test_map",
     "Map source files to their test files using import graph and naming conventions. " +
-    "Modes: specific file, specific symbol, or all uncommitted changed files.",
+    "Modes: specific file, specific symbol, or changed files (dirty worktree, untracked files, or last commit when clean).",
     {
       file: z.string().optional().describe("Source file to find tests for."),
       symbol: z.string().optional().describe("Symbol name — finds which file defines it, then its tests."),
-      changed: z.boolean().optional().describe("Find tests for all uncommitted changed files."),
+      changed: z.boolean().optional().describe("Find tests for dirty/untracked files, or for the last commit when the worktree is clean."),
     },
     withRequestActivity(async ({ file, symbol, changed }) => ({
       content: [{
@@ -774,7 +774,7 @@ export function registerTools(
     "impact_delta",
     "Compare a saved graph export with the current indexed graph after edits. Use graph_export before editing, then reindex and call this to see actual structural changes.",
     {
-      baseline_path: z.string().optional().describe("Baseline graph path relative to root. Default: .contextplus/graph.json."),
+      baseline_path: z.string().optional().describe("Baseline graph path relative to root. Default: .contextpro/graph.json."),
       format: z.enum(["text", "json"]).optional().describe("Return plain text or structured JSON. Default: text."),
     },
     withRequestActivity(async ({ baseline_path, format }) => ({

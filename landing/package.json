@@ -12,7 +12,7 @@
     "cf:deploy": "opennextjs-cloudflare build && opennextjs-cloudflare deploy"
   },
   "dependencies": {
-    "contextplus": "file:..",
+    "contextpro-mcp": "file:..",
     "geist": "^1.7.0",
     "next": "16.1.6",
     "react": "19.2.3",

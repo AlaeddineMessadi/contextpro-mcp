@@ -12,6 +12,7 @@ interface ContextPlusConfig {
 }
 
 let ollamaClient: OllamaChatClient | null = null;
+const DEFAULT_OLLAMA_CHAT_MODEL = "gemma4:12b";
 const OPENAI_BASE_URL = process.env.CONTEXTPLUS_OPENAI_BASE_URL ?? process.env.OPENAI_BASE_URL ?? "https://api.openai.com/v1";
 const OPENAI_CHAT_MODEL = process.env.CONTEXTPLUS_OPENAI_CHAT_MODEL ?? process.env.OPENAI_CHAT_MODEL ?? "gpt-4o-mini";
 
@@ -23,9 +24,36 @@ async function getOllamaClient(): Promise<OllamaChatClient> {
   return ollamaClient;
 }
 
+function getErrorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  return String(error);
+}
+
+function formatOllamaChatError(error: unknown, model: string): string {
+  const message = getErrorMessage(error);
+  const lower = message.toLowerCase();
+  const installHint = "Install Ollama from https://ollama.com/download, then run `ollama serve`.";
+  const modelHint = `Run \`ollama pull ${model}\`, or set OLLAMA_CHAT_MODEL to any chat model shown by \`ollama list\`.`;
+
+  if (
+    lower.includes("econnrefused")
+    || lower.includes("fetch failed")
+    || lower.includes("connection refused")
+    || lower.includes("connect")
+  ) {
+    return `Ollama is not reachable while loading the chat model "${model}". ${installHint} ${modelHint} Original error: ${message}`;
+  }
+
+  if (lower.includes("not found") || lower.includes("no such model") || lower.includes("model")) {
+    return `Ollama chat model "${model}" is not available. ${modelHint} Original error: ${message}`;
+  }
+
+  return `Ollama chat model "${model}" failed. ${installHint} ${modelHint} Original error: ${message}`;
+}
+
 async function readContextPlusConfig(rootDir: string): Promise<ContextPlusConfig | null> {
   try {
-    const raw = await readFile(join(rootDir, ".contextplus", "config.json"), "utf-8");
+    const raw = await readFile(join(rootDir, ".contextpro", "config.json"), "utf-8");
     return JSON.parse(raw) as ContextPlusConfig;
   } catch {
     return null;
@@ -34,9 +62,12 @@ async function readContextPlusConfig(rootDir: string): Promise<ContextPlusConfig
 
 export async function hasConfiguredChatModel(rootDir: string): Promise<boolean> {
   const config = await readContextPlusConfig(rootDir);
-  const provider = (process.env.CONTEXTPLUS_CHAT_PROVIDER ?? process.env.CONTEXTPLUS_EMBED_PROVIDER ?? config?.provider ?? "ollama").toLowerCase();
+  const provider = (process.env.CONTEXTPLUS_CHAT_PROVIDER ?? config?.provider ?? "").toLowerCase();
   if (provider === "openai") {
     return Boolean(process.env.CONTEXTPLUS_OPENAI_API_KEY ?? process.env.OPENAI_API_KEY);
+  }
+  if (provider === "ollama") {
+    return Boolean(process.env.OLLAMA_CHAT_MODEL ?? config?.chatModel);
   }
   return Boolean(process.env.OLLAMA_CHAT_MODEL ?? config?.chatModel);
 }
@@ -67,15 +98,19 @@ export async function chatCompletion(rootDir: string, prompt: string): Promise<s
     return data.choices[0]?.message?.content ?? "";
   }
 
-  const model = process.env.OLLAMA_CHAT_MODEL ?? config?.chatModel;
+  const model = process.env.OLLAMA_CHAT_MODEL ?? config?.chatModel ?? DEFAULT_OLLAMA_CHAT_MODEL;
   if (!model) throw new Error("No Ollama chat model is configured.");
   const client = await getOllamaClient();
-  const response = await client.chat({
-    model,
-    messages: [{ role: "user", content: prompt }],
-    stream: false,
-  });
-  return response.message.content;
+  try {
+    const response = await client.chat({
+      model,
+      messages: [{ role: "user", content: prompt }],
+      stream: false,
+    });
+    return response.message.content;
+  } catch (error) {
+    throw new Error(formatOllamaChatError(error, model));
+  }
 }
 
 export function extractJsonBlock(raw: string): string | null {

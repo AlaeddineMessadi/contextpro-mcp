@@ -347,7 +347,7 @@ export async function autoGenerateHubData(rootDir: string): Promise<AutoHubResul
     };
   }
 
-  const hubDir = resolveProjectPath(rootDir, ".contextplus/hubs", "hubDir");
+  const hubDir = resolveProjectPath(rootDir, ".contextpro/hubs", "hubDir");
   await mkdir(hubDir, { recursive: true });
 
   const generated: string[] = [];
@@ -395,7 +395,7 @@ export async function autoGenerateHubData(rootDir: string): Promise<AutoHubResul
 
   return {
     generated,
-    message: `Auto-generated ${generated.length} feature hubs in .contextplus/hubs/:\n\n${generated.map((g) => `  - ${g}`).join("\n")}`,
+    message: `Auto-generated ${generated.length} feature hubs in .contextpro/hubs/:\n\n${generated.map((g) => `  - ${g}`).join("\n")}`,
   };
 }
 

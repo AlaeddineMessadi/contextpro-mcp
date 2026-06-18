@@ -9,7 +9,7 @@ let fixtureRoot = "";
 describe("startup health", () => {
   beforeEach(async () => {
     fixtureRoot = await mkdtemp(join(tmpdir(), "contextplus-startup-health-"));
-    await mkdir(join(fixtureRoot, ".contextplus"), { recursive: true });
+    await mkdir(join(fixtureRoot, ".contextpro"), { recursive: true });
   });
 
   afterEach(async () => {
@@ -25,6 +25,10 @@ describe("startup health", () => {
     assert.equal(report.storage.ok, true);
     assert.equal(report.storage.databaseOpen.ok, true);
     assert.equal(report.rootDir, fixtureRoot);
+
+    const formatted = mod.formatStartupHealthReport(report);
+    assert.match(formatted, /\[contextpro\/startup\]/);
+    assert.doesNotMatch(formatted, /\[contextplus\/startup\]/);
   });
 
   it("formats native dependency diagnostics with remediation steps", async () => {

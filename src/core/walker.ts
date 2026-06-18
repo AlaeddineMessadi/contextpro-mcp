@@ -36,6 +36,7 @@ const ALWAYS_IGNORE = new Set([
   ".next",
   ".nuxt",
   "target",
+  ".contextpro",
   ".contextplus",
   "coverage",
   ".cache",
@@ -56,8 +57,10 @@ async function buildLocalLayer(dir: string): Promise<IgnoreLayer | null> {
   let hasRules = false;
   const gitignoreContent = await loadIgnoreFile(join(dir, ".gitignore"));
   if (gitignoreContent) { ig.add(gitignoreContent); hasRules = true; }
-  const ctxIgnoreContent = await loadIgnoreFile(join(dir, ".contextplusignore"));
-  if (ctxIgnoreContent) { ig.add(ctxIgnoreContent); hasRules = true; }
+  const contextProIgnore = await loadIgnoreFile(join(dir, ".contextproignore"));
+  if (contextProIgnore) { ig.add(contextProIgnore); hasRules = true; }
+  const legacyContextPlusIgnore = await loadIgnoreFile(join(dir, ".contextplusignore"));
+  if (legacyContextPlusIgnore) { ig.add(legacyContextPlusIgnore); hasRules = true; }
   return hasRules ? { ig, dir } : null;
 }
 

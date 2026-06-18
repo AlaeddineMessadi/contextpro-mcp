@@ -23,16 +23,17 @@ function buildConfig(runner: string, ideId: string): string {
       {
         $schema: "https://opencode.ai/config.json",
         mcp: {
-          contextplus: {
+          contextpro: {
             type: "local",
             command: isNpx
-              ? ["npx", "-y", "contextplus"]
-              : ["bunx", "contextplus"],
+              ? ["npx", "-y", "contextpro-mcp"]
+              : ["bunx", "contextpro-mcp"],
             enabled: true,
             environment: {
-              OLLAMA_EMBED_MODEL: "nomic-embed-text",
-              OLLAMA_CHAT_MODEL: "gemma2:27b",
-              OLLAMA_API_KEY: "YOUR_OLLAMA_API_KEY",
+              CONTEXTPLUS_EMBED_PROVIDER: "ollama",
+              OLLAMA_EMBED_MODEL: "nomic-embed-text:latest",
+              OLLAMA_CHAT_MODEL: "nemotron-3-ultra:cloud",
+              CONTEXTPLUS_EMBED_TRACKER: "lazy",
             },
           },
         },
@@ -46,14 +47,15 @@ function buildConfig(runner: string, ideId: string): string {
     return JSON.stringify(
       {
         servers: {
-          contextplus: {
+          contextpro: {
             type: "stdio",
             command: isNpx ? "npx" : "bunx",
-            args: isNpx ? ["-y", "contextplus"] : ["contextplus"],
+            args: isNpx ? ["-y", "contextpro-mcp"] : ["contextpro-mcp"],
             env: {
-              OLLAMA_EMBED_MODEL: "nomic-embed-text",
-              OLLAMA_CHAT_MODEL: "gemma2:27b",
-              OLLAMA_API_KEY: "YOUR_OLLAMA_API_KEY",
+              CONTEXTPLUS_EMBED_PROVIDER: "ollama",
+              OLLAMA_EMBED_MODEL: "nomic-embed-text:latest",
+              OLLAMA_CHAT_MODEL: "nemotron-3-ultra:cloud",
+              CONTEXTPLUS_EMBED_TRACKER: "lazy",
             },
           },
         },
@@ -67,13 +69,14 @@ function buildConfig(runner: string, ideId: string): string {
   return JSON.stringify(
     {
       mcpServers: {
-        contextplus: {
+        contextpro: {
           command: isNpx ? "npx" : "bunx",
-          args: isNpx ? ["-y", "contextplus"] : ["contextplus"],
+          args: isNpx ? ["-y", "contextpro-mcp"] : ["contextpro-mcp"],
           env: {
-            OLLAMA_EMBED_MODEL: "nomic-embed-text",
-            OLLAMA_CHAT_MODEL: "gemma2:27b",
-            OLLAMA_API_KEY: "YOUR_OLLAMA_API_KEY",
+            CONTEXTPLUS_EMBED_PROVIDER: "ollama",
+            OLLAMA_EMBED_MODEL: "nomic-embed-text:latest",
+            OLLAMA_CHAT_MODEL: "nemotron-3-ultra:cloud",
+            CONTEXTPLUS_EMBED_TRACKER: "lazy",
           },
         },
       },
@@ -85,8 +88,8 @@ function buildConfig(runner: string, ideId: string): string {
 
 function buildInitCommand(runner: string, agent: string): string {
   return runner === "npx"
-    ? `npx -y contextplus init ${agent}`
-    : `bunx contextplus init ${agent}`;
+    ? `npx -y contextpro-mcp init ${agent}`
+    : `bunx contextpro-mcp init ${agent}`;
 }
 
 function highlightJson(json: string): ReactNode[] {
@@ -208,9 +211,9 @@ export default function IdeSetup() {
               marginBottom: 40,
             }}
           >
-            &ldquo;Context+ is the best thing that has happened to my
+            &ldquo;ContextPro is the best thing that has happened to my
             agent.&rdquo; Give it the semantic understanding it deserves. Add
-            Context+ to your IDE by pasting the following JSON into your MCP
+            ContextPro to your IDE by pasting the following JSON into your MCP
             configuration file.
           </p>
 
@@ -413,7 +416,7 @@ export default function IdeSetup() {
           </div>
 
           <a
-            href="https://ollama.com/settings/keys"
+            href="https://ollama.com/download"
             target="_blank"
             rel="noopener noreferrer"
             style={{
@@ -429,10 +432,10 @@ export default function IdeSetup() {
               transition: "color 0.15s",
             }}
           >
-            Before using Context+, make sure Ollama is running and install the
-            required models (for example, nomic-embed-text and gemma2:27b).{" "}
+            Before using ContextPro, make sure Ollama is running and install the
+            required models (for example, nomic-embed-text:latest and nemotron-3-ultra:cloud; use gemma4:12b or another local chat model if you do not use Ollama Cloud).{" "}
             <span style={{ textDecoration: "underline" }}>
-              Get your Ollama Cloud API key here
+              Open Ollama setup
             </span>
             <svg
               width="9"

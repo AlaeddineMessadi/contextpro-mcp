@@ -6,14 +6,14 @@ import { fetchEmbedding } from "../core/embeddings.js";
 import { getDB, type MemoryNodeInput, type MemoryNodeRow } from "../core/db.js";
 import { createPromotedPattern, listPromotedPatterns, listRegisteredWorkspaces, loadProjectConfig } from "../core/project-config.js";
 import { unifiedSearchData } from "./search.js";
-import { dirname, join } from "path";
+import { join } from "path";
 import { persistArtifact } from "../core/artifacts.js";
 import { buildFreshnessMetadata, buildTrustMetadata, getIndexState } from "../core/context-metadata.js";
 import { resolveSymbolData } from "./resolve-symbol.js";
 import {
   unique, parseMetadata, parseJsonArray,
   findTestsForFiles, getRecentDiffSummary, getProjectMemoryHits,
-  resolveFilesFromSymbols, findTextDependents, scanExactMentions, fileRisk, hubMatchesForFiles,
+  resolveFilesFromSymbols, scanExactMentions, fileRisk, hubMatchesForFiles, isTestFile,
 } from "./retrieval-helpers.js";
 import {
   type PlanningFileCandidate,
@@ -344,9 +344,20 @@ export async function buildChangeImpact(options: ChangeImpactOptions): Promise<s
     const dbFile = db.getFile(file);
     if (!dbFile) continue;
     const importers = db.getImportersOf(dbFile.id);
-    const imports = db.getImportsFrom(dbFile.id);
     const fileSymbols = unique(db.getSymbolsByFile(dbFile.id).map((symbol) => symbol.name)).slice(0, 8);
     const relevantSymbols = unique([...(options.symbols ?? []), ...fileSymbols]);
+    for (const symbol of relevantSymbols) {
+      for (const call of db.getCallersOf(symbol)) {
+        const callerFile = indexedFiles.find((candidate) => candidate.id === call.file_id);
+        if (!callerFile || callerFile.path === file) continue;
+        upsertRanked(affected, {
+          path: callerFile.path,
+          kind: isTestFile(callerFile.path) ? "test_call_site" : "call_site",
+          score: isTestFile(callerFile.path) ? 0.84 : 0.86,
+          reason: `Calls ${symbol} at L${call.line}`,
+        });
+      }
+    }
     if (importers.length > 0) reasons.push(`${file} has ${importers.length} importers`);
     for (const importer of importers) {
       const source = indexedFiles.find((candidate) => candidate.id === importer.source_file_id);
@@ -355,7 +366,7 @@ export async function buildChangeImpact(options: ChangeImpactOptions): Promise<s
       const symbolOverlap = importedSymbols.filter((symbol) => relevantSymbols.includes(symbol));
       upsertRanked(affected, {
         path: source.path,
-        kind: /\.test\.\w+$|\.spec\.\w+$|\.demo\.\w+$/.test(source.path)
+        kind: isTestFile(source.path)
           ? "test_importer"
           : symbolOverlap.length > 0
             ? "symbol_importer"
@@ -366,29 +377,18 @@ export async function buildChangeImpact(options: ChangeImpactOptions): Promise<s
           : `Imports ${file}`,
       });
     }
-    for (const imp of imports) {
-      const target = indexedFiles.find((candidate) => candidate.id === imp.target_file_id);
-      if (!target) continue;
-      upsertRanked(affected, {
-        path: target.path,
-        kind: "dependency",
-        score: 0.42,
-        reason: `${file} depends on ${target.path}`,
-      });
-    }
     const candidateMentionFiles = unique([
       ...importers.map((importer) => indexedFiles.find((candidate) => candidate.id === importer.source_file_id)?.path ?? "").filter(Boolean),
       ...targetTests.map((test) => test.path),
-      ...indexedFiles.filter((candidate) => dirname(candidate.path) === dirname(file)).map((candidate) => candidate.path),
     ]);
     const exactMentions = await scanExactMentions(options.rootDir, candidateMentionFiles, relevantSymbols);
     for (const dependent of exactMentions) {
       if (dependent === file) continue;
       upsertRanked(affected, {
         path: dependent,
-        kind: /\.test\.\w+$|\.spec\.\w+$|\.demo\.\w+$/.test(dependent) ? "symbol_test_match" : "symbol_reference",
-        score: /\.test\.\w+$|\.spec\.\w+$|\.demo\.\w+$/.test(dependent) ? 0.78 : 0.58,
-        reason: `Exact mention of ${relevantSymbols.find((symbol) => symbol && exactMentions.includes(dependent)) ? "target symbol" : "target file context"}`,
+        kind: isTestFile(dependent) ? "symbol_test_match" : "symbol_reference",
+        score: isTestFile(dependent) ? 0.78 : 0.58,
+        reason: "Exact mention of target symbol in graph-related file",
       });
     }
   }
@@ -858,7 +858,7 @@ export async function recordTaskMemory(options: MemoryRecordTaskOptions): Promis
     content: contentParts.join("\n"),
     metadata,
   } satisfies MemoryNodeInput;
-  const taskMemoryId = db.upsertMemoryNode(node, embedding);
+  const taskMemoryId = db.upsertMemoryNode(node, embedding.length > 0 ? embedding : undefined);
   const linkedNodes: string[] = [];
   for (const file of options.files ?? []) {
     const fileNodeId = db.upsertMemoryNode({

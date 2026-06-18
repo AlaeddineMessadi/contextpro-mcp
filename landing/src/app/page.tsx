@@ -92,7 +92,7 @@ const toolRefRows = [
 async function getStars(): Promise<number> {
   try {
     const res = await fetch(
-      "https://api.github.com/repos/ForLoopCodes/contextplus",
+      "https://api.github.com/repos/AlaeddineMessadi/contextpro-mcp",
       { cache: "no-store" },
     );
     if (!res.ok) {
@@ -157,9 +157,9 @@ export default async function Home() {
               backgroundClip: "text",
             }}
           >
-            Context+ is an MCP server designed for developers who demand 99%
+            ContextPro is an MCP server designed for developers who demand 99%
             accuracy. By combining RAG, Treesitter AST & Spectral
-            Clustering, Context+ turns a massive codebase into a searchable,
+            Clustering, ContextPro turns a massive codebase into a searchable,
             hierarchical graph.
           </p>
         </section>
@@ -218,7 +218,7 @@ export default async function Home() {
             marginBottom: 40,
           }}
         >
-          Context+ guarantees minimal context bloat. It gives your agent deep
+          ContextPro guarantees minimal context bloat. It gives your agent deep
           semantic understanding of your codebase, from AST parsing and symbol
           navigation to blast radius analysis and commit validation. Nothing
           misses the context, with RAG.
@@ -423,11 +423,11 @@ export default async function Home() {
             color: "var(--text-primary)",
           }}
         >
-          Context+
+          ContextPro
         </span>
         <div style={{ display: "flex", gap: 16, alignItems: "center" }}>
           <a
-            href="https://www.npmjs.com/package/contextplus"
+            href="https://www.npmjs.com/package/contextpro-mcp"
             target="_blank"
             rel="noopener noreferrer"
             className="flex items-center"
@@ -442,7 +442,7 @@ export default async function Home() {
             </svg>
           </a>
           <a
-            href="https://github.com/ForLoopCodes/contextplus"
+            href="https://github.com/AlaeddineMessadi/contextpro-mcp"
             target="_blank"
             rel="noopener noreferrer"
             className="flex items-center"

@@ -38,7 +38,7 @@ interface PersistArtifactOptions<T = unknown> {
   payload: T;
 }
 
-const ARTIFACT_DIR = ".contextplus/artifacts";
+const ARTIFACT_DIR = ".contextpro/artifacts";
 const MANIFEST_FILE = "manifest.json";
 const MANIFEST_LOCK_FILE = "manifest.lock";
 const LOCK_RETRY_MS = 40;

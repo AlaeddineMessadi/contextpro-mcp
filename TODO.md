@@ -32,11 +32,11 @@ ai agents are not allowed to change this file's content without human approval, 
 - [x] create a new memory system that uses a graph database and md files and vector database for storing memories
   - [x] add tool for updating memories with new information that updates the embeddings depending on the changes made to the content and the agent should use this instead of directly updating the content in the file
   - [x] update other tools to use the new memory system too, alongside with tools that save nodes and edges automatically and creates embeddings automatically when a new node or edge is created or deleted
-- [x] create a new tool called init that initializes the project by creating a context tree and .contextplus folder
-  - [x] use .contextplus/hubs for feature hubs
-  - [x] use .contextplus/embeddings for storing file and symbol embeddings
-  - [x] use .contextplus/config for configuration files
-  - [x] use .contextplus/memories for memory graph data
+- [x] create a new tool called init that initializes the project by creating a context tree and .contextpro folder
+  - [x] use .contextpro/hubs for feature hubs
+  - [x] use .contextpro/embeddings for storing file and symbol embeddings
+  - [x] use .contextpro/config for configuration files
+  - [x] use .contextpro/memories for memory graph data
 
 ---
 
@@ -62,7 +62,7 @@ new features:
   - [ ] load session memoies from acp into the memory graph
   - [ ] cli: see all sessions of all agents in list and add semantic search in cli
   - [ ] cli: see all memories of all agents in list and add semantic search in cli
-  - [ ] use .contextplus/external_memories for storing acp imported memories and sessions
+  - [ ] use .contextpro/external_memories for storing acp imported memories and sessions
 - [ ] faster and cleaner agent protocol access
 - [ ] faster tool execution and cleaner outputs and better error handling and reporting with suggestions like "this tool failed, you can do this instead, it will work the same"
 - [ ] better treesitter support and tools for using it to understand code structure and semantics better

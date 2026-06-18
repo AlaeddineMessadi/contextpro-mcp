@@ -11,7 +11,7 @@ describe("project-config", () => {
   beforeEach(async () => {
     fixtureRoot = await mkdtemp(join(tmpdir(), "contextplus-project-config-"));
     process.env.HOME = fixtureRoot;
-    await mkdir(join(fixtureRoot, ".contextplus"), { recursive: true });
+    await mkdir(join(fixtureRoot, ".contextpro"), { recursive: true });
   });
 
   afterEach(async () => {
@@ -21,11 +21,11 @@ describe("project-config", () => {
 
   it("adds project identity without dropping provider config", async () => {
     await writeFile(
-      join(fixtureRoot, ".contextplus", "config.json"),
+      join(fixtureRoot, ".contextpro", "config.json"),
       JSON.stringify({
         provider: "ollama",
-        embedModel: "nomic-embed-text",
-        chatModel: "llama3.2",
+        embedModel: "nomic-embed-text:latest",
+        chatModel: "nemotron-3-ultra:cloud",
       }, null, 2),
     );
 
@@ -40,10 +40,10 @@ describe("project-config", () => {
     assert.equal(config.projectId, "demo-project");
     assert.equal(config.clientId, "demo-client");
     assert.equal(config.provider, "ollama");
-    assert.equal(config.embedModel, "nomic-embed-text");
+    assert.equal(config.embedModel, "nomic-embed-text:latest");
     assert.equal(config.sessionSource, "codex");
 
-    const saved = JSON.parse(await readFile(join(fixtureRoot, ".contextplus", "config.json"), "utf-8"));
+    const saved = JSON.parse(await readFile(join(fixtureRoot, ".contextpro", "config.json"), "utf-8"));
     assert.equal(saved.projectId, "demo-project");
     assert.equal(saved.provider, "ollama");
   });

@@ -68,9 +68,17 @@ function buildAmbiguities(input: {
   files?: SemanticCodeSearchData;
   identifiers?: SemanticIdentifierSearchData;
 }): string[] {
+  const filesAllKeywordOnly = input.files
+    && input.files.results.length > 0
+    && input.files.results.every((result) => result.semanticScore <= 0);
+  const identifiersAllKeywordOnly = input.identifiers
+    && input.identifiers.results.length > 0
+    && input.identifiers.results.every((result) => result.semanticScore <= 0);
   return [
     ...(input.files && input.files.results.length === 0 ? ["no file matches found"] : []),
     ...(input.identifiers && input.identifiers.results.length === 0 ? ["no identifier matches found"] : []),
+    ...(filesAllKeywordOnly ? ["file search is keyword-only because semantic embeddings are unavailable or empty"] : []),
+    ...(identifiersAllKeywordOnly ? ["identifier search is keyword-only because semantic embeddings are unavailable or empty"] : []),
     ...(input.files && input.files.results.length > 1 && Math.abs(input.files.results[0].score - input.files.results[1].score) < 5
       ? ["top file matches are close in score"]
       : []),

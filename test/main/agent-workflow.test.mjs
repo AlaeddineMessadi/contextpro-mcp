@@ -137,12 +137,14 @@ describe("agent workflow metadata", () => {
     assert.equal(storedSearch?.payload.query, "auth session middleware");
 
     const hubs = await hubMod.discoverHubs(fixtureRoot);
-    assert.ok(hubs.some((hub) => hub.startsWith(".contextplus/hubs/")));
+    assert.ok(hubs.some((hub) => hub.startsWith(".contextpro/hubs/")));
 
     metricsMod.recordToolTiming(fixtureRoot, "search", 12, "ok");
     const status = await statusMod.getStatusData({ rootDir: fixtureRoot, format: "json" });
     assert.ok(status.tools.timings.some((timing) => timing.tool === "search"));
     assert.ok(status.index.autoHubCount >= 1);
+    assert.equal(status.embeddings.vectorTablesReady, true);
+    assert.ok(status.embeddings.fileSearch > 0);
   });
 
   it("keeps artifact manifest readable under concurrent writes", async () => {

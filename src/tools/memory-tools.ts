@@ -165,7 +165,7 @@ export async function toolUpsertMemoryNode(options: UpsertMemoryNodeOptions): Pr
     content: options.content,
     metadata,
   } satisfies MemoryNodeInput;
-  const id = db.upsertMemoryNode(node, embedding);
+  const id = db.upsertMemoryNode(node, embedding.length > 0 ? embedding : undefined);
   db.ensureGraphFresh();
   const stats = db.getGraphStats();
   return [
@@ -294,8 +294,8 @@ export async function toolAddInterlinkedContext(options: AddInterlinkedContextOp
       label: item.label,
       content: item.content,
       metadata: metadataItems[i],
-    }, embedding);
-    createdVectors.set(id, embedding);
+    }, embedding.length > 0 ? embedding : undefined);
+    if (embedding.length > 0) createdVectors.set(id, embedding);
     nodes.push({ id, type: item.type, label: item.label });
   }
 

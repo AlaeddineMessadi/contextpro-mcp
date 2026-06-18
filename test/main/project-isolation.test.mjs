@@ -12,8 +12,8 @@ describe("project isolation", () => {
   before(async () => {
     await rm(ROOT_A, { recursive: true, force: true });
     await rm(ROOT_B, { recursive: true, force: true });
-    await mkdir(join(ROOT_A, ".contextplus"), { recursive: true });
-    await mkdir(join(ROOT_B, ".contextplus"), { recursive: true });
+    await mkdir(join(ROOT_A, ".contextpro"), { recursive: true });
+    await mkdir(join(ROOT_B, ".contextpro"), { recursive: true });
     dbModule = await import("../../build/core/db.js");
   });
 

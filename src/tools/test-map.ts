@@ -2,10 +2,10 @@
 // FEATURE: TestMap — which tests cover which code
 
 import { getDB } from "../core/db.js";
-import { walkDirectory } from "../core/walker.js";
 import { execFile } from "child_process";
 import { promisify } from "util";
-import { extname, dirname } from "path";
+import { findTestsForFiles, isTestFile } from "./retrieval-helpers.js";
+import { isSupportedFile } from "../core/parser.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -16,50 +16,38 @@ export interface TestMapOptions {
   changed?: boolean;
 }
 
-const TEST_PATTERNS = [
-  /\.test\.\w+$/,
-  /\.spec\.\w+$/,
-  /\.test\.\w+\.mjs$/,
-  /\.demo\.\w+$/,
-];
-
-function isTestFile(path: string): boolean {
-  return TEST_PATTERNS.some((p) => p.test(path));
-}
-
-function findTestsByConvention(sourceFile: string, allFiles: string[]): string[] {
-  const base = sourceFile.replace(/\.\w+$/, "").split("/").pop() ?? "";
-  return allFiles.filter((f) => {
-    if (!isTestFile(f)) return false;
-    const testBase = f.replace(/\.\w+$/, "").replace(/\.(test|spec|demo)$/, "").split("/").pop() ?? "";
-    return testBase === base;
-  });
-}
-
 async function getChangedFiles(rootDir: string): Promise<string[]> {
   try {
-    const [{ stdout: unstaged }, { stdout: staged }] = await Promise.all([
+    const [{ stdout: unstaged }, { stdout: staged }, { stdout: untracked }] = await Promise.all([
       execFileAsync("git", ["diff", "--name-only"], { cwd: rootDir, timeout: 5000 }),
       execFileAsync("git", ["diff", "--name-only", "--cached"], { cwd: rootDir, timeout: 5000 }),
+      execFileAsync("git", ["ls-files", "--others", "--exclude-standard"], { cwd: rootDir, timeout: 5000 }),
     ]);
-    return [...new Set(`${unstaged}\n${staged}`.trim().split("\n").filter((l) => l.trim()))];
+    const dirty = [...new Set(`${unstaged}\n${staged}\n${untracked}`.trim().split("\n").filter((l) => l.trim()))]
+      .filter(isSourceTarget);
+    if (dirty.length > 0) return dirty;
+    const { stdout: recent } = await execFileAsync("git", ["diff-tree", "--root", "--no-commit-id", "--name-only", "-r", "HEAD"], { cwd: rootDir, timeout: 5000 });
+    return [...new Set(recent.trim().split("\n").filter((line) => line.trim()))].filter(isSourceTarget);
   } catch {
     return [];
   }
 }
 
+function isSourceTarget(path: string): boolean {
+  return !path.startsWith(".contextpro/")
+    && !path.startsWith(".contextplus/")
+    && !isTestFile(path)
+    && isSupportedFile(path);
+}
+
 export async function getTestMap(options: TestMapOptions): Promise<string> {
   const db = await getDB(options.rootDir);
-  const entries = await walkDirectory({ rootDir: options.rootDir, depthLimit: 0 });
-  const allFiles = entries.filter((e) => !e.isDirectory).map((e) => e.relativePath);
-  const testFiles = allFiles.filter(isTestFile);
-  const sourceFiles = allFiles.filter((f) => !isTestFile(f));
 
   let targetFiles: string[] = [];
 
   if (options.changed) {
     targetFiles = await getChangedFiles(options.rootDir);
-    targetFiles = targetFiles.filter((f) => !isTestFile(f));
+    targetFiles = targetFiles.filter(isSourceTarget);
   } else if (options.file) {
     targetFiles = [options.file];
   } else if (options.symbol) {
@@ -70,35 +58,18 @@ export async function getTestMap(options: TestMapOptions): Promise<string> {
   }
 
   if (targetFiles.length === 0) {
-    return options.changed ? "No uncommitted changes to map." : "No target files specified. Use file, symbol, or changed parameter.";
+    return options.changed ? "No changed or recently committed source files to map." : "No target files specified. Use file, symbol, or changed parameter.";
   }
 
   const lines: string[] = [`=== Test Map ===`, ""];
 
   for (const file of targetFiles) {
-    const conventionTests = findTestsByConvention(file, testFiles);
-
-    const dbFile = db.getFile(file);
-    const importerTests: string[] = [];
-    if (dbFile) {
-      const importers = db.getImportersOf(dbFile.id);
-      const allDbFiles = db.getAllFiles();
-      for (const imp of importers) {
-        const srcFile = allDbFiles.find((f) => f.id === imp.source_file_id);
-        if (srcFile && isTestFile(srcFile.path)) {
-          importerTests.push(srcFile.path);
-        }
-      }
-    }
-
-    const allTests = [...new Set([...conventionTests, ...importerTests])];
+    const allTests = await findTestsForFiles(options.rootDir, [file]);
 
     lines.push(`${file}:`);
     if (allTests.length > 0) {
-      for (const t of allTests) {
-        const source = conventionTests.includes(t) && importerTests.includes(t) ? "convention+import"
-          : conventionTests.includes(t) ? "convention" : "import";
-        lines.push(`  → ${t} (${source})`);
+      for (const test of allTests) {
+        lines.push(`  → ${test.path} (${test.reason}, ${Math.round(test.score * 100)}%)`);
       }
     } else {
       lines.push("  ⚠ No tests found");
@@ -107,10 +78,10 @@ export async function getTestMap(options: TestMapOptions): Promise<string> {
   }
 
   const totalMapped = targetFiles.length;
-  const withTests = targetFiles.filter((f) => {
-    const ct = findTestsByConvention(f, testFiles);
-    return ct.length > 0;
-  }).length;
+  let withTests = 0;
+  for (const file of targetFiles) {
+    if ((await findTestsForFiles(options.rootDir, [file])).length > 0) withTests++;
+  }
 
   lines.push(`Coverage: ${withTests}/${totalMapped} files have tests`);
 
