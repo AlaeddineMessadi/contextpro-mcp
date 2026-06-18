@@ -20,18 +20,44 @@ describe("root guard", () => {
     const mod = await import("../../build/core/root-guard.js");
     assert.throws(
       () => mod.validateSelectedRoot({ rootDir: "/", source: "cwd" }),
-      /Unsafe implicit root/,
+      /Unsafe project root/,
     );
   });
 
-  it("allows unsafe root when explicit or override set", async () => {
+  it("rejects unsafe --root flag at filesystem root", async () => {
     const mod = await import("../../build/core/root-guard.js");
-    assert.doesNotThrow(() => mod.validateSelectedRoot({ rootDir: "/", source: "flag" }));
+    const previous = process.env.CONTEXTPRO_ALLOW_UNSAFE_ROOT;
+    delete process.env.CONTEXTPRO_ALLOW_UNSAFE_ROOT;
+    delete process.env.CONTEXTPLUS_ALLOW_UNSAFE_ROOT;
+    assert.throws(
+      () => mod.validateSelectedRoot({ rootDir: "/", source: "flag" }),
+      /Unsafe project root/,
+    );
+    if (previous !== undefined) process.env.CONTEXTPRO_ALLOW_UNSAFE_ROOT = previous;
+  });
 
-    const previous = process.env.CONTEXTPLUS_ALLOW_UNSAFE_ROOT;
+  it("allows unsafe root when override env is set", async () => {
+    const mod = await import("../../build/core/root-guard.js");
+    const previousNew = process.env.CONTEXTPRO_ALLOW_UNSAFE_ROOT;
+    const previousLegacy = process.env.CONTEXTPLUS_ALLOW_UNSAFE_ROOT;
+    process.env.CONTEXTPRO_ALLOW_UNSAFE_ROOT = "true";
+    assert.doesNotThrow(() => mod.validateSelectedRoot({ rootDir: "/", source: "cwd" }));
+    assert.doesNotThrow(() => mod.validateSelectedRoot({ rootDir: "/", source: "flag" }));
+    if (previousNew === undefined) delete process.env.CONTEXTPRO_ALLOW_UNSAFE_ROOT;
+    else process.env.CONTEXTPRO_ALLOW_UNSAFE_ROOT = previousNew;
+    if (previousLegacy === undefined) delete process.env.CONTEXTPLUS_ALLOW_UNSAFE_ROOT;
+    else process.env.CONTEXTPLUS_ALLOW_UNSAFE_ROOT = previousLegacy;
+  });
+
+  it("legacy CONTEXTPLUS_ALLOW_UNSAFE_ROOT still works", async () => {
+    const mod = await import("../../build/core/root-guard.js");
+    const previousNew = process.env.CONTEXTPRO_ALLOW_UNSAFE_ROOT;
+    const previousLegacy = process.env.CONTEXTPLUS_ALLOW_UNSAFE_ROOT;
+    delete process.env.CONTEXTPRO_ALLOW_UNSAFE_ROOT;
     process.env.CONTEXTPLUS_ALLOW_UNSAFE_ROOT = "true";
     assert.doesNotThrow(() => mod.validateSelectedRoot({ rootDir: "/", source: "cwd" }));
-    if (previous === undefined) delete process.env.CONTEXTPLUS_ALLOW_UNSAFE_ROOT;
-    else process.env.CONTEXTPLUS_ALLOW_UNSAFE_ROOT = previous;
+    if (previousNew !== undefined) process.env.CONTEXTPRO_ALLOW_UNSAFE_ROOT = previousNew;
+    if (previousLegacy === undefined) delete process.env.CONTEXTPLUS_ALLOW_UNSAFE_ROOT;
+    else process.env.CONTEXTPLUS_ALLOW_UNSAFE_ROOT = previousLegacy;
   });
 });

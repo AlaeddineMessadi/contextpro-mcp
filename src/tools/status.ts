@@ -18,6 +18,21 @@ export interface StatusOptions {
   format?: "text" | "json";
 }
 
+export interface EmbeddingStatus {
+  vectorTablesReady: boolean;
+  dimension: number | null;
+  total: number;
+  fileSearch: number;
+  identifiers: number;
+  memory: number;
+  provider: string | null;
+  model: string | null;
+  stale: boolean;
+  staleReason: string | null;
+  lastReindexSkipped: boolean;
+  lastReindexError: string | null;
+}
+
 export interface StatusSnapshot {
   repo: {
     root: string;
@@ -48,14 +63,7 @@ export interface StatusSnapshot {
     nodes: number;
     edges: number;
   };
-  embeddings: {
-    vectorTablesReady: boolean;
-    dimension: number | null;
-    total: number;
-    fileSearch: number;
-    identifiers: number;
-    memory: number;
-  };
+  embeddings: EmbeddingStatus;
   git: {
     branch: string;
     uncommitted: number;
@@ -115,6 +123,20 @@ export async function getStatusData(options: StatusOptions): Promise<StatusSnaps
   const indexedFiles = db.getAllFiles().filter((file) => isSupportedFile(file.path));
   const graphStats = db.getGraphStats();
   const embeddingStats = db.getEmbeddingStats();
+  const staleState = db.isEmbeddingsStale();
+  const lastEmbedSkipped = db.getMeta("last_embed_skipped") === "true";
+  const lastEmbedError = db.getMeta("last_embed_error");
+  const embedProvider = db.getMeta("embed_provider");
+  const embedModel = db.getMeta("embed_model");
+  const embeddings: EmbeddingStatus = {
+    ...embeddingStats,
+    provider: embedProvider,
+    model: embedModel,
+    stale: staleState.stale,
+    staleReason: staleState.reason,
+    lastReindexSkipped: lastEmbedSkipped,
+    lastReindexError: lastEmbedError && lastEmbedError.length > 0 ? lastEmbedError : null,
+  };
   const staleCount = indexedFiles.filter((f) => !allFiles.some((e) => e.relativePath === f.path)).length;
   const warnings: string[] = [];
   if (indexState.state === "empty") warnings.push("Index is empty. Run reindex to populate the database.");
@@ -123,8 +145,20 @@ export async function getStatusData(options: StatusOptions): Promise<StatusSnaps
   if (indexState.missingIndexedFiles > 0) warnings.push(`${indexState.missingIndexedFiles} supported source files are not indexed yet.`);
   if (indexState.removedIndexedFiles > 0 || staleCount > 0) warnings.push(`${Math.max(indexState.removedIndexedFiles, staleCount)} indexed files no longer match the current workspace.`);
   if (indexState.state === "stale" && warnings.length === 0) warnings.push("Index is stale. Run reindex to refresh.");
-  if (indexedFiles.length > 0 && embeddingStats.fileSearch === 0) {
-    warnings.push("Semantic file embeddings are empty. Search/start_task will fall back to keyword ranking until an embedding model is reachable.");
+
+  if (indexedFiles.length > 0 && embeddings.fileSearch === 0) {
+    if (embeddings.lastReindexSkipped) {
+      warnings.push("Semantic embeddings are skipped (CONTEXTPRO_REINDEX_NO_EMBED or no_embed=true). Search/start_task will fall back to keyword ranking. Run reindex without no_embed to populate.");
+    } else if (embeddings.lastReindexError) {
+      warnings.push(`Semantic embeddings are empty because the last reindex hit an error: ${embeddings.lastReindexError.slice(0, 200)}. Search/start_task will fall back to keyword ranking. Fix the cause and rerun reindex.`);
+    } else if (indexState.state === "empty") {
+      warnings.push("Semantic embeddings are empty because the index has never been built. Run reindex.");
+    } else {
+      warnings.push("Semantic embeddings are empty. They will populate lazily on the first search call (cold cost depends on file count). Run reindex to warm them eagerly.");
+    }
+  }
+  if (embeddings.stale) {
+    warnings.push(`Embeddings flagged stale: ${embeddings.staleReason ?? "unknown reason"}. Run reindex to rebuild.`);
   }
 
   return {
@@ -157,7 +191,7 @@ export async function getStatusData(options: StatusOptions): Promise<StatusSnaps
       nodes: graphStats.totalNodes,
       edges: graphStats.totalEdges,
     },
-    embeddings: embeddingStats,
+    embeddings,
     git,
     tools: {
       timings: getToolTimingSnapshots(options.rootDir),
@@ -203,6 +237,7 @@ export async function getStatus(options: StatusOptions): Promise<string> {
     `--- Embeddings ---`,
     `Vector tables: ${snapshot.embeddings.vectorTablesReady ? "ready" : "not initialized"} | Dimension: ${snapshot.embeddings.dimension ?? "unknown"}`,
     `File search: ${snapshot.embeddings.fileSearch} | Identifiers: ${snapshot.embeddings.identifiers} | Memory: ${snapshot.embeddings.memory}`,
+    `Provider: ${snapshot.embeddings.provider ?? "unknown"} | Model: ${snapshot.embeddings.model ?? "unknown"}${snapshot.embeddings.stale ? " | STALE" : ""}`,
     ``,
     `--- Git ---`,
     `Uncommitted changes: ${snapshot.git.uncommitted}`,

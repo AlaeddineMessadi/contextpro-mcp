@@ -52,20 +52,25 @@ The memory graph is a **Retrieval-Augmented Generation (RAG)** system backed by 
 
 ## Environment Variables
 
+Canonical prefix is `CONTEXTPRO_*` (since 1.2.0). Legacy `CONTEXTPLUS_*` names continue to work as aliases through 2.0.
+
 | Variable                                | Recommended          | Description                                                      |
 | --------------------------------------- | -------------------- | ---------------------------------------------------------------- |
-| `CONTEXTPLUS_EMBED_PROVIDER`            | `ollama`             | Embedding provider: `ollama` or `openai`                         |
+| `CONTEXTPRO_EMBED_PROVIDER`             | `ollama`             | Embedding provider: `ollama` or `openai`                         |
 | `OLLAMA_EMBED_MODEL`                    | `nomic-embed-text:latest` | Embedding model name                                             |
 | `OLLAMA_CHAT_MODEL`                     | `nemotron-3-ultra:cloud` | Chat model for cluster labeling and hub name derivation          |
-| `CONTEXTPLUS_EMBED_BATCH_SIZE`          | `8`                  | Embedding batch per GPU call (hard-capped to 5-10)               |
-| `CONTEXTPLUS_EMBED_TRACKER`             | `lazy`               | Enable realtime embedding updates for changed files/functions    |
-| `CONTEXTPLUS_EMBED_TRACKER_MAX_FILES`   | `8`                  | Max changed files per tracker tick (hard-capped to 5-10)         |
-| `CONTEXTPLUS_EMBED_TRACKER_DEBOUNCE_MS` | `700`                | Debounce before applying tracker refresh                         |
-| `CONTEXTPLUS_SESSION_ID`                | (empty)              | Session identifier for session-scoped memory isolation           |
-| `CONTEXTPLUS_SESSION_SOURCE`            | `mcp`                | Session source tag stored in memory node metadata                |
-| `CONTEXTPLUS_QUICKREFRESH_MAX_FILES`    | `30`                 | Max stale files auto-patched per search call before warning      |
-| `CONTEXTPLUS_NATIVE_AUTO_REPAIR`        | `true`               | Auto-repair native SQLite bindings for the current Node runtime  |
-| `CONTEXTPLUS_ALLOW_UNSAFE_ROOT`         | `false`              | Allow cwd fallback from `/` or home-level directories            |
+| `CONTEXTPRO_EMBED_BATCH_SIZE`           | `8`                  | Embedding batch per GPU call (hard-capped to 5-10)               |
+| `CONTEXTPRO_EMBED_TRACKER`              | `lazy`               | Enable realtime embedding updates for changed files/functions    |
+| `CONTEXTPRO_EMBED_TRACKER_MAX_FILES`    | `8`                  | Max changed files per tracker tick (hard-capped to 5-10)         |
+| `CONTEXTPRO_EMBED_TRACKER_DEBOUNCE_MS`  | `700`                | Debounce before applying tracker refresh                         |
+| `CONTEXTPRO_SESSION_ID`                 | (empty)              | Session identifier for session-scoped memory isolation           |
+| `CONTEXTPRO_SESSION_SOURCE`             | `mcp`                | Session source tag stored in memory node metadata                |
+| `CONTEXTPRO_QUICKREFRESH_MAX_FILES`     | `30`                 | Max stale files auto-patched per search call before warning      |
+| `CONTEXTPRO_NATIVE_AUTO_REPAIR`         | `true`               | Auto-repair native SQLite bindings for the current Node runtime  |
+| `CONTEXTPRO_ALLOW_UNSAFE_ROOT`          | `false`              | Allow root selection at filesystem root or home-level dirs       |
+| `CONTEXTPRO_REINDEX_NO_EMBED`           | `false`              | Skip eager embedding population during reindex (keyword-only)    |
+| `CONTEXTPRO_INSTRUCTIONS_REMOTE`        | `false`              | Fetch instructions from remote URL instead of bundled file       |
+| `CONTEXTPRO_INSTRUCTIONS_REMOTE_URL`    | (defaults)           | Override remote instructions URL                                 |
 
 Runtime cache: `.contextpro/` is created at MCP startup and stores reusable embedding vectors for files, identifiers, call sites, and artifact payloads. A realtime tracker watches file updates and refreshes changed function/file embeddings incrementally.
 

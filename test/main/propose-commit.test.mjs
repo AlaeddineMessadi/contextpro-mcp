@@ -57,7 +57,7 @@ describe("propose-commit", async () => {
       );
     });
 
-    it("rejects files with many inline comments", async () => {
+    it("warns about many inline comments without rejecting in default mode", async () => {
       const lines = ["// H1", "// H2", ""];
       for (let i = 0; i < 10; i++) lines.push("// bad comment " + i);
       lines.push("function x() {}");
@@ -67,7 +67,22 @@ describe("propose-commit", async () => {
         filePath: "many.ts",
         newContent: content,
       });
-      assert.ok(result.includes("REJECTED") || result.includes("violation"));
+      assert.ok(result.includes("saved") || result.includes("✅"));
+      assert.ok(result.includes("comment") || result.includes("⚠"));
+    });
+
+    it("rejects in strict mode when issues are present", async () => {
+      const lines = ["// H1", "// H2", ""];
+      for (let i = 0; i < 10; i++) lines.push("// bad comment " + i);
+      lines.push("function x() {}");
+      const content = lines.join("\n");
+      const result = await proposeCommit({
+        rootDir: FIXTURE_DIR,
+        filePath: "strict.ts",
+        newContent: content,
+        strict: true,
+      });
+      assert.ok(result.includes("REJECTED") || result.includes("blocking"));
     });
 
     it("warns about high nesting depth", async () => {

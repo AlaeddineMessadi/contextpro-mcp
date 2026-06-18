@@ -1,12 +1,10 @@
-// Shadow git branch manager for safe AI change tracking
-// Creates restore points on hidden branch without polluting main history
+// Shadow restore-point manager for safe AI change tracking
+// Backups files via JSON manifest before edits; no real git history pollution
 
-import { simpleGit, type SimpleGit } from "simple-git";
 import { readFile, writeFile, mkdir } from "fs/promises";
 import { join, dirname } from "path";
 import { resolveProjectPath, toProjectRelativePath } from "../core/path-guard.js";
 
-const SHADOW_BRANCH = "mcp-shadow-history";
 const DATA_DIR = ".contextpro/backups";
 
 export interface RestorePoint {
@@ -26,7 +24,11 @@ async function loadManifest(rootDir: string): Promise<RestorePoint[]> {
   const manifestPath = join(rootDir, DATA_DIR, "restore-points.json");
   try {
     return JSON.parse(await readFile(manifestPath, "utf-8"));
-  } catch {
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      const message = error instanceof Error ? error.message : String(error);
+      process.stderr.write(`[contextpro/shadow] manifest read failed: ${message}\n`);
+    }
     return [];
   }
 }
@@ -49,7 +51,11 @@ export async function createRestorePoint(rootDir: string, files: string[], messa
       const content = await readFile(fullPath, "utf-8");
       const backupPath = join(backupDir, file.replace(/[\\/]/g, "__"));
       await writeFile(backupPath, content);
-    } catch {
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+        const message = error instanceof Error ? error.message : String(error);
+        process.stderr.write(`[contextpro/shadow] backup failed for ${file}: ${message}\n`);
+      }
     }
   }
 
@@ -78,7 +84,9 @@ export async function restorePoint(rootDir: string, pointId: string): Promise<st
       await mkdir(dirname(targetPath), { recursive: true });
       await writeFile(targetPath, content);
       restoredFiles.push(file);
-    } catch {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      process.stderr.write(`[contextpro/shadow] restore failed for ${file}: ${message}\n`);
     }
   }
 
@@ -87,36 +95,4 @@ export async function restorePoint(rootDir: string, pointId: string): Promise<st
 
 export async function listRestorePoints(rootDir: string): Promise<RestorePoint[]> {
   return loadManifest(rootDir);
-}
-
-export async function shadowCommit(rootDir: string, message: string): Promise<boolean> {
-  try {
-    const git: SimpleGit = simpleGit(rootDir);
-    const isRepo = await git.checkIsRepo();
-    if (!isRepo) return false;
-
-    const currentBranch = await git.revparse(["--abbrev-ref", "HEAD"]);
-    const stashResult = await git.stash(["push", "-m", `mcp-shadow: ${message}`]);
-
-    if (!stashResult.includes("No local changes")) {
-      try {
-        const branchExists = await git.branch(["-l", SHADOW_BRANCH]);
-        if (!branchExists.all.includes(SHADOW_BRANCH)) {
-          await git.branch([SHADOW_BRANCH]);
-        }
-        await git.checkout(SHADOW_BRANCH);
-        await git.stash(["pop"]);
-        await git.add(".");
-        await git.commit(`[MCP Shadow] ${message}`);
-        await git.checkout(currentBranch);
-      } catch (e) {
-        await git.checkout(currentBranch);
-        try { await git.stash(["pop"]); } catch { }
-        return false;
-      }
-    }
-    return true;
-  } catch {
-    return false;
-  }
 }

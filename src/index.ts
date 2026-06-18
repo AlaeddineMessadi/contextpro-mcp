@@ -20,6 +20,7 @@ import { recordToolTiming } from "./core/tool-metrics.js";
 import { registerTools } from "./tools/register-tools.js";
 import { selectRootDir, validateSelectedRoot } from "./core/root-guard.js";
 import { CONTEXTPRO_DIR, ensureContextProDir } from "./core/data-dir.js";
+import { closeDB } from "./core/db.js";
 
 type AgentTarget = "claude" | "cursor" | "vscode" | "windsurf" | "opencode";
 
@@ -32,14 +33,31 @@ const AGENT_CONFIG_PATH: Record<AgentTarget, string> = {
 };
 
 const SUB_COMMANDS = ["init", "skeleton", "tree", "doctor"];
-const INSTRUCTIONS_SOURCE_URL = "https://contextplus.vercel.app/api/instructions";
 const INSTRUCTIONS_RESOURCE_URI = "contextpro://instructions";
+const INSTRUCTIONS_REMOTE_URL = process.env.CONTEXTPRO_INSTRUCTIONS_REMOTE_URL ?? "https://contextpro.dev/api/instructions";
 const PACKAGE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+
+function readPackageVersion(): string {
+  try {
+    const pkg = JSON.parse(readFileSync(resolve(PACKAGE_ROOT, "package.json"), "utf8")) as { version?: string };
+    return typeof pkg.version === "string" ? pkg.version : "0.0.0";
+  } catch {
+    return "0.0.0";
+  }
+}
+
+const PACKAGE_VERSION = readPackageVersion();
+
 let agentInstructions: string | undefined;
 try {
   agentInstructions = readFileSync(resolve(PACKAGE_ROOT, "agent-instructions.md"), "utf8");
 } catch {
-  // agent-instructions.md not found, continuing without manifest instructions
+  process.stderr.write("[contextpro/startup] agent-instructions.md not found; manifest instructions disabled\n");
+}
+
+function isInstructionsRemoteEnabled(): boolean {
+  const raw = (process.env.CONTEXTPRO_INSTRUCTIONS_REMOTE ?? "").trim().toLowerCase();
+  return raw === "1" || raw === "true" || raw === "yes";
 }
 
 let noteServerActivity = () => { };
@@ -198,11 +216,11 @@ function buildMcpConfig(runner: "npx" | "bunx") {
           command: runner,
           args: commandArgs,
           env: {
-            CONTEXTPLUS_EMBED_PROVIDER: "ollama",
+            CONTEXTPRO_EMBED_PROVIDER: "ollama",
             OLLAMA_EMBED_MODEL: "nomic-embed-text:latest",
             OLLAMA_CHAT_MODEL: "nemotron-3-ultra:cloud",
-            CONTEXTPLUS_EMBED_BATCH_SIZE: "8",
-            CONTEXTPLUS_EMBED_TRACKER: "lazy",
+            CONTEXTPRO_EMBED_BATCH_SIZE: "8",
+            CONTEXTPRO_EMBED_TRACKER: "lazy",
           },
         },
       },
@@ -229,11 +247,11 @@ function buildOpenCodeConfig(runner: "npx" | "bunx") {
           command,
           enabled: true,
           environment: {
-            CONTEXTPLUS_EMBED_PROVIDER: "ollama",
+            CONTEXTPRO_EMBED_PROVIDER: "ollama",
             OLLAMA_EMBED_MODEL: "nomic-embed-text:latest",
             OLLAMA_CHAT_MODEL: "nemotron-3-ultra:cloud",
-            CONTEXTPLUS_EMBED_BATCH_SIZE: "8",
-            CONTEXTPLUS_EMBED_TRACKER: "lazy",
+            CONTEXTPRO_EMBED_BATCH_SIZE: "8",
+            CONTEXTPRO_EMBED_TRACKER: "lazy",
           },
         },
       },
@@ -275,7 +293,7 @@ async function runInitCommand(args: string[]) {
 
 const server = new McpServer({
   name: "contextpro",
-  version: "1.0.0",
+  version: PACKAGE_VERSION,
 }, {
   capabilities: { logging: {} },
   ...(agentInstructions && { instructions: agentInstructions }),
@@ -284,16 +302,33 @@ const server = new McpServer({
 server.resource(
   "contextpro_instructions",
   INSTRUCTIONS_RESOURCE_URI,
-  withRequestActivity(async (uri) => {
-    const response = await fetch(INSTRUCTIONS_SOURCE_URL);
+  withRequestActivity(async (uri: URL) => {
+    if (isInstructionsRemoteEnabled()) {
+      try {
+        const response = await fetch(INSTRUCTIONS_REMOTE_URL);
+        if (response.ok) {
+          return {
+            contents: [{
+              uri: uri.href,
+              mimeType: "text/markdown",
+              text: await response.text(),
+            }],
+          };
+        }
+        process.stderr.write(`[contextpro/instructions] remote fetch failed (${response.status}); falling back to bundled\n`);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        process.stderr.write(`[contextpro/instructions] remote fetch error: ${message}; falling back to bundled\n`);
+      }
+    }
     return {
       contents: [{
         uri: uri.href,
         mimeType: "text/markdown",
-        text: await response.text(),
+        text: agentInstructions ?? "ContextPro instructions are not bundled with this build.",
       }],
     };
-  }),
+  }, { toolName: "instructions_resource", waitForIndexing: false }),
 );
 
 registerTools(server, ROOT_DIR, withRequestActivity, noteServerActivity);
@@ -302,11 +337,11 @@ async function main() {
   const args = process.argv.slice(2);
   if (parsedCliArgs.command === "init") {
     await runInitCommand(args.slice(1));
-    return;
+    process.exit(0);
   }
   if (parsedCliArgs.command === "doctor") {
     await runDoctorCommand(args.slice(1));
-    return;
+    process.exit(0);
   }
   if (parsedCliArgs.command === "skeleton" || parsedCliArgs.command === "tree") {
     const targetRoot = parsedCliArgs.rootDir;
@@ -316,24 +351,25 @@ async function main() {
       maxTokens: 50000,
     });
     process.stdout.write(tree + "\n");
-    return;
+    closeDB(targetRoot);
+    process.exit(0);
   }
   const migratedFrom = await ensureContextProDir(ROOT_DIR);
   if (migratedFrom) console.error(`[contextpro/startup] migrated ${migratedFrom}/ to ${CONTEXTPRO_DIR}/`);
   const projectConfig = await ensureProjectConfig({
     rootDir: ROOT_DIR,
-    projectId: parsedCliArgs.projectId ?? process.env.CONTEXTPLUS_PROJECT_ID,
-    clientId: parsedCliArgs.clientId ?? process.env.CONTEXTPLUS_CLIENT_ID,
-    sessionSource: parsedCliArgs.sessionSource ?? process.env.CONTEXTPLUS_SESSION_SOURCE ?? "mcp",
+    projectId: parsedCliArgs.projectId ?? process.env.CONTEXTPRO_PROJECT_ID ?? process.env.CONTEXTPLUS_PROJECT_ID,
+    clientId: parsedCliArgs.clientId ?? process.env.CONTEXTPRO_CLIENT_ID ?? process.env.CONTEXTPLUS_CLIENT_ID,
+    sessionSource: parsedCliArgs.sessionSource ?? process.env.CONTEXTPRO_SESSION_SOURCE ?? process.env.CONTEXTPLUS_SESSION_SOURCE ?? "mcp",
   });
   await registerWorkspace(projectConfig);
   const startupHealth = await runStartupHealthCheck(ROOT_DIR);
   console.error(formatStartupHealthReport(startupHealth));
   const trackerController = createEmbeddingTrackerController({
     rootDir: ROOT_DIR,
-    mode: process.env.CONTEXTPLUS_EMBED_TRACKER,
-    debounceMs: Number.parseInt(process.env.CONTEXTPLUS_EMBED_TRACKER_DEBOUNCE_MS ?? "700", 10),
-    maxFilesPerTick: Number.parseInt(process.env.CONTEXTPLUS_EMBED_TRACKER_MAX_FILES ?? "8", 10),
+    mode: process.env.CONTEXTPRO_EMBED_TRACKER ?? process.env.CONTEXTPLUS_EMBED_TRACKER,
+    debounceMs: Number.parseInt(process.env.CONTEXTPRO_EMBED_TRACKER_DEBOUNCE_MS ?? process.env.CONTEXTPLUS_EMBED_TRACKER_DEBOUNCE_MS ?? "700", 10),
+    maxFilesPerTick: Number.parseInt(process.env.CONTEXTPRO_EMBED_TRACKER_MAX_FILES ?? process.env.CONTEXTPLUS_EMBED_TRACKER_MAX_FILES ?? "8", 10),
   });
   const transport = new StdioServerTransport();
   await server.connect(transport);
@@ -341,7 +377,7 @@ async function main() {
   let shuttingDown = false;
   let stopParentMonitor = () => { };
   const idleMonitor = createIdleMonitor({
-    timeoutMs: getIdleShutdownMs(process.env.CONTEXTPLUS_IDLE_TIMEOUT_MS),
+    timeoutMs: getIdleShutdownMs(process.env.CONTEXTPRO_IDLE_TIMEOUT_MS ?? process.env.CONTEXTPLUS_IDLE_TIMEOUT_MS),
     onIdle: () => requestShutdown("idle-timeout", 0),
     isTransportAlive: () => process.stdin.readable && !process.stdin.destroyed,
   });
@@ -383,7 +419,7 @@ async function main() {
 
   stopParentMonitor = startParentMonitor({
     parentPid: process.ppid,
-    pollIntervalMs: getParentPollMs(process.env.CONTEXTPLUS_PARENT_POLL_MS),
+    pollIntervalMs: getParentPollMs(process.env.CONTEXTPRO_PARENT_POLL_MS ?? process.env.CONTEXTPLUS_PARENT_POLL_MS),
     onParentExit: () => requestShutdown("parent-exit", 0),
   });
 
@@ -414,5 +450,13 @@ async function main() {
 
 main().catch((error) => {
   console.error("Fatal error:", error);
+  process.exit(1);
+});
+
+process.on("uncaughtException", (error) => {
+  if (isBrokenPipeError(error)) {
+    process.exit(0);
+  }
+  console.error("Uncaught exception:", error);
   process.exit(1);
 });

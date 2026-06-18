@@ -74,11 +74,11 @@ export interface EmbeddingCache {
   [path: string]: { hash: string; vector: number[] };
 }
 
-const EMBED_PROVIDER = (process.env.CONTEXTPLUS_EMBED_PROVIDER ?? "ollama").toLowerCase();
+const EMBED_PROVIDER = (process.env.CONTEXTPRO_EMBED_PROVIDER ?? process.env.CONTEXTPLUS_EMBED_PROVIDER ?? "ollama").toLowerCase();
 const EMBED_MODEL = process.env.OLLAMA_EMBED_MODEL ?? "nomic-embed-text:latest";
-const OPENAI_EMBED_MODEL = process.env.CONTEXTPLUS_OPENAI_EMBED_MODEL ?? process.env.OPENAI_EMBED_MODEL ?? "text-embedding-3-small";
-const OPENAI_API_KEY = process.env.CONTEXTPLUS_OPENAI_API_KEY ?? process.env.OPENAI_API_KEY ?? "";
-const OPENAI_BASE_URL = process.env.CONTEXTPLUS_OPENAI_BASE_URL ?? process.env.OPENAI_BASE_URL ?? "https://api.openai.com/v1";
+const OPENAI_EMBED_MODEL = process.env.CONTEXTPRO_OPENAI_EMBED_MODEL ?? process.env.CONTEXTPLUS_OPENAI_EMBED_MODEL ?? process.env.OPENAI_EMBED_MODEL ?? "text-embedding-3-small";
+const OPENAI_API_KEY = process.env.CONTEXTPRO_OPENAI_API_KEY ?? process.env.CONTEXTPLUS_OPENAI_API_KEY ?? process.env.OPENAI_API_KEY ?? "";
+const OPENAI_BASE_URL = process.env.CONTEXTPRO_OPENAI_BASE_URL ?? process.env.CONTEXTPLUS_OPENAI_BASE_URL ?? process.env.OPENAI_BASE_URL ?? "https://api.openai.com/v1";
 const CACHE_DIR = ".contextpro";
 const MIN_EMBED_BATCH_SIZE = 5;
 const MAX_EMBED_BATCH_SIZE = 10;
@@ -165,12 +165,12 @@ function toOptionalBoolean(value: string | undefined): boolean | undefined {
 function getEmbedRuntimeOptions(): EmbedRuntimeOptions | undefined {
   if (EMBED_PROVIDER === "openai") return undefined;
   const options: EmbedRuntimeOptions = {
-    num_gpu: toOptionalInteger(process.env.CONTEXTPLUS_EMBED_NUM_GPU),
-    main_gpu: toOptionalInteger(process.env.CONTEXTPLUS_EMBED_MAIN_GPU),
-    num_thread: toOptionalInteger(process.env.CONTEXTPLUS_EMBED_NUM_THREAD),
-    num_batch: toOptionalInteger(process.env.CONTEXTPLUS_EMBED_NUM_BATCH),
-    num_ctx: toOptionalInteger(process.env.CONTEXTPLUS_EMBED_NUM_CTX),
-    low_vram: toOptionalBoolean(process.env.CONTEXTPLUS_EMBED_LOW_VRAM),
+    num_gpu: toOptionalInteger(process.env.CONTEXTPRO_EMBED_NUM_GPU ?? process.env.CONTEXTPLUS_EMBED_NUM_GPU),
+    main_gpu: toOptionalInteger(process.env.CONTEXTPRO_EMBED_MAIN_GPU ?? process.env.CONTEXTPLUS_EMBED_MAIN_GPU),
+    num_thread: toOptionalInteger(process.env.CONTEXTPRO_EMBED_NUM_THREAD ?? process.env.CONTEXTPLUS_EMBED_NUM_THREAD),
+    num_batch: toOptionalInteger(process.env.CONTEXTPRO_EMBED_NUM_BATCH ?? process.env.CONTEXTPLUS_EMBED_NUM_BATCH),
+    num_ctx: toOptionalInteger(process.env.CONTEXTPRO_EMBED_NUM_CTX ?? process.env.CONTEXTPLUS_EMBED_NUM_CTX),
+    low_vram: toOptionalBoolean(process.env.CONTEXTPRO_EMBED_LOW_VRAM ?? process.env.CONTEXTPLUS_EMBED_LOW_VRAM),
   };
 
   if (Object.values(options).every((value) => value === undefined)) return undefined;
@@ -178,13 +178,21 @@ function getEmbedRuntimeOptions(): EmbedRuntimeOptions | undefined {
 }
 
 export function getEmbeddingBatchSize(): number {
-  const requested = toIntegerOr(process.env.CONTEXTPLUS_EMBED_BATCH_SIZE, DEFAULT_EMBED_BATCH_SIZE);
+  const requested = toIntegerOr(process.env.CONTEXTPRO_EMBED_BATCH_SIZE ?? process.env.CONTEXTPLUS_EMBED_BATCH_SIZE, DEFAULT_EMBED_BATCH_SIZE);
   return Math.min(MAX_EMBED_BATCH_SIZE, Math.max(MIN_EMBED_BATCH_SIZE, requested));
 }
 
 export function getEmbedChunkChars(): number {
-  const requested = toIntegerOr(process.env.CONTEXTPLUS_EMBED_CHUNK_CHARS, DEFAULT_EMBED_CHUNK_CHARS);
+  const requested = toIntegerOr(process.env.CONTEXTPRO_EMBED_CHUNK_CHARS ?? process.env.CONTEXTPLUS_EMBED_CHUNK_CHARS, DEFAULT_EMBED_CHUNK_CHARS);
   return Math.min(MAX_EMBED_CHUNK_CHARS, Math.max(MIN_EMBED_CHUNK_CHARS, requested));
+}
+
+export function getEmbedProvider(): string {
+  return EMBED_PROVIDER;
+}
+
+export function getEmbedModel(): string {
+  return EMBED_PROVIDER === "openai" ? OPENAI_EMBED_MODEL : EMBED_MODEL;
 }
 
 function getErrorMessage(error: unknown): string {
@@ -519,7 +527,8 @@ export class SearchIndex {
           }
         } catch (error) {
           if (!isContextLengthError(error)) {
-            // Embedding provider unavailable — leave vectors sparse; keyword search still works.
+            const message = error instanceof Error ? error.message : String(error);
+            process.stderr.write(`[contextpro/embeddings] degraded: batch failed (${message}); falling back to keyword-only for ${batch.length} files\n`);
             return;
           }
           for (const item of batch) {
@@ -529,7 +538,9 @@ export class SearchIndex {
               const key = docs[item.idx].path;
               cache[key] = { hash: item.hash, vector };
               dirtyKeys.add(key);
-            } catch {
+            } catch (innerError) {
+              const message = innerError instanceof Error ? innerError.message : String(innerError);
+              process.stderr.write(`[contextpro/embeddings] degraded: single-item embed failed for ${docs[item.idx].path} (${message})\n`);
               delete cache[docs[item.idx].path];
             }
           }
@@ -544,7 +555,9 @@ export class SearchIndex {
     let queryVec: number[];
     try {
       [queryVec] = await fetchEmbedding(query);
-    } catch {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      process.stderr.write(`[contextpro/embeddings] degraded: query embed failed (${message}); using keyword-only ranking\n`);
       queryVec = [];
     }
     const queryTerms = new Set(splitCamelCase(query));

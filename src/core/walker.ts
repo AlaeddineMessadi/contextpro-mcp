@@ -115,6 +115,12 @@ export async function walkDirectory(options: WalkOptions): Promise<FileEntry[]> 
   const stats = await lstat(startDir).catch(() => null);
   if (!stats) return results;
 
+  if (stats.isFile()) {
+    const relPath = relative(rootDir, startDir).replace(/\\/g, "/");
+    results.push({ path: startDir, relativePath: relPath, isDirectory: false, depth: 0 });
+    return results;
+  }
+
   await walkRecursive(startDir, rootDir, [], 0, options.depthLimit ?? 0, results);
   return results;
 }

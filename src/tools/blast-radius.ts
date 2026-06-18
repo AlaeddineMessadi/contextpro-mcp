@@ -84,7 +84,7 @@ export async function getBlastRadius(options: BlastRadiusOptions): Promise<strin
       if (seen.has(row.file_id)) continue;
       seen.add(row.file_id);
       const filePath = fileMap.get(row.file_id);
-      if (!filePath || (options.fileContext && filePath === options.fileContext)) continue;
+      if (!filePath) continue;
       candidateFiles.add(filePath);
     }
   }

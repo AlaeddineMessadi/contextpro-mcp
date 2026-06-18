@@ -333,33 +333,36 @@ export function registerTools(
   server.tool(
     "lint",
     "Auto-detects and runs project linters (tsc, eslint, ruff, cargo check, go vet). " +
-    "Also checks code skill score: 2-line headers, no inline comments, nesting depth, file length.",
+    "Also checks code skill score: 2-line headers, no inline comments, nesting depth, file length. " +
+    "By default returns the top 10 worst-scoring files; pass verbose: true to see all.",
     {
       target_path: z.string().optional().describe("Specific file or folder to lint (relative to root). Omit for full project."),
+      verbose: z.boolean().optional().describe("Return all files with issues. Default: false (top 10 by lowest score)."),
     },
-    withRequestActivity(async ({ target_path }) => ({
+    withRequestActivity(async ({ target_path, verbose }) => ({
       content: [{
         type: "text" as const,
-        text: await runStaticAnalysis({ rootDir, targetPath: target_path }),
+        text: await runStaticAnalysis({ rootDir, targetPath: target_path, verbose }),
       }],
     }), { toolName: "lint" }),
   );
 
   server.tool(
     "checkpoint",
-    "Save code with validation. Checks 2-line headers, no inline comments, max nesting depth, max file length. " +
-    "Creates a shadow restore point before writing. Use during long work sessions for safe mid-work saves.",
+    "Save code with optional validation. Creates a shadow restore point before writing. " +
+    "Use during long work sessions for safe mid-work saves. Pass strict: true to enforce style rules (header, no inline comments, nesting, length); otherwise issues are advisory warnings only.",
     {
       file_path: z.string().describe("Where to save the file (relative to project root)."),
       new_content: z.string().describe("The complete file content to save."),
+      strict: z.boolean().optional().describe("If true, reject on any style violation. Default: false (warnings only)."),
     },
-    withRequestActivity(async ({ file_path, new_content }) => {
+    withRequestActivity(async ({ file_path, new_content, strict }) => {
       invalidateSearchCache();
       invalidateIdentifierSearchCache();
       return {
         content: [{
           type: "text" as const,
-          text: await proposeCommit({ rootDir, filePath: file_path, newContent: new_content }),
+          text: await proposeCommit({ rootDir, filePath: file_path, newContent: new_content, strict }),
         }],
       };
     }, { toolName: "checkpoint" }),
@@ -578,15 +581,17 @@ export function registerTools(
   server.tool(
     "reindex",
     "Re-walk, re-parse, and re-index project files into the database. Detects changed files via content hash and only re-processes what changed. " +
+    "Eagerly populates file and identifier embeddings unless no_embed=true or CONTEXTPRO_REINDEX_NO_EMBED is set. " +
     "Use after git pull, branch switch, or external edits. Builds the import graph for related/test_map tools.",
     {
       target_path: z.string().optional().describe("Scope reindex to a specific directory (relative to root)."),
       force: z.boolean().optional().describe("Force re-process all files, ignoring cache. Default: false."),
+      no_embed: z.boolean().optional().describe("Skip eager embedding population. Search/identifier semantic ranking will populate lazily on first call. Default: false."),
     },
-    withRequestActivity(async ({ target_path, force }) => ({
+    withRequestActivity(async ({ target_path, force, no_embed }) => ({
       content: [{
         type: "text" as const,
-        text: await reindex({ rootDir, targetPath: target_path, force }),
+        text: await reindex({ rootDir, targetPath: target_path, force, noEmbed: no_embed }),
       }],
     }), { toolName: "reindex", waitForIndexing: false }),
   );
@@ -703,7 +708,7 @@ export function registerTools(
 
   server.tool(
     "start_task",
-    "Primary workflow entry point. Returns a compact task packet with ranked files, tests, recent diffs, project memory, freshness, and risks.",
+    "[deprecated, prefer task_pack] Primary workflow entry point. Returns a compact task packet with ranked files, tests, recent diffs, project memory, freshness, and risks.",
     {
       task: z.string().describe("Task description or engineering objective."),
       max_files: z.number().optional().describe("Maximum ranked files to include. Default: 8."),
@@ -749,7 +754,7 @@ export function registerTools(
 
   server.tool(
     "impact",
-    "Primary impact workflow. Estimates what could break for changed files or symbols, including related files, tests, churn, and reasons.",
+    "[deprecated, prefer change_impact] Primary impact workflow. Estimates what could break for changed files or symbols, including related files, tests, churn, and reasons.",
     {
       files: z.array(z.string()).optional().describe("Files to analyze for impact."),
       symbols: z.array(z.string()).optional().describe("Symbols to analyze for impact."),
@@ -810,7 +815,7 @@ export function registerTools(
 
   server.tool(
     "plan_edit",
-    "Primary edit planning workflow. Finds the smallest likely safe edit set for a task before reading or changing files.",
+    "[deprecated, prefer edit_scope] Primary edit planning workflow. Finds the smallest likely safe edit set for a task before reading or changing files.",
     {
       task: z.string().describe("Task description or intended change."),
       max_files: z.number().optional().describe("Maximum files to recommend. Default: 5."),
@@ -853,7 +858,7 @@ export function registerTools(
 
   server.tool(
     "validate",
-    "Primary validation workflow. Recommends the smallest relevant checks and commands for a task's likely edit scope.",
+    "[deprecated, prefer validate_scope] Primary validation workflow. Recommends the smallest relevant checks and commands for a task's likely edit scope.",
     {
       task: z.string().describe("Task description or intended change."),
       max_files: z.number().optional().describe("Maximum files to inspect when building validation guidance. Default: 5."),
@@ -930,7 +935,7 @@ export function registerTools(
 
   server.tool(
     "remember",
-    "Primary memory workflow. Records a task outcome with linked files, assumptions, evidence, and open risks for future sessions.",
+    "[deprecated, prefer memory_record_task] Primary memory workflow. Records a task outcome with linked files, assumptions, evidence, and open risks for future sessions.",
     {
       task: z.string().describe("Task or issue name."),
       summary: z.string().describe("What changed or was learned."),

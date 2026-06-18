@@ -2,6 +2,7 @@
 // FEATURE: Multi-project trust — reject dangerous cwd fallbacks and support explicit --root binding
 
 import { homedir } from "os";
+import { realpathSync } from "fs";
 import { relative, resolve } from "path";
 
 export interface RootSelection {
@@ -10,7 +11,12 @@ export interface RootSelection {
 }
 
 function normalize(pathValue: string): string {
-  return resolve(pathValue);
+  const resolved = resolve(pathValue);
+  try {
+    return realpathSync(resolved);
+  } catch {
+    return resolved;
+  }
 }
 
 function isInside(parent: string, child: string): boolean {
@@ -33,19 +39,23 @@ export function isUnsafeRoot(rootDir: string): boolean {
   const home = normalize(homedir());
   if (normalized === "/") return true;
   if (normalized === home) return true;
-  if (isInside(home, normalized)) {
+  if (isInside(home, normalized) && normalized !== home) {
     const rel = relative(home, normalized);
     return rel.split("/").filter(Boolean).length <= 1;
   }
   return false;
 }
 
+function allowUnsafeRootEnabled(): boolean {
+  const raw = (process.env.CONTEXTPRO_ALLOW_UNSAFE_ROOT ?? process.env.CONTEXTPLUS_ALLOW_UNSAFE_ROOT ?? "").trim().toLowerCase();
+  return raw === "1" || raw === "true" || raw === "yes";
+}
+
 export function validateSelectedRoot(selection: RootSelection): RootSelection {
-  if (selection.source !== "cwd") return selection;
   if (!isUnsafeRoot(selection.rootDir)) return selection;
-  const allowUnsafe = (process.env.CONTEXTPLUS_ALLOW_UNSAFE_ROOT ?? "").trim().toLowerCase();
-  if (allowUnsafe === "1" || allowUnsafe === "true" || allowUnsafe === "yes") return selection;
+  if (allowUnsafeRootEnabled()) return selection;
+  const sourceHint = selection.source === "flag" ? "--root" : selection.source === "positional" ? "positional argument" : "process.cwd()";
   throw new Error(
-    `Unsafe implicit root "${selection.rootDir}". ContextPro will not start from process.cwd() when cwd is filesystem root or home-level. Pass --root <project-path> or a positional project path, or set CONTEXTPLUS_ALLOW_UNSAFE_ROOT=true to override.`,
+    `Unsafe project root "${selection.rootDir}" (source: ${sourceHint}). ContextPro refuses to start at filesystem root or a home-level directory because it would create .contextpro/ and SQLite databases there. Pass --root <project-path> to a real project, or set CONTEXTPRO_ALLOW_UNSAFE_ROOT=true to override.`,
   );
 }

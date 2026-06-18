@@ -333,19 +333,45 @@ export class ContextPlusDB {
       return;
     }
     if (this.vecDimension !== null && this.vecDimension !== dim) {
-      // Warn loudly: changing embedding dimension requires dropping all cached vectors.
-      // This happens when switching embedding models (e.g. nomic-embed-text 768 → text-embedding-3-small 1536).
-      // Agents relying on semantic search will see empty results until re-indexing completes.
       process.stderr.write(
-        `[contextplus/db] WARNING: embedding dimension changed from ${this.vecDimension} to ${dim}. ` +
+        `[contextpro/db] WARNING: embedding dimension changed from ${this.vecDimension} to ${dim}. ` +
         `All cached embeddings are being cleared. Run reindex to rebuild them.\n`,
       );
       this.db.exec("DROP TABLE IF EXISTS embeddings");
       this.db.exec("DROP TABLE IF EXISTS memory_embeddings");
+      this.setMeta("embeddings_stale", "true");
+      this.setMeta("embeddings_stale_reason", `dimension changed from ${this.vecDimension} to ${dim}`);
     }
     this.vecDimension = dim;
     this.createVecTablesIfNeeded(dim);
     this.db.prepare("INSERT OR REPLACE INTO meta (key, value) VALUES ('vec_dimension', ?)").run(String(dim));
+  }
+
+  recordEmbeddingProvider(provider: string, model: string): void {
+    const previousProvider = this.getMeta("embed_provider");
+    const previousModel = this.getMeta("embed_model");
+    if (previousProvider && previousModel && (previousProvider !== provider || previousModel !== model)) {
+      process.stderr.write(
+        `[contextpro/db] WARNING: embedding provider/model changed from ${previousProvider}/${previousModel} to ${provider}/${model}. ` +
+        `Cached vectors are now considered stale; run reindex to rebuild.\n`,
+      );
+      this.setMeta("embeddings_stale", "true");
+      this.setMeta("embeddings_stale_reason", `provider/model changed from ${previousProvider}/${previousModel} to ${provider}/${model}`);
+    }
+    this.setMeta("embed_provider", provider);
+    this.setMeta("embed_model", model);
+  }
+
+  isEmbeddingsStale(): { stale: boolean; reason: string | null } {
+    return {
+      stale: this.getMeta("embeddings_stale") === "true",
+      reason: this.getMeta("embeddings_stale_reason"),
+    };
+  }
+
+  clearEmbeddingsStaleFlag(): void {
+    this.setMeta("embeddings_stale", "false");
+    this.setMeta("embeddings_stale_reason", "");
   }
 
   private hasVectorTables(): boolean {
@@ -833,6 +859,14 @@ export class ContextPlusDB {
 
   setMeta(key: string, value: string): void {
     this.db.prepare("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)").run(key, value);
+  }
+
+  setMetaBatch(entries: Array<[string, string]>): void {
+    const insert = this.db.prepare("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)");
+    const tx = this.db.transaction((rows: Array<[string, string]>) => {
+      for (const [key, value] of rows) insert.run(key, value);
+    });
+    tx(entries);
   }
 
   close(): void {

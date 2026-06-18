@@ -167,10 +167,22 @@ function stringField(record: Record<string, unknown> | null, key: string): strin
   return typeof value === "string" ? value : undefined;
 }
 
+function migrateProjectConfig(raw: Record<string, unknown> | null): Record<string, unknown> | null {
+  if (!raw) return null;
+  const incomingVersion = typeof raw.version === "number" ? raw.version : 0;
+  if (incomingVersion === CONFIG_VERSION) return raw;
+  if (incomingVersion < CONFIG_VERSION) {
+    return { ...raw, version: CONFIG_VERSION };
+  }
+  process.stderr.write(`[contextpro/project-config] config version ${incomingVersion} is newer than supported ${CONFIG_VERSION}; reading as-is\n`);
+  return raw;
+}
+
 export async function loadProjectConfig(rootDir: string): Promise<ProjectConfig | null> {
   const configPath = join(resolve(rootDir), CONTEXTPRO_DIR, CONFIG_FILE);
-  const config = await readJsonFile<ProjectConfig | null>(configPath, null);
-  return config;
+  const raw = await readJsonFile<Record<string, unknown> | null>(configPath, null);
+  const migrated = migrateProjectConfig(raw);
+  return migrated as ProjectConfig | null;
 }
 
 export async function ensureProjectConfig(options: EnsureProjectConfigOptions): Promise<ProjectConfig> {
@@ -178,7 +190,8 @@ export async function ensureProjectConfig(options: EnsureProjectConfigOptions): 
   const gitRoot = await detectGitRoot(workspaceRoot);
   const remoteUrl = await detectGitRemote(workspaceRoot);
   const configPath = join(workspaceRoot, CONTEXTPRO_DIR, CONFIG_FILE);
-  const existing = await readJsonFile<Record<string, unknown> | null>(configPath, null);
+  const rawExisting = await readJsonFile<Record<string, unknown> | null>(configPath, null);
+  const existing = migrateProjectConfig(rawExisting);
   const projectId = normalizeNullable(options.projectId) ?? stringField(existing, "projectId") ?? defaultProjectId(workspaceRoot);
   const clientId = normalizeNullable(options.clientId) ?? normalizeNullable(stringField(existing, "clientId")) ?? null;
   const sessionSource = normalizeNullable(options.sessionSource) ?? stringField(existing, "sessionSource") ?? "mcp";
@@ -211,9 +224,9 @@ export async function verifyProjectContext(rootDir: string): Promise<VerifiedPro
   const workspaceRoot = resolve(rootDir);
   const config = await ensureProjectConfig({
     rootDir: workspaceRoot,
-    clientId: process.env.CONTEXTPLUS_CLIENT_ID,
-    projectId: process.env.CONTEXTPLUS_PROJECT_ID,
-    sessionSource: process.env.CONTEXTPLUS_SESSION_SOURCE ?? "mcp",
+    clientId: process.env.CONTEXTPRO_CLIENT_ID ?? process.env.CONTEXTPLUS_CLIENT_ID,
+    projectId: process.env.CONTEXTPRO_PROJECT_ID ?? process.env.CONTEXTPLUS_PROJECT_ID,
+    sessionSource: process.env.CONTEXTPRO_SESSION_SOURCE ?? process.env.CONTEXTPLUS_SESSION_SOURCE ?? "mcp",
   });
   const actualGitRoot = await detectGitRoot(workspaceRoot);
   if (config.workspaceRoot !== workspaceRoot) {

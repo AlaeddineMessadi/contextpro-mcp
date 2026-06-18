@@ -33,7 +33,7 @@ describe("init-opencode", () => {
       ]);
       assert.equal(cfg.mcp.contextpro.enabled, true);
       assert.equal(
-        cfg.mcp.contextpro.environment.CONTEXTPLUS_EMBED_PROVIDER,
+        cfg.mcp.contextpro.environment.CONTEXTPRO_EMBED_PROVIDER,
         "ollama",
       );
       assert.equal(

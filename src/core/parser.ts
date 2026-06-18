@@ -372,7 +372,8 @@ function addReactWrapperSymbols(content: string, lines: string[], symbols: CodeS
 }
 
 export async function analyzeFile(filePath: string): Promise<FileAnalysis> {
-  const content = await readFile(filePath, "utf-8");
+  const raw = await readFile(filePath, "utf-8");
+  const content = (raw.startsWith("﻿") ? raw.slice(1) : raw).replace(/\r\n/g, "\n");
   const lines = content.split("\n");
   const ext = extname(filePath).toLowerCase();
 

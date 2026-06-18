@@ -13,6 +13,7 @@ const execFileAsync = promisify(execFile);
 export interface StaticAnalysisOptions {
   rootDir: string;
   targetPath?: string;
+  verbose?: boolean;
 }
 
 interface LintResult {
@@ -201,10 +202,21 @@ export async function runStaticAnalysis(options: StaticAnalysisOptions): Promise
   const linters = await detectLinters(options.rootDir);
 
   const ext = extname(targetPath);
-  const applicableLinters = ext ? linters.filter((l) => l.extensions.includes(ext)) : linters;
+  const sourceEntries = await walkDirectory({ rootDir: options.rootDir, targetPath: options.targetPath, depthLimit: 5 });
+  const presentExtensions = new Set(
+    sourceEntries
+      .filter((e) => !e.isDirectory)
+      .map((e) => extname(e.path).toLowerCase())
+      .filter((e) => e.length > 0),
+  );
+
+  const extFilteredLinters = ext ? linters.filter((l) => l.extensions.includes(ext)) : linters;
+  const applicableLinters = extFilteredLinters.filter((l) =>
+    l.extensions.some((linterExt) => presentExtensions.has(linterExt)),
+  );
 
   if (applicableLinters.length === 0) {
-    results.push(ext ? `No linter configured for ${ext} files.` : "No linters detected for this project.");
+    results.push(ext ? `No linter configured for ${ext} files in scope.` : "No applicable linters detected for this project.");
   } else {
     results.push(`Detected linters: ${applicableLinters.map((l) => l.name).join(", ")}\n`);
     for (const linter of applicableLinters) {
@@ -220,23 +232,28 @@ export async function runStaticAnalysis(options: StaticAnalysisOptions): Promise
     }
   }
 
-  const entries = await walkDirectory({ rootDir: options.rootDir, depthLimit: 5 });
-  const sourceFiles = entries
+  const sourceFiles = sourceEntries
     .filter((e) => !e.isDirectory && Object.keys(COMMENT_PATTERNS).includes(extname(e.path)))
     .slice(0, 50);
 
   if (sourceFiles.length > 0) {
     const skillScores = await Promise.all(sourceFiles.map((f) => checkFileSkill(f.path, options.rootDir)));
     const avgScore = Math.round(skillScores.reduce((sum, s) => sum + s.score, 0) / skillScores.length);
-    const filesWithIssues = skillScores.filter((s) => s.issues.length > 0);
+    const filesWithIssues = skillScores.filter((s) => s.issues.length > 0).sort((a, b) => a.score - b.score);
 
     results.push(`\n--- Skill Score ---`);
     results.push(`Project average: ${avgScore}/100 (${sourceFiles.length} files checked)`);
 
     if (filesWithIssues.length > 0) {
-      results.push(`\nFiles with issues (${filesWithIssues.length}):`);
-      for (const fs of filesWithIssues.slice(0, 20)) {
+      const verbose = options.verbose === true;
+      const showLimit = verbose ? filesWithIssues.length : 10;
+      const totalShown = Math.min(showLimit, filesWithIssues.length);
+      results.push(`\nFiles with issues (${filesWithIssues.length}${verbose ? "" : `, showing top ${totalShown} by lowest score`}):`);
+      for (const fs of filesWithIssues.slice(0, showLimit)) {
         results.push(`  ${fs.file} (${fs.score}/100): ${fs.issues.slice(0, 3).join("; ")}`);
+      }
+      if (!verbose && filesWithIssues.length > showLimit) {
+        results.push(`  ... and ${filesWithIssues.length - showLimit} more (pass verbose: true to see all)`);
       }
     } else {
       results.push("All files pass skill checks.");

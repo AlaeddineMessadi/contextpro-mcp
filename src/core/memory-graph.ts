@@ -81,7 +81,9 @@ async function embedText(text: string): Promise<number[]> {
   try {
     const [embedding] = await fetchEmbedding(text);
     return embedding;
-  } catch {
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    process.stderr.write(`[contextpro/memory-graph] degraded: embedText failed (${message}); node will have no embedding\n`);
     return [];
   }
 }

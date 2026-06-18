@@ -13,8 +13,8 @@ interface ContextPlusConfig {
 
 let ollamaClient: OllamaChatClient | null = null;
 const DEFAULT_OLLAMA_CHAT_MODEL = "gemma4:12b";
-const OPENAI_BASE_URL = process.env.CONTEXTPLUS_OPENAI_BASE_URL ?? process.env.OPENAI_BASE_URL ?? "https://api.openai.com/v1";
-const OPENAI_CHAT_MODEL = process.env.CONTEXTPLUS_OPENAI_CHAT_MODEL ?? process.env.OPENAI_CHAT_MODEL ?? "gpt-4o-mini";
+const OPENAI_BASE_URL = process.env.CONTEXTPRO_OPENAI_BASE_URL ?? process.env.CONTEXTPLUS_OPENAI_BASE_URL ?? process.env.OPENAI_BASE_URL ?? "https://api.openai.com/v1";
+const OPENAI_CHAT_MODEL = process.env.CONTEXTPRO_OPENAI_CHAT_MODEL ?? process.env.CONTEXTPLUS_OPENAI_CHAT_MODEL ?? process.env.OPENAI_CHAT_MODEL ?? "gpt-4o-mini";
 
 async function getOllamaClient(): Promise<OllamaChatClient> {
   if (!ollamaClient) {
@@ -62,9 +62,9 @@ async function readContextPlusConfig(rootDir: string): Promise<ContextPlusConfig
 
 export async function hasConfiguredChatModel(rootDir: string): Promise<boolean> {
   const config = await readContextPlusConfig(rootDir);
-  const provider = (process.env.CONTEXTPLUS_CHAT_PROVIDER ?? config?.provider ?? "").toLowerCase();
+  const provider = (process.env.CONTEXTPRO_CHAT_PROVIDER ?? process.env.CONTEXTPLUS_CHAT_PROVIDER ?? config?.provider ?? "").toLowerCase();
   if (provider === "openai") {
-    return Boolean(process.env.CONTEXTPLUS_OPENAI_API_KEY ?? process.env.OPENAI_API_KEY);
+    return Boolean(process.env.CONTEXTPRO_OPENAI_API_KEY ?? process.env.CONTEXTPLUS_OPENAI_API_KEY ?? process.env.OPENAI_API_KEY);
   }
   if (provider === "ollama") {
     return Boolean(process.env.OLLAMA_CHAT_MODEL ?? config?.chatModel);
@@ -74,9 +74,9 @@ export async function hasConfiguredChatModel(rootDir: string): Promise<boolean> 
 
 export async function chatCompletion(rootDir: string, prompt: string): Promise<string> {
   const config = await readContextPlusConfig(rootDir);
-  const provider = (process.env.CONTEXTPLUS_CHAT_PROVIDER ?? process.env.CONTEXTPLUS_EMBED_PROVIDER ?? config?.provider ?? "ollama").toLowerCase();
+  const provider = (process.env.CONTEXTPRO_CHAT_PROVIDER ?? process.env.CONTEXTPLUS_CHAT_PROVIDER ?? process.env.CONTEXTPRO_EMBED_PROVIDER ?? process.env.CONTEXTPLUS_EMBED_PROVIDER ?? config?.provider ?? "ollama").toLowerCase();
   if (provider === "openai") {
-    const apiKey = process.env.CONTEXTPLUS_OPENAI_API_KEY ?? process.env.OPENAI_API_KEY ?? "";
+    const apiKey = process.env.CONTEXTPRO_OPENAI_API_KEY ?? process.env.CONTEXTPLUS_OPENAI_API_KEY ?? process.env.OPENAI_API_KEY ?? "";
     if (!apiKey) throw new Error("OpenAI chat requested but no API key is configured.");
     const response = await fetch(`${OPENAI_BASE_URL.replace(/\/+$/, "")}/chat/completions`, {
       method: "POST",

@@ -3,7 +3,7 @@
 
 import { execFile } from "child_process";
 import { constants } from "fs";
-import { access, mkdir, open, readFile, unlink } from "fs/promises";
+import { access, mkdir, open, readFile, stat, unlink } from "fs/promises";
 import { dirname, join, resolve } from "path";
 import { fileURLToPath } from "url";
 import { promisify } from "util";
@@ -11,6 +11,7 @@ import { promisify } from "util";
 const execFileAsync = promisify(execFile);
 const LOCK_RETRY_MS = 40;
 const LOCK_TIMEOUT_MS = 60_000;
+const STALE_LOCK_AGE_MS = 90_000;
 const attemptedRepairKeys = new Set<string>();
 let activeRepair: Promise<boolean> | null = null;
 
@@ -96,10 +97,27 @@ function nativeRepairLockPath(rootDir: string): string {
   return join(nativeRepairLockDir(rootDir), "native-repair.lock");
 }
 
+async function reapStaleLock(lockPath: string): Promise<boolean> {
+  try {
+    const info = await stat(lockPath);
+    const age = Date.now() - info.mtimeMs;
+    if (age > STALE_LOCK_AGE_MS) {
+      await unlink(lockPath).catch(() => undefined);
+      process.stderr.write(`[contextpro/native-repair] reaped stale lock (age ${Math.round(age / 1000)}s) at ${lockPath}\n`);
+      return true;
+    }
+  } catch {
+    return false;
+  }
+  return false;
+}
+
 async function withRepairLock<T>(rootDir: string, fn: () => Promise<T>): Promise<T> {
   await mkdir(nativeRepairLockDir(rootDir), { recursive: true });
   const lockPath = nativeRepairLockPath(rootDir);
   const deadline = Date.now() + LOCK_TIMEOUT_MS;
+
+  await reapStaleLock(lockPath);
 
   while (true) {
     try {
@@ -113,6 +131,7 @@ async function withRepairLock<T>(rootDir: string, fn: () => Promise<T>): Promise
       }
     } catch (error) {
       if (Date.now() >= deadline) throw error;
+      if (await reapStaleLock(lockPath)) continue;
       await sleep(LOCK_RETRY_MS);
     }
   }
@@ -123,7 +142,7 @@ export function getContextPlusPackageRoot(): string {
 }
 
 export function isNativeAutoRepairEnabled(): boolean {
-  const raw = (process.env.CONTEXTPLUS_NATIVE_AUTO_REPAIR ?? "true").trim().toLowerCase();
+  const raw = (process.env.CONTEXTPRO_NATIVE_AUTO_REPAIR ?? process.env.CONTEXTPLUS_NATIVE_AUTO_REPAIR ?? "true").trim().toLowerCase();
   return raw !== "0" && raw !== "false" && raw !== "off" && raw !== "no";
 }
 

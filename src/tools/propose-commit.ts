@@ -11,12 +11,40 @@ export interface ProposeCommitOptions {
   rootDir: string;
   filePath: string;
   newContent: string;
+  strict?: boolean;
 }
 
 interface ValidationError {
   rule: string;
   message: string;
   line?: number;
+  severity: "error" | "warning";
+}
+
+function stripBomAndCRLF(content: string): string {
+  const noBom = content.startsWith("﻿") ? content.slice(1) : content;
+  return noBom.replace(/\r\n/g, "\n");
+}
+
+function stripStringsAndComments(line: string): string {
+  let result = "";
+  let i = 0;
+  let inStr: string | null = null;
+  while (i < line.length) {
+    const ch = line[i];
+    if (inStr) {
+      if (ch === "\\" && i + 1 < line.length) { i += 2; continue; }
+      if (ch === inStr) inStr = null;
+      i += 1;
+      continue;
+    }
+    if (ch === "'" || ch === '"' || ch === "`") { inStr = ch; i += 1; continue; }
+    if (ch === "/" && line[i + 1] === "/") break;
+    if (ch === "#" && (i === 0 || line[i - 1] === " " || line[i - 1] === "\t")) break;
+    result += ch;
+    i += 1;
+  }
+  return result;
 }
 
 function validateHeader(lines: string[], ext: string): ValidationError[] {
@@ -35,14 +63,17 @@ function validateHeader(lines: string[], ext: string): ValidationError[] {
   if (headerLines.length < 2) {
     errors.push({
       rule: "header",
-      message: `Missing 2-line file header. First 2 lines must be ${prefix} comments explaining the file.`,
+      severity: "warning",
+      message: `Recommended: 2-line file header. First 2 lines should be ${prefix} comments explaining the file.`,
     });
+    return errors;
   }
 
-  if (headerLines.length >= 2 && !headerLines[1].toUpperCase().includes("FEATURE:")) {
+  if (!headerLines[1].toUpperCase().includes("FEATURE:")) {
     errors.push({
       rule: "feature-tag",
-      message: `Line 2 should include a FEATURE: tag (e.g., "${prefix} FEATURE: Feature Name"). Links files to feature hubs.`,
+      severity: "warning",
+      message: `Recommended: line 2 includes a FEATURE: tag (e.g., "${prefix} FEATURE: Feature Name") to link to feature hubs.`,
     });
   }
 
@@ -59,7 +90,8 @@ function validateNoInlineComments(lines: string[], ext: string): ValidationError
     if (trimmed.startsWith(commentPrefix) && !trimmed.startsWith("#!") && !trimmed.startsWith("#include")) {
       errors.push({
         rule: "no-comments",
-        message: `Unauthorized comment found on line ${i + 1}: ${trimmed.substring(0, 80)}`,
+        severity: "warning",
+        message: `Comment outside header on line ${i + 1}: ${trimmed.substring(0, 80)}`,
         line: i + 1,
       });
     }
@@ -74,15 +106,16 @@ function validateAbstraction(lines: string[]): ValidationError[] {
   let maxNesting = 0;
 
   for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    nestingDepth += (line.match(/{/g) || []).length;
-    nestingDepth -= (line.match(/}/g) || []).length;
+    const cleaned = stripStringsAndComments(lines[i]);
+    nestingDepth += (cleaned.match(/{/g) || []).length;
+    nestingDepth -= (cleaned.match(/}/g) || []).length;
     maxNesting = Math.max(maxNesting, nestingDepth);
   }
 
   if (maxNesting > 6) {
     errors.push({
       rule: "nesting",
+      severity: "warning",
       message: `Nesting depth of ${maxNesting} detected. Maximum recommended is 3-4 levels. Flatten the structure.`,
     });
   }
@@ -90,6 +123,7 @@ function validateAbstraction(lines: string[]): ValidationError[] {
   if (lines.length > 1000) {
     errors.push({
       rule: "file-length",
+      severity: "warning",
       message: `File is ${lines.length} lines. Maximum recommended is 500-1000. Consider splitting.`,
     });
   }
@@ -101,37 +135,38 @@ export async function proposeCommit(options: ProposeCommitOptions): Promise<stri
   const fullPath = resolveProjectPath(options.rootDir, options.filePath, "filePath");
   const relativePath = toProjectRelativePath(options.rootDir, options.filePath, "filePath");
   const ext = extname(fullPath);
-  const lines = options.newContent.split("\n");
-  const allErrors: ValidationError[] = [];
+  const normalized = stripBomAndCRLF(options.newContent);
+  const lines = normalized.split("\n");
+  const allIssues: ValidationError[] = [];
 
   if (isSupportedFile(fullPath)) {
-    allErrors.push(...validateHeader(lines, ext));
-    allErrors.push(...validateNoInlineComments(lines, ext));
+    allIssues.push(...validateHeader(lines, ext));
+    allIssues.push(...validateNoInlineComments(lines, ext));
   }
-  allErrors.push(...validateAbstraction(lines));
+  allIssues.push(...validateAbstraction(lines));
 
-  const commentErrors = allErrors.filter((e) => e.rule === "no-comments");
-  if (commentErrors.length > 5) {
+  const errors = options.strict ? allIssues.map((e) => ({ ...e, severity: "error" as const })) : allIssues;
+  const blocking = errors.filter((e) => e.severity === "error");
+  if (blocking.length > 0) {
     return [
-      `REJECTED: ${allErrors.length} violations found.\n`,
-      ...allErrors.slice(0, 10).map((e) => `  ❌ [${e.rule}] ${e.message}`),
-      allErrors.length > 10 ? `  ... and ${allErrors.length - 10} more violations` : "",
-      "\nFix all violations and resubmit.",
-    ].join("\n");
+      `REJECTED: ${blocking.length} blocking issue(s) (strict mode).\n`,
+      ...blocking.slice(0, 10).map((e) => `  ❌ [${e.rule}] ${e.message}`),
+      blocking.length > 10 ? `  ... and ${blocking.length - 10} more` : "",
+      "\nFix issues and resubmit, or call without strict to save with warnings.",
+    ].filter(Boolean).join("\n");
   }
-
-  const warnings = allErrors.filter((e) => e.rule !== "no-comments" || commentErrors.length <= 5);
 
   await createRestorePoint(options.rootDir, [relativePath], `Pre-commit: ${relativePath}`);
   await mkdir(dirname(fullPath), { recursive: true });
-  await writeFile(fullPath, options.newContent, "utf-8");
+  await writeFile(fullPath, normalized, "utf-8");
 
   const result = [`✅ File saved: ${relativePath}`];
-  if (warnings.length > 0) {
-    result.push(`\n⚠ ${warnings.length} warning(s):`);
-    for (const w of warnings) result.push(`  ⚠ [${w.rule}] ${w.message}`);
+  if (allIssues.length > 0) {
+    result.push(`\n⚠ ${allIssues.length} advisory warning(s):`);
+    for (const w of allIssues.slice(0, 10)) result.push(`  ⚠ [${w.rule}] ${w.message}`);
+    if (allIssues.length > 10) result.push(`  ... and ${allIssues.length - 10} more`);
   }
-  result.push(`\nRestore point created. Use undo tools if needed.`);
+  result.push(`\nRestore point created. Use restore tools if needed.`);
 
   return result.join("\n");
 }

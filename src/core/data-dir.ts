@@ -10,7 +10,10 @@ async function pathExists(path: string): Promise<boolean> {
   try {
     await stat(path);
     return true;
-  } catch {
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    const message = error instanceof Error ? error.message : String(error);
+    process.stderr.write(`[contextpro/data-dir] stat failed for ${path}: ${message}\n`);
     return false;
   }
 }
@@ -24,9 +27,16 @@ export async function migrateLegacyProjectData(rootDir: string): Promise<string 
     if (!(await pathExists(source))) continue;
     try {
       await rename(source, destination);
-    } catch {
-      await cp(source, destination, { recursive: true, errorOnExist: false, force: false });
-      await rm(source, { recursive: true, force: true });
+    } catch (renameError) {
+      const renameMessage = renameError instanceof Error ? renameError.message : String(renameError);
+      process.stderr.write(`[contextpro/data-dir] rename ${legacyName} → ${CONTEXTPRO_DIR} failed (${renameMessage}); falling back to recursive copy\n`);
+      try {
+        await cp(source, destination, { recursive: true, force: true });
+        await rm(source, { recursive: true, force: true });
+      } catch (copyError) {
+        const copyMessage = copyError instanceof Error ? copyError.message : String(copyError);
+        throw new Error(`Failed to migrate legacy directory ${legacyName} to ${CONTEXTPRO_DIR}: ${copyMessage}`);
+      }
     }
     return legacyName;
   }

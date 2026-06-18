@@ -36,6 +36,7 @@ Thumbs.db
 # IDE
 .idea/
 .vscode/
+.serena/
 *.swp
 *.swo
 *~

@@ -11,11 +11,13 @@ import { invalidateIdentifierSearchCache, refreshIdentifierEmbeddings } from "./
 import { autoGenerateHubData } from "./feature-hub.js";
 import { toolUpsertMemoryNode } from "./memory-tools.js";
 import { resolveProjectPath } from "../core/path-guard.js";
+import { getEmbedProvider, getEmbedModel } from "../core/embeddings.js";
 
 export interface ReindexOptions {
   rootDir: string;
   targetPath?: string;
   force?: boolean;
+  noEmbed?: boolean;
 }
 
 export interface ReindexResult {
@@ -26,6 +28,7 @@ export interface ReindexResult {
   symbols: number;
   imports: number;
   durationMs: number;
+  embeddings?: { files: number; identifiers: number; skipped: boolean };
 }
 
 interface WaitForIndexingOptions {
@@ -46,6 +49,11 @@ const LAST_INDEX_ERROR_KEY = "last_index_error";
 const INDEXING_STATUS = "indexing";
 const IDLE_STATUS = "idle";
 const MAX_SEARCH_BODY_CHARS = 4000;
+
+function isReindexEmbedDisabled(): boolean {
+  const raw = (process.env.CONTEXTPRO_REINDEX_NO_EMBED ?? process.env.CONTEXTPLUS_REINDEX_NO_EMBED ?? "").trim().toLowerCase();
+  return raw === "1" || raw === "true" || raw === "yes";
+}
 
 function detectLanguage(filePath: string): string | null {
   const ext = extname(filePath).toLowerCase();
@@ -171,16 +179,21 @@ function resolveImportPath(importSource: string, fromFile: string, allFiles: Set
 }
 
 function setIndexStatus(db: ContextPlusDB, status: string, input?: { targetPath?: string; error?: string | null }): void {
-  db.setMeta(INDEX_STATUS_KEY, status);
   if (status === INDEXING_STATUS) {
-    db.setMeta(INDEX_STARTED_AT_KEY, String(Date.now()));
-    db.setMeta(INDEX_TARGET_PATH_KEY, input?.targetPath ?? "");
-    db.setMeta(LAST_INDEX_ERROR_KEY, "");
+    db.setMetaBatch([
+      [INDEX_STATUS_KEY, status],
+      [INDEX_STARTED_AT_KEY, String(Date.now())],
+      [INDEX_TARGET_PATH_KEY, input?.targetPath ?? ""],
+      [LAST_INDEX_ERROR_KEY, ""],
+    ]);
     return;
   }
-  db.setMeta(INDEX_FINISHED_AT_KEY, String(Date.now()));
-  db.setMeta(INDEX_TARGET_PATH_KEY, "");
-  db.setMeta(LAST_INDEX_ERROR_KEY, input?.error ?? "");
+  db.setMetaBatch([
+    [INDEX_STATUS_KEY, status],
+    [INDEX_FINISHED_AT_KEY, String(Date.now())],
+    [INDEX_TARGET_PATH_KEY, ""],
+    [LAST_INDEX_ERROR_KEY, input?.error ?? ""],
+  ]);
 }
 
 function sleep(ms: number): Promise<void> {
@@ -211,6 +224,12 @@ export async function waitForIndexingCompletion(
 export async function reindex(options: ReindexOptions): Promise<string> {
   const start = Date.now();
   const db = await getDB(options.rootDir);
+  if (db.getMeta(INDEX_STATUS_KEY) === INDEXING_STATUS) {
+    const wait = await waitForIndexingCompletion(options.rootDir, { timeoutMs: 60_000 });
+    if (wait.timedOut) {
+      return "Reindex skipped: another reindex is already in progress and did not finish within 60s.";
+    }
+  }
   setIndexStatus(db, INDEXING_STATUS, { targetPath: options.targetPath });
   try {
     const entries = await walkDirectory({ rootDir: options.rootDir, targetPath: options.targetPath, depthLimit: 0 });
@@ -271,7 +290,9 @@ export async function reindex(options: ReindexOptions): Promise<string> {
 
         totalSymbols += flatSymbols.length;
         indexed++;
-      } catch {
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        process.stderr.write(`[contextpro/reindex] degraded: failed to process ${file.relativePath}: ${message}\n`);
         skipped++;
       }
     }
@@ -298,11 +319,37 @@ export async function reindex(options: ReindexOptions): Promise<string> {
       autoHubCount = hubResult?.generated.length ?? 0;
     }
 
+    const indexedRelativePaths = sourceFiles.map((f) => f.relativePath);
+    const noEmbed = options.noEmbed === true || isReindexEmbedDisabled();
+    let fileEmbedCount = 0;
+    let identifierEmbedCount = 0;
+    let embedError: string | null = null;
+
+    if (!noEmbed && indexedRelativePaths.length > 0) {
+      try {
+        const [files, identifiers] = await Promise.all([
+          refreshFileSearchEmbeddings({ rootDir: options.rootDir, relativePaths: indexedRelativePaths }),
+          refreshIdentifierEmbeddings({ rootDir: options.rootDir, relativePaths: indexedRelativePaths }),
+        ]);
+        fileEmbedCount = files;
+        identifierEmbedCount = identifiers;
+      } catch (error) {
+        embedError = error instanceof Error ? error.message : String(error);
+        process.stderr.write(`[contextpro/reindex] degraded: embedding population failed (${embedError}); index is structural-only until next reindex\n`);
+      }
+    }
+
     const duration = Date.now() - start;
     db.bumpIndexGeneration();
     db.setMeta("last_reindex_at", String(Date.now()));
     db.setMeta("last_reindex_duration_ms", String(duration));
     db.setMeta("last_auto_hub_count", String(autoHubCount));
+    db.setMeta("last_embed_files_populated", String(fileEmbedCount));
+    db.setMeta("last_embed_identifiers_populated", String(identifierEmbedCount));
+    db.setMeta("last_embed_skipped", noEmbed ? "true" : "false");
+    db.setMeta("last_embed_error", embedError ?? "");
+    db.recordEmbeddingProvider(getEmbedProvider(), getEmbedModel());
+    if (!embedError && !noEmbed) db.clearEmbeddingsStaleFlag();
     setIndexStatus(db, IDLE_STATUS, { targetPath: options.targetPath, error: null });
 
     invalidateSearchCache();
@@ -325,6 +372,13 @@ export async function reindex(options: ReindexOptions): Promise<string> {
       `  Imports: ${totalImports} resolved`,
     ];
     if (!options.targetPath) lines.push(`  Auto hubs: ${autoHubCount}`);
+    if (noEmbed) {
+      lines.push(`  Embeddings: skipped (noEmbed=true or CONTEXTPRO_REINDEX_NO_EMBED set)`);
+    } else if (embedError) {
+      lines.push(`  Embeddings: failed (${embedError.slice(0, 120)}); search will fall back to keyword ranking`);
+    } else {
+      lines.push(`  Embeddings: ${fileEmbedCount} files, ${identifierEmbedCount} identifiers`);
+    }
     if (options.force) lines.push("  Mode: force (all files re-processed)");
     if (options.targetPath) lines.push(`  Scope: ${options.targetPath}`);
 
@@ -363,7 +417,10 @@ export async function quickRefresh(rootDir: string): Promise<{
     try {
       const content = await readFile(file.path, "utf-8");
       currentHashes.set(file.relativePath, hashContent(content));
-    } catch {}
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      process.stderr.write(`[contextpro/quickRefresh] read failed for ${file.relativePath}: ${message}\n`);
+    }
   }
 
   const stale = db.getStaleFiles(currentHashes);
@@ -375,7 +432,7 @@ export async function quickRefresh(rootDir: string): Promise<{
     return { staleCount: 0, refreshed: false, waitedForIndexing: waitState.waited, indexingTimedOut: false };
   }
 
-    const maxStale = Math.max(1, parseInt(process.env.CONTEXTPLUS_QUICKREFRESH_MAX_FILES ?? "30", 10));
+    const maxStale = Math.max(1, parseInt(process.env.CONTEXTPRO_QUICKREFRESH_MAX_FILES ?? process.env.CONTEXTPLUS_QUICKREFRESH_MAX_FILES ?? "30", 10));
     if (totalStale <= maxStale) {
       const changedSymbols: string[] = [];
       const pendingImports: PendingImportSet[] = [];
