@@ -1,14 +1,14 @@
 # Dependencies
-node_modules/
-package-lock.json
-yarn.lock
-pnpm-lock.yaml
+**/node_modules/
 
 # Build output
 build/
-.next/
-.open-next/
+**/.next/
+**/.open-next/
 dist/
+coverage/
+.nyc_output/
+*.tgz
 
 # Generated files
 *.js.map
@@ -23,13 +23,14 @@ dist/
 .mcp_data/
 .contextpro/
 .contextplus/
-.turbo/
-.wrangler/
+**/.turbo/
+**/.wrangler/
 npm-debug.log
 yarn-error.log
+*.log
 
 # OS
-.DS_Store
+**/.DS_Store
 Thumbs.db
 
 # IDE
