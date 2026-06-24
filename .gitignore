@@ -44,3 +44,16 @@ Thumbs.db
 # Cache
 .eslintcache
 *.tsbuildinfo
+extension.vsix
+*.mjs.bak
+# debug scripts (transient, never committed)
+/analyze-*.mjs
+/check-*.mjs
+/debug-*.mjs
+/detailed-*.mjs
+/final-*.mjs
+/find-*.mjs
+/recheck-*.mjs
+/test_*.mjs
+/trace-*.mjs
+/verify-*.mjs
