@@ -166,6 +166,80 @@ async function readPackageScripts(rootDir: string): Promise<Record<string, strin
   }
 }
 
+interface PythonProjectProfile {
+  isUvManaged: boolean;
+  isPoetryManaged: boolean;
+  hasPyprojectToml: boolean;
+  hasVenv: boolean;
+  hasPytestConfig: boolean;
+  hasRuffConfig: boolean;
+  hasMypyConfig: boolean;
+  testRoots: string[];
+}
+
+async function fileExists(path: string): Promise<boolean> {
+  try {
+    await readFile(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function detectPythonProfile(rootDir: string): Promise<PythonProjectProfile> {
+  const profile: PythonProjectProfile = {
+    isUvManaged: false,
+    isPoetryManaged: false,
+    hasPyprojectToml: false,
+    hasVenv: false,
+    hasPytestConfig: false,
+    hasRuffConfig: false,
+    hasMypyConfig: false,
+    testRoots: [],
+  };
+  const pyproject = join(rootDir, "pyproject.toml");
+  if (await fileExists(pyproject)) {
+    profile.hasPyprojectToml = true;
+    try {
+      const raw = await readFile(pyproject, "utf-8");
+      if (/\[tool\.pytest\.ini_options\]/.test(raw)) profile.hasPytestConfig = true;
+      if (/\[tool\.ruff/.test(raw)) profile.hasRuffConfig = true;
+      if (/\[tool\.mypy\]/.test(raw)) profile.hasMypyConfig = true;
+      const testpathsMatch = raw.match(/testpaths\s*=\s*\[([^\]]*)\]/);
+      if (testpathsMatch) {
+        const items = testpathsMatch[1].match(/"([^"]+)"|'([^']+)'/g) ?? [];
+        profile.testRoots = items.map((item) => item.replace(/^['"]|['"]$/g, ""));
+      }
+    } catch {
+      // ignore parse errors, profile fields stay at defaults
+    }
+  }
+  if (await fileExists(join(rootDir, "uv.lock"))) profile.isUvManaged = true;
+  if (await fileExists(join(rootDir, "poetry.lock"))) profile.isPoetryManaged = true;
+  if (await fileExists(join(rootDir, ".venv", "bin", "python")) || await fileExists(join(rootDir, ".venv", "Scripts", "python.exe"))) {
+    profile.hasVenv = true;
+  }
+  if (await fileExists(join(rootDir, "pytest.ini")) || await fileExists(join(rootDir, "setup.cfg"))) {
+    profile.hasPytestConfig = true;
+  }
+  if (await fileExists(join(rootDir, "ruff.toml")) || await fileExists(join(rootDir, ".ruff.toml"))) {
+    profile.hasRuffConfig = true;
+  }
+  if (await fileExists(join(rootDir, "mypy.ini"))) {
+    profile.hasMypyConfig = true;
+  }
+  return profile;
+}
+
+function pythonRunCommand(profile: PythonProjectProfile, tool: string, rootDir: string): string {
+  if (profile.hasVenv) {
+    return `.venv/bin/${tool}`;
+  }
+  if (profile.isUvManaged) return `uv run ${tool}`;
+  if (profile.isPoetryManaged) return `poetry run ${tool}`;
+  return tool;
+}
+
 
 export async function buildTaskPack(options: TaskPackOptions): Promise<string> {
   const maxFiles = Math.max(1, Math.floor(options.maxFiles ?? 8));
@@ -513,6 +587,10 @@ export async function buildEditScope(options: EditScopeOptions): Promise<string>
     persistArtifact: false,
   });
   const exactIdentifierPaths = buildExactIdentifierPathSet(search, options.task);
+  const identifierTop = search.identifiers?.results.slice(0, 5) ?? [];
+  const identifierAnchorPaths = identifierTop
+    .filter((item) => item.score >= 50 || item.keywordScore >= 80 || (item.semanticScore >= 60 && item.totalCalls >= 2))
+    .map((item) => item.path);
   const rankedScopeFiles = await maybeChatRerankPlanningFiles(
     options.rootDir,
     options.task,
@@ -527,13 +605,20 @@ export async function buildEditScope(options: EditScopeOptions): Promise<string>
       exactIdentifierPaths,
     ),
   );
-  const recommendedScope = rankedScopeFiles
-    .slice(0, options.preferSmallestScope === false ? maxFiles : Math.min(maxFiles, 3))
-    .map((file) => ({
-    path: file.path,
-    action: "modify",
-    confidence: Math.min(0.98, 0.45 + file.score),
-  }));
+  const rankedPathList = rankedScopeFiles.map((file) => file.path);
+  const orderedPaths = Array.from(new Set([...identifierAnchorPaths, ...rankedPathList]));
+  const rankedByPath = new Map(rankedScopeFiles.map((file) => [file.path, file]));
+  const identifierScoreByPath = new Map(identifierTop.map((item) => [item.path, item.score]));
+  const limit = options.preferSmallestScope === false ? maxFiles : Math.min(maxFiles, 3);
+  const recommendedScope = orderedPaths.slice(0, limit).map((path) => {
+    const ranked = rankedByPath.get(path);
+    const score = ranked?.score ?? ((identifierScoreByPath.get(path) ?? 60) / 100);
+    return {
+      path,
+      action: "modify",
+      confidence: Math.min(0.98, 0.45 + score),
+    };
+  });
   const tests = await findTestsForFiles(options.rootDir, recommendedScope.map((item) => item.path));
   for (const test of tests.slice(0, 2)) {
     recommendedScope.push({
@@ -630,7 +715,7 @@ export async function buildDecisionBrief(options: DecisionBriefOptions): Promise
     rootDir: options.rootDir,
     query: options.query,
     mode: "hybrid",
-    topK: 5,
+    topK: 7,
     persistArtifact: false,
   });
   const exactIdentifierPaths = buildExactIdentifierPathSet(search, options.query);
@@ -638,7 +723,7 @@ export async function buildDecisionBrief(options: DecisionBriefOptions): Promise
     options.rootDir,
     options.query,
     rerankPlanningFiles(
-      (search.files?.results ?? []).slice(0, 7).map((item) => ({
+      (search.files?.results ?? []).slice(0, 10).map((item) => ({
         path: item.path,
         reason: `Decision candidate (${Math.round(item.semanticScore)} semantic / ${Math.round(item.keywordScore)} keyword)`,
         score: item.score / 100,
@@ -648,13 +733,41 @@ export async function buildDecisionBrief(options: DecisionBriefOptions): Promise
       exactIdentifierPaths,
     ),
   );
-  const filesToReadFirst = rankedBriefFiles.slice(0, 4).map((item) => item.path);
+  const filesFromFileSearch = rankedBriefFiles.map((item) => item.path);
+  const topIdentifiers = search.identifiers?.results.slice(0, 5) ?? [];
+  const identifierResolvedFiles = topIdentifiers
+    .filter((item) => item.score >= 50 || item.keywordScore >= 80 || (item.semanticScore >= 60 && item.totalCalls >= 2))
+    .map((item) => item.path);
+  const filesToReadFirstRaw = [...identifierResolvedFiles, ...filesFromFileSearch];
+  const filesToReadFirst = Array.from(new Set(filesToReadFirstRaw)).slice(0, 4);
   const memory = options.includeMemory === false ? [] : await getProjectMemoryHits(options.rootDir, options.query, Math.min(options.maxMemory ?? 3, 10));
   const tests = options.includeTests === false ? [] : await findTestsForFiles(options.rootDir, filesToReadFirst);
   const hubs = options.includeHubs === false ? [] : await hubMatchesForFiles(options.rootDir, filesToReadFirst);
+  const hotSymbols = topIdentifiers
+    .filter((item) => item.totalCalls > 2)
+    .map((item) => ({ name: item.name, totalCalls: item.totalCalls, path: item.path }));
+  const noTestCoverage = filesToReadFirst.filter((path) => {
+    if (isTestFile(path)) return false;
+    const sourceBasename = path.split("/").pop()?.replace(/\.\w+$/, "") ?? "";
+    if (!sourceBasename) return true;
+    return !tests.some((test) => {
+      const testBasename = test.path.split("/").pop()?.replace(/\.(test|spec|demo)\.\w+$/, "") ?? "";
+      return testBasename === sourceBasename;
+    });
+  });
   const openQuestions = [
-    ...(tests.length === 0 ? ["Which regression path validates this subsystem today?"] : []),
-    ...(search.identifiers?.results.slice(0, 2).map((item) => `What behavior around ${item.name} is relied on by ${item.totalCalls} call sites?`) ?? []),
+    ...(tests.length === 0
+      ? [`No nearby tests were found for ${filesToReadFirst.join(", ") || "the candidate files"}; which regression path validates this subsystem today?`]
+      : noTestCoverage.length > 0
+        ? [`${noTestCoverage.join(", ")} appears to have no direct test coverage — should we add one?`]
+        : []),
+    ...hotSymbols.map((item) => `Will the change to ${item.name} (${item.totalCalls} call sites in ${item.path}) preserve backward compatibility for all callers?`),
+    ...(hubs.length === 0 && filesToReadFirst.length > 0
+      ? [`No feature hub links ${filesToReadFirst[0]} — is this subsystem documented anywhere?`]
+      : []),
+    ...(rankedBriefFiles.length >= 2 && Math.abs((rankedBriefFiles[0]?.score ?? 0) - (rankedBriefFiles[1]?.score ?? 0)) < 0.06
+      ? [`Top candidates (${rankedBriefFiles[0]?.path} vs ${rankedBriefFiles[1]?.path}) are close in score — confirm the intended target before editing.`]
+      : []),
   ];
   const repo = buildRepoMetadata({
     rootDir: search.repo.root,
@@ -669,6 +782,7 @@ export async function buildDecisionBrief(options: DecisionBriefOptions): Promise
     `${filesToReadFirst.length} files to read first`,
     ...(hubs.length > 0 ? [`${hubs.length} linked hubs`] : []),
     ...(memory.length > 0 ? [`${memory.length} memory hits`] : []),
+    ...(hotSymbols.length > 0 ? [`${hotSymbols.length} hot symbols with >2 callers`] : []),
   ];
   const ambiguities = [
     ...search.trust.ambiguities,
@@ -685,9 +799,10 @@ export async function buildDecisionBrief(options: DecisionBriefOptions): Promise
       artifact: null,
     }),
     summary: inferProjectSummary(options.query, filesToReadFirst),
-    topSymbols: search.identifiers?.results.slice(0, 5).map((item) => item.name) ?? [],
+    topSymbols: topIdentifiers.map((item) => item.name),
+    hotSymbols,
     filesToReadFirst,
-    doNotReadYet: rankedBriefFiles.slice(4, 7).map((item) => item.path),
+    doNotReadYet: filesFromFileSearch.filter((path) => !filesToReadFirst.includes(path)).slice(0, 4),
     hubs,
     memory,
     tests: tests.slice(0, 5),
@@ -727,6 +842,11 @@ export async function buildDecisionBrief(options: DecisionBriefOptions): Promise
       `Files To Read First: ${payload.filesToReadFirst.join(", ") || "(none)"}`,
       `Top Symbols: ${payload.topSymbols.join(", ") || "(none)"}`,
     ].filter(Boolean);
+    if (payload.hotSymbols.length > 0) {
+      lines.push("");
+      lines.push("Hot Symbols (high call count):");
+      for (const item of payload.hotSymbols) lines.push(`  ${item.name} — ${item.totalCalls} call sites in ${item.path}`);
+    }
     if (payload.hubs.length > 0) lines.push(`Hubs: ${payload.hubs.join(", ")}`);
     if (payload.tests.length > 0) {
       lines.push("");
@@ -763,10 +883,13 @@ export async function buildValidateScope(options: ValidateScopeOptions): Promise
     optionalScope: Array<{ path: string; action: string; confidence: number }>;
   };
   const scripts = await readPackageScripts(options.rootDir);
+  const pyProfile = await detectPythonProfile(options.rootDir);
   const sourceFiles = editScopeRaw.recommendedScope.filter((item) => isSourcePath(item.path)).map((item) => item.path);
   const tests = await findTestsForFiles(options.rootDir, sourceFiles);
   const testPaths = tests.slice(0, 8).map((test) => test.path);
   const checks: Array<{ type: string; command: string; reason: string }> = [];
+
+  const hasPythonSources = sourceFiles.some((path) => path.endsWith(".py")) || testPaths.some((path) => path.endsWith(".py"));
 
   if (testPaths.length > 0 && scripts.test) {
     checks.push({
@@ -780,6 +903,20 @@ export async function buildValidateScope(options: ValidateScopeOptions): Promise
       command: `node --test ${testPaths.join(" ")}`,
       reason: "Direct Node test invocation is available for the scoped test files.",
     });
+  } else if (hasPythonSources && (pyProfile.hasPytestConfig || pyProfile.hasPyprojectToml)) {
+    const pytestCmd = pythonRunCommand(pyProfile, "pytest", options.rootDir);
+    const targets = testPaths.length > 0 ? ` ${testPaths.join(" ")}` : "";
+    checks.push({
+      type: "test",
+      command: `${pytestCmd} -q${targets}`,
+      reason: pyProfile.isUvManaged
+        ? "Detected uv-managed Python project; pytest invoked via uv run."
+        : pyProfile.hasVenv
+          ? "Detected .venv; running pytest from the virtualenv binary."
+          : pyProfile.isPoetryManaged
+            ? "Detected poetry-managed Python project; pytest invoked via poetry run."
+            : "Detected pyproject.toml with pytest configuration.",
+    });
   }
 
   if (scripts.lint) {
@@ -788,6 +925,12 @@ export async function buildValidateScope(options: ValidateScopeOptions): Promise
       command: "npm run lint",
       reason: "Project lint pass to catch type and style regressions around the edit scope.",
     });
+  } else if (hasPythonSources && pyProfile.hasRuffConfig) {
+    checks.push({
+      type: "lint",
+      command: `${pythonRunCommand(pyProfile, "ruff", options.rootDir)} check .`,
+      reason: "Detected ruff configuration in pyproject.toml / ruff.toml.",
+    });
   }
 
   if (scripts.build) {
@@ -795,6 +938,14 @@ export async function buildValidateScope(options: ValidateScopeOptions): Promise
       type: "build",
       command: "npm run build",
       reason: "Project build verifies the edited modules still compile cleanly.",
+    });
+  }
+
+  if (hasPythonSources && pyProfile.hasMypyConfig) {
+    checks.push({
+      type: "typecheck",
+      command: `${pythonRunCommand(pyProfile, "mypy", options.rootDir)} .`,
+      reason: "Detected mypy configuration in pyproject.toml / mypy.ini.",
     });
   }
 

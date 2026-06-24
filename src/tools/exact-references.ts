@@ -43,18 +43,31 @@ function offsetAtLineSymbol(content: string, line: number, symbolName: string): 
 }
 
 async function resolveTarget(options: ExactReferencesOptions): Promise<{ file: string; line: number } | null> {
-  if (options.file) {
+  if (options.file && options.line !== undefined) {
     return {
       file: toProjectRelativePath(options.rootDir, options.file, "file"),
-      line: options.line ?? 1,
+      line: options.line,
     };
   }
   const db = await getDB(options.rootDir);
+  const relativeFile = options.file ? toProjectRelativePath(options.rootDir, options.file, "file") : null;
   const exact = db.searchSymbolsByName(options.symbolName)
-    .filter((symbol) => symbol.name === options.symbolName)
-    .sort((a, b) => a.line_start - b.line_start);
+    .filter((symbol) => symbol.name === options.symbolName);
+  if (relativeFile) {
+    const dbFile = db.getFile(relativeFile);
+    if (dbFile) {
+      const inFile = exact
+        .filter((symbol) => symbol.file_id === dbFile.id)
+        .sort((a, b) => a.line_start - b.line_start);
+      if (inFile.length > 0) {
+        return { file: relativeFile, line: inFile[0].line_start };
+      }
+    }
+    return { file: relativeFile, line: options.line ?? 1 };
+  }
+  const sorted = exact.sort((a, b) => a.line_start - b.line_start);
   const files = db.getAllFiles();
-  const selected = exact[0];
+  const selected = sorted[0];
   if (!selected) return null;
   const file = files.find((candidate) => candidate.id === selected.file_id);
   if (!file) return null;

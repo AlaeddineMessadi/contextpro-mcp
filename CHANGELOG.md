@@ -4,6 +4,71 @@ All notable changes to this project are recorded here. The project follows [Sema
 
 ## [Unreleased]
 
+### Fixed — Live-MCP performance sweep findings
+
+A post-reconnect sweep with a fresh MCP server surfaced two more issues that the cached-module sessions had masked. Both stem from the same root cause: the symbol table treats every `const`/`let` declaration as a callable symbol.
+
+- **Identifier search no longer surfaces internal local bindings.** Search for "singleton shared module federation react" was returning `containerStyle`, `parts`, `outerVignetteStyle` — all internal style variables inside React components. Fixed in `buildIdentifierIndex` (the hot path in `semantic-identifiers.ts`) with a kind filter (`function|method|class|interface|enum|type|struct|trait|export`) plus a fallback for top-level exported consts identified via parent-name + line-range containment in structural symbols. Same filter applied to `buildIdentifierDocsForFile` (the per-file refresh path). (`src/tools/semantic-identifiers.ts`)
+- **`graph_query` no longer dumps hundreds of internal `const`/`let` nodes.** Both `kind="file"` and `kind="impact"` were returning every variable binding (e.g., `symbol:.../blast-radius.ts:42:content`, `symbol:.../blast-radius.ts:65:usages`). `buildProjectGraph` now applies the same structural-kind + line-containment filter when emitting symbol nodes. The DB itself still retains all symbols so `blast_radius`, `rename_symbol`, and other textual tools work unchanged. (`src/core/project-graph.ts`)
+
+### Performance note
+
+- `reindex` with full embedding pass on a 132-file repo: ~110s (4264 identifiers × Ollama embedding). Use `reindex({no_embed: true})` for ~4s structural-only refresh; search will lazily populate embeddings on first call. The 110s figure is Ollama-bound (≈25ms per embedding) and won't change without a faster embedding backend.
+
+## [Unreleased — earlier in this session]
+
+### Fixed — Round-3 external-feedback issues
+
+These three issues were surfaced by a Round-3 external assessment that exercised ContextPro . Each fix had a follow-up adversarial review that caught additional bugs, all of which are also fixed.
+
+- **`lint` prefers local TypeScript over system tsc.** macOS ships `/usr/bin/tsc` as Apple's TextureSetCompiler — wholly unrelated. Previously `detectLinters` always ran `npx tsc`, which could fall through to system tsc in some environments. Now `resolveLocalBinary` prefers `./node_modules/.bin/tsc` (including `.cmd` shim on Windows), then falls back to `npx --no-install` to prevent silent system fallthrough, and finally emits a clear "TypeScript not installed" message if npx isn't on PATH. Same pattern applied to `eslint`. (`src/tools/static-analysis.ts`)
+- **`*.config.ts` property keys are now indexed.** Semantic search previously missed `shared: { react: { singleton: true } }` in `rsbuild.config.ts` because property keys weren't symbols. New `extractConfigKeys()` runs only on detected config files (`*.config.ts`, named framework configs like `rsbuild.config.ts`, `webpack.config.ts`, `next.config.ts`, etc.) and extracts top-level property keys via three patterns: `name: {`, `name: true|false` (matches EOL with or without trailing `,`/`}` — adversarial-review fix), and `"name": {`. Reserved words and length-bounded names filter noise. Non-config files are untouched. (`src/core/parser.ts`)
+- **`graph_query kind="impact"` is now a real impact view, not a duplicate of `kind="file"`.** Previously both kinds applied identical edge filters. Impact now performs BFS over incoming dependencies up to 3 hops: collect symbols defined by the start file, then for each hop find files that import the frontier OR call/reference/test its symbols, expand the frontier, repeat. Limit is a single edge budget consistently applied — fixes adversarial-review blocker C where edges were sliced but `dependentFileIds` were collected pre-slice. (`src/core/project-graph.ts`)
+- **`graph_query` empty-result message disambiguates three cases.** Previously every empty result said "may not be indexed yet". Now: (1) file not in graph → "may not be indexed yet"; (2) impact returned only the start file and its own symbols → "is indexed but has no incoming dependencies (leaf module, types-only file, or entry point)"; (3) file view returned start node with no edges → "is indexed but has no graph edges". (`src/tools/project-graph.ts`)
+
+### Testing
+
+- New `test/main/round3-fixes.test.mjs` covers config-key extraction (3 fixtures including the EOL-boolean regression), transitive BFS impact view (3-level chain `leaf ← middle ← consumer`), differentiated empty-result messages, and the lint module surface (8 tests).
+- Full suite: **318 tests, 0 failures** (was 310 before round-3 work, 5 new round-3 tests added then 3 more covering adversarial-review blockers).
+
+### Added — Serena-parity symbolic editing surface
+
+- **`find_symbol` tool** — find symbols by name path (`ClassName/methodName`, `/AbsolutePath/Name`, or `Name`) with optional substring matching, kind filters, body inclusion, and child depth. Same name-path semantics as Serena's `find_symbol`. (`src/tools/symbolic-edit.ts`)
+- **`replace_symbol_body` tool** — replace the full body of a symbol identified by its name path. Auto-detects indentation, reindents the replacement to match context, creates a shadow restore point before writing, and invalidates search caches. (`src/tools/symbolic-edit.ts`)
+- **`insert_after_symbol` and `insert_before_symbol` tools** — insert sibling code adjacent to an anchor symbol without re-reading the file. Restore-pointed and cache-aware. (`src/tools/symbolic-edit.ts`)
+- **`rename_symbol` tool** — rename a symbol in its defining file and propagate to importers and callers via the indexed import/call graph. Backs up the definition file and every cross-file site before any write. Validates new names against `/^[A-Za-z_][A-Za-z0-9_]*$/`. (`src/tools/symbolic-edit.ts`)
+
+### Fixed — Honest-assessment regressions
+
+- **`grep` glob no longer drops `{ts,tsx}` brace expansions.** `matchesGlob` previously ran `split(/[,\s]+/)` before brace expansion, splitting `src/**/*.{ts,tsx}` into `src/**/*.{ts` and `tsx}` and matching nothing. Brace-aware splitting (`splitGlobInput`) plus full brace expansion (`expandBraces`) plus `**/`-aware globbing (`globPartToRegex`) fix it. A cap of 1024 sub-patterns prevents `{a,b}{c,d}...` DoS. Errors flow back through the tool result instead of crashing the server. (`src/tools/grep.ts`)
+- **`skeleton` returns more than `[kind] L1 name`.** Now emits: file header, line count, imports section (grouped by source with specifier lists), exports list, per-symbol full signature, leading-comment/docstring extraction (bounded by the previous symbol's `endLine` to avoid grabbing the wrong doc), and nested method/property signatures. Approaches Serena's symbolic depth. (`src/tools/file-skeleton.ts`)
+- **`explain` is no longer redundant with reading the file.** Output now adds: extracted leading doc-comment, signature line, caller count + file list + top-5 call sites, related test files (via import graph and call sites), sibling symbols at the same scope. The raw body is still included but is no longer the only payload. (`src/tools/explain.ts`)
+- **`search` finds matches inside config literals and non-keyword code.** `buildCodeSearchBody` previously gated lines through a narrow keyword whitelist (`function|class|...`), filtering out config object lines like `shared: { react: { singleton: true } }`. It now skips only empty lines and pure-syntax lines (`}`, `)`, `;`, etc.), so `singleton:` and other property-value content reach the embedding and FTS indexes. (`src/tools/semantic-search.ts`)
+- **`decision_brief` open questions are no longer mechanical.** Questions are now generated from actual signals: missing test coverage per file, hot-symbol back-compat risk (with call counts), absent feature-hub links, and score-tied top candidates. The brief also surfaces a new `hotSymbols` array (name + total calls + path) and bumps `topK` to 7 for wider candidate consideration. Existing fields (`summary`, `topSymbols`, `doNotReadYet`) are preserved. (`src/tools/agentic-context.ts`)
+
+### Fixed — Adversarial-review blockers
+
+- **Cross-file rename no longer silently skips short files after long ones.** `renameSymbol` previously reused a single `g`-flag `RegExp` across files, so `lastIndex` from a long file could exceed a subsequent short file's length and cause `.test()` to return false even when the symbol was present. Each cross-file iteration now constructs a fresh regex. (`src/tools/symbolic-edit.ts`)
+- **Glob brace expansion is DoS-resistant.** `expandBraces` is now capped at 1024 sub-patterns; pathological inputs like `{a,b}{c,d}...{w,x}` short-circuit instead of producing millions of expansions (~346 MB / 4.7s observed before the cap). Over-cap globs surface a clear error through the tool result. (`src/tools/grep.ts`)
+
+### Fixed — Post-reconnect live-MCP sweep
+
+These six issues were surfaced by exercising every tool through the live MCP after the symbolic-editing tools shipped. None affected correctness of the core symbolic edits, but all degraded the quality of the planning-layer tools.
+
+- **Call-site extractor no longer treats `Math.max`, `console.log`, `JSON.parse` as user calls.** `extractCallSites` previously matched every `name(` pattern, so any file containing `Math.max(...)` was indexed as "calling" a local `const max` defined elsewhere in the codebase. The graph then showed 32 files "calling" `symbolic-edit.ts:145:max`. Fixed with a negative-lookbehind for `.` (skips method calls), a JS-keyword denylist (`if`, `for`, `while`, `return`, `new`, `throw`, ...), and a stdlib-globals denylist (`Math`, `JSON`, `Array`, `Object`, `Promise`, `console`, `process`, ...). 4168 → 4168 symbols (no loss), but the spurious call edges drop dramatically on the next reindex. (`src/core/parser.ts`)
+- **`edit_scope` now respects identifier-mode signal.** Previously built recommendations purely from `search.files` semantic header matches, so "add a find_referencing_symbols tool to ContextPro" recommended `project-graph.ts` / `walker.ts` / `InstructionsSection.tsx` — none relevant. Now prepends identifier-resolved paths (score ≥ 60 OR keywordScore ≥ 90) before file-search results and dedupes. (`src/tools/agentic-context.ts`)
+- **`decision_brief` no-test-coverage flag uses basename comparison.** The previous substring-match logic could mark a file as "no test coverage" even when the matching test file (`test/main/symbolic-edit.test.mjs` ↔ `src/tools/symbolic-edit.ts`) was already in the tests section. Switched to filename-without-extension equality. (`src/tools/agentic-context.ts`)
+- **`task_pack` / `edit_scope` / `decision_brief` planning scores no longer saturate at 100%.** Per-bonus weights in `scorePlanningCandidate` were tuned aggressively (`+0.34` source path + `+0.28` symbol overlap + `+0.24` exact-id + ...), so any source file in `src/` with a symbol match would clamp to `1.0`. Halved each bonus and capped at `0.97` so users can distinguish high-confidence from medium-confidence results. (`src/tools/planning-helpers.ts`)
+- **`exact_references` auto-locates the symbol's definition line when `line` is omitted.** Previously defaulted to `line: 1` when only `file` was given, which the TypeScript language service treats as a position with no symbol — so `{symbol_name: "renameSymbol", file: "src/tools/symbolic-edit.ts"}` returned "No exact references found." Now queries the indexed symbol table for the symbol's actual `line_start` in that file. (`src/tools/exact-references.ts`)
+- **`skeleton` no longer dumps every `const`/`let` from inside function bodies.** Children of structural symbols are now filtered to the kinds that matter for an API-surface view (`function`, `method`, `class`, `interface`, `enum`, `type`, `struct`, `trait`, `export`). Internal local variables stay in the DB for cross-reference resolution but no longer pollute the displayed skeleton. (`src/tools/file-skeleton.ts`)
+
+### Testing
+
+- New `test/main/grep-glob.test.mjs` covers brace expansion, recursive `**` globbing, non-matching globs, and the DoS cap (4 tests).
+- New `test/main/symbolic-edit.test.mjs` covers `find_symbol` (top-level, name-path, missing), `replace_symbol_body`, `insert_after_symbol`, `rename_symbol` single-file, **cross-file rename with mismatched file lengths (regex-state regression)**, and rename-validation rejection (7 tests).
+- New `test/main/call-site-filter.test.mjs` covers method-call rejection, keyword filtering, and stdlib-globals filtering (3 tests).
+- Full suite: **310 tests, 0 failures**.
+
 ## [1.2.2] - 2026-06-18
 
 Verification follow-up to 1.2.1. Closes 8 issues from the dev-lifecycle audit and adds a literal-string `grep` tool to fill the keyword-search gap.

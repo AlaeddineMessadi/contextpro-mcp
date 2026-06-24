@@ -63,6 +63,43 @@ function splitQueryTerms(text: string): string[] {
     .match(/[a-z0-9]{2,}/g) ?? [];
 }
 
+const STOPWORD_VERBS = new Set([
+  "add", "get", "set", "put", "update", "delete", "remove", "create", "make",
+  "run", "use", "call", "send", "fetch", "load", "save", "find", "search",
+  "build", "init", "start", "stop", "open", "close", "handle", "process",
+  "the", "and", "for", "from", "with", "into", "this", "that", "these",
+  "have", "has", "was", "were", "are", "can", "will", "should", "would",
+  "new", "old", "all", "any", "any", "some", "more", "less",
+]);
+
+function lemmatize(term: string): string {
+  // Tiny English lemmatizer for plurals/-ing/-ed. Enough to match `fees` ↔ `fee`,
+  // `models` ↔ `model`, `running` ↔ `run`, `executed` ↔ `execute`.
+  if (term.length < 4) return term;
+  if (term.endsWith("ies") && term.length > 4) return `${term.slice(0, -3)}y`;
+  if (term.endsWith("ses") || term.endsWith("xes") || term.endsWith("zes")) return term.slice(0, -2);
+  if (term.endsWith("s") && !term.endsWith("ss") && !term.endsWith("us")) return term.slice(0, -1);
+  if (term.endsWith("ing") && term.length > 5) return term.slice(0, -3);
+  if (term.endsWith("ed") && term.length > 4) return term.slice(0, -2);
+  return term;
+}
+
+function buildQueryTermSet(query: string): Set<string> {
+  const terms = splitQueryTerms(query);
+  const out = new Set<string>();
+  for (const term of terms) {
+    if (STOPWORD_VERBS.has(term)) continue;
+    out.add(term);
+    const lemma = lemmatize(term);
+    if (lemma !== term) out.add(lemma);
+  }
+  return out;
+}
+
+function pathSegments(path: string): string[] {
+  return path.split("/").flatMap((seg) => splitQueryTerms(seg.replace(/\.\w+$/, "")));
+}
+
 function clamp01(value: number): number {
   return Math.max(0, Math.min(1, value));
 }
@@ -76,31 +113,52 @@ export function buildExactIdentifierPathSet(search: Awaited<ReturnType<typeof un
   );
 }
 
+interface PlanningCandidateReasoning {
+  score: number;
+  reasons: string[];
+}
+
 function scorePlanningCandidate(
   candidate: PlanningFileCandidate,
   query: string,
   codeChangeIntent: boolean,
   exactIdentifierPaths: Set<string>,
-): number {
+): PlanningCandidateReasoning {
   let adjusted = candidate.score;
-  const queryTerms = new Set(splitQueryTerms(query));
-  const basenameTerms = splitQueryTerms(basename(candidate.path).replace(/\.\w+$/, ""));
-  const symbolTerms = splitQueryTerms(candidate.symbols.join(" "));
-  const basenameOverlap = basenameTerms.filter((term) => queryTerms.has(term)).length;
-  const symbolOverlap = symbolTerms.filter((term) => queryTerms.has(term)).length;
+  const reasons: string[] = [];
+  const queryTerms = buildQueryTermSet(query);
+  const lemmatizedQueryTerms = new Set([...queryTerms].map(lemmatize));
+
+  const basenameTerms = splitQueryTerms(basename(candidate.path).replace(/\.\w+$/, "")).filter((term) => !STOPWORD_VERBS.has(term));
+  const basenameOverlap = basenameTerms.filter((term) => queryTerms.has(term) || queryTerms.has(lemmatize(term))).length;
+  if (basenameOverlap > 0) reasons.push(`basename matches "${basenameTerms.filter((term) => queryTerms.has(term) || queryTerms.has(lemmatize(term))).join(",")}"`);
+
+  const dirTerms = pathSegments(candidate.path.replace(/[^/]+$/, "")).filter((term) => !STOPWORD_VERBS.has(term));
+  const dirOverlap = dirTerms.filter((term) => queryTerms.has(term) || lemmatizedQueryTerms.has(lemmatize(term))).length;
+  if (dirOverlap > 0) reasons.push(`directory matches "${dirTerms.filter((term) => queryTerms.has(term) || lemmatizedQueryTerms.has(lemmatize(term))).join(",")}"`);
+
+  const symbolTerms = splitQueryTerms(candidate.symbols.join(" ")).filter((term) => !STOPWORD_VERBS.has(term));
+  const symbolOverlap = symbolTerms.filter((term) => queryTerms.has(term) || queryTerms.has(lemmatize(term))).length;
+  if (symbolOverlap > 0) reasons.push(`symbols match "${symbolTerms.filter((term) => queryTerms.has(term) || queryTerms.has(lemmatize(term))).slice(0, 3).join(",")}"`);
+
   if (codeChangeIntent) {
-    if (isSourcePath(candidate.path)) adjusted += 0.34;
-    if (candidate.path.startsWith("src/")) adjusted += 0.08;
-    if (isTestPath(candidate.path)) adjusted += 0.16;
+    if (isSourcePath(candidate.path)) adjusted += 0.18;
+    if (candidate.path.startsWith("src/")) adjusted += 0.04;
+    if (isTestPath(candidate.path)) adjusted += 0.08;
     if (isDocumentationPath(candidate.path)) adjusted -= 0.42;
     if (isHubPath(candidate.path)) adjusted -= 0.3;
-    if (candidate.symbols.length > 0) adjusted += 0.05;
-    adjusted += Math.min(0.24, basenameOverlap * 0.16);
-    adjusted += Math.min(0.28, symbolOverlap * 0.14);
-    if (basenameOverlap > 0 && symbolOverlap > 0) adjusted += 0.08;
+    if (candidate.symbols.length > 0) adjusted += 0.03;
+    adjusted += Math.min(0.12, basenameOverlap * 0.08);
+    adjusted += Math.min(0.14, symbolOverlap * 0.07);
+    adjusted += Math.min(0.16, dirOverlap * 0.10);
+    if (basenameOverlap > 0 && symbolOverlap > 0) adjusted += 0.04;
+    if (dirOverlap > 0 && symbolOverlap > 0) adjusted += 0.03;
   }
-  if (exactIdentifierPaths.has(candidate.path)) adjusted += 0.24;
-  return clamp01(adjusted);
+  if (exactIdentifierPaths.has(candidate.path)) {
+    adjusted += 0.12;
+    reasons.push("exact symbol match");
+  }
+  return { score: Math.min(0.97, clamp01(adjusted)), reasons };
 }
 
 export function rerankPlanningFiles(
@@ -110,13 +168,17 @@ export function rerankPlanningFiles(
 ): PlanningFileCandidate[] {
   const codeChangeIntent = detectCodeChangeIntent(query);
   return candidates
-    .map((candidate) => ({
-      ...candidate,
-      score: scorePlanningCandidate(candidate, query, codeChangeIntent, exactIdentifierPaths),
-      reason: codeChangeIntent && isDocumentationPath(candidate.path)
-        ? `${candidate.reason}; doc file down-ranked for code-change intent`
-        : candidate.reason,
-    }))
+    .map((candidate) => {
+      const scoring = scorePlanningCandidate(candidate, query, codeChangeIntent, exactIdentifierPaths);
+      const reasonParts: string[] = [candidate.reason];
+      if (scoring.reasons.length > 0) reasonParts.push(scoring.reasons.join("; "));
+      if (codeChangeIntent && isDocumentationPath(candidate.path)) reasonParts.push("doc file down-ranked for code-change intent");
+      return {
+        ...candidate,
+        score: scoring.score,
+        reason: reasonParts.join("; "),
+      };
+    })
     .sort((left, right) => right.score - left.score || left.path.localeCompare(right.path));
 }
 

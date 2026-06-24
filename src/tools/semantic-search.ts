@@ -118,14 +118,17 @@ function extractPlainTextHeader(content: string): string {
 
 function buildCodeSearchBody(content: string): string {
   const selected: string[] = [];
+  let charBudget = 0;
   for (const line of content.split("\n")) {
     const trimmed = line.trim();
     if (!trimmed) continue;
-    const isComment = /^(\/\/|#|--|\/\*|\*)/.test(trimmed);
-    const isMeaningfulCode = /\b(function|class|interface|type|const|let|var|def|return|if|for|while|match|case|filter|map|reduce|where|select)\b/.test(trimmed);
-    if (!isComment && !isMeaningfulCode) continue;
-    selected.push(trimmed.slice(0, 180));
-    if (selected.join("\n").length >= MAX_CODE_SEARCH_BODY_CHARS) break;
+    if (trimmed.length < 3) continue;
+    const isPureSyntax = /^[\}\)\]\;,]+$/.test(trimmed);
+    if (isPureSyntax) continue;
+    const snippet = trimmed.slice(0, 180);
+    selected.push(snippet);
+    charBudget += snippet.length + 1;
+    if (charBudget >= MAX_CODE_SEARCH_BODY_CHARS) break;
   }
   const summary = selected.join("\n");
   return (summary || content).slice(0, MAX_CODE_SEARCH_BODY_CHARS);

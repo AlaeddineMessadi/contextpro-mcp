@@ -213,6 +213,42 @@ function removeFileScopedCacheEntries(cache: EmbeddingCache, relativePath: strin
   }
 }
 
+const STRUCTURAL_KINDS = new Set(["function", "method", "class", "interface", "enum", "type", "struct", "trait", "export"]);
+
+interface IndexableInput {
+  name: string;
+  kind: string;
+  line: number;
+  endLine: number;
+  signature?: string | null;
+  parentName?: string | null;
+}
+
+function isIndexableSymbol(
+  symbol: IndexableInput,
+  structuralRanges: Array<{ start: number; end: number }>,
+  sourceLines?: string[],
+): boolean {
+  if (STRUCTURAL_KINDS.has(symbol.kind)) return true;
+  if (symbol.kind !== "const" && symbol.kind !== "variable") return false;
+  const sig = symbol.signature ?? "";
+  // Check both the signature AND the raw source line for `export `. Tree-sitter strips the
+  // leading `export ` keyword from node.text when emitting a `lexical_declaration` signature,
+  // so we must consult the source directly to detect exported top-level consts.
+  if (/^export\s/.test(sig)) return true;
+  if (sourceLines && symbol.line >= 1 && symbol.line <= sourceLines.length) {
+    const rawLine = sourceLines[symbol.line - 1] ?? "";
+    if (/^\s*export\s/.test(rawLine)) return true;
+  }
+  if (symbol.parentName) return false;
+  // Line-containment check: const inside a structural range is a local.
+  for (const range of structuralRanges) {
+    if (symbol.line > range.start && symbol.line <= range.end) return false;
+  }
+  if (symbol.name.length < 3) return false;
+  return true;
+}
+
 async function buildIdentifierDocsForFile(rootDir: string, relativePath: string): Promise<IdentifierDoc[]> {
   const normalized = normalizeRelativePath(relativePath);
   const fullPath = resolve(rootDir, normalized);
@@ -221,18 +257,24 @@ async function buildIdentifierDocsForFile(rootDir: string, relativePath: string)
   try {
     const analysis = await analyzeFile(fullPath);
     const flat = flattenSymbols(analysis.symbols);
-    return flat.map((symbol) => ({
-      id: `${normalized}:${symbol.name}:${symbol.line}`,
-      path: normalized,
-      header: analysis.header,
-      name: symbol.name,
-      kind: symbol.kind,
-      line: symbol.line,
-      endLine: symbol.endLine,
-      signature: symbol.signature,
-      parentName: symbol.parentName,
-      text: `${symbol.name} ${symbol.kind} ${symbol.signature} ${normalized} ${analysis.header} ${symbol.parentName ?? ""}`,
-    }));
+    const sourceLines = (await readFile(fullPath, "utf-8")).split("\n");
+    const structuralRanges = flat
+      .filter((symbol) => STRUCTURAL_KINDS.has(symbol.kind))
+      .map((symbol) => ({ start: symbol.line, end: symbol.endLine }));
+    return flat
+      .filter((symbol) => isIndexableSymbol(symbol, structuralRanges, sourceLines))
+      .map((symbol) => ({
+        id: `${normalized}:${symbol.name}:${symbol.line}`,
+        path: normalized,
+        header: analysis.header,
+        name: symbol.name,
+        kind: symbol.kind,
+        line: symbol.line,
+        endLine: symbol.endLine,
+        signature: symbol.signature,
+        parentName: symbol.parentName,
+        text: `${symbol.name} ${symbol.kind} ${symbol.signature} ${normalized} ${analysis.header} ${symbol.parentName ?? ""}`,
+      }));
   } catch {
     return [];
   }
@@ -251,10 +293,15 @@ async function buildIdentifierIndex(rootDir: string): Promise<IdentifierIndex> {
   for (const file of files) {
     try {
       const content = await readFile(file.path, "utf-8");
-      fileLines.set(file.relativePath, content.split("\n"));
+      const sourceLines = content.split("\n");
+      fileLines.set(file.relativePath, sourceLines);
       const analysis = await analyzeFile(file.path);
       const flat = flattenSymbols(analysis.symbols);
+      const structuralRanges = flat
+        .filter((symbol) => STRUCTURAL_KINDS.has(symbol.kind))
+        .map((symbol) => ({ start: symbol.line, end: symbol.endLine }));
       for (const symbol of flat) {
+        if (!isIndexableSymbol(symbol, structuralRanges, sourceLines)) continue;
         docs.push({
           id: `${file.relativePath}:${symbol.name}:${symbol.line}`,
           path: file.relativePath,

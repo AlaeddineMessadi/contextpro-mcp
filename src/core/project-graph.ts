@@ -66,6 +66,24 @@ function stableId(parts: string[]): string {
   return createHash("sha1").update(parts.join("\0")).digest("hex").slice(0, 16);
 }
 
+const GRAPH_STRUCTURAL_KINDS = new Set(["function", "method", "class", "interface", "enum", "type", "struct", "trait", "export"]);
+
+function isGraphRelevantSymbol(
+  symbol: { name: string; kind: string; signature?: string | null; line_start: number; parent_symbol_id?: number | null },
+  structuralRanges: Array<{ start: number; end: number }>,
+): boolean {
+  if (GRAPH_STRUCTURAL_KINDS.has(symbol.kind)) return true;
+  if (symbol.kind !== "const" && symbol.kind !== "variable") return false;
+  const sig = symbol.signature ?? "";
+  if (/^export\s/.test(sig)) return true;
+  if (symbol.parent_symbol_id != null) return false;
+  for (const range of structuralRanges) {
+    if (symbol.line_start > range.start && symbol.line_start <= range.end) return false;
+  }
+  if (symbol.name.length < 3) return false;
+  return true;
+}
+
 function edgeId(type: GraphEdgeType, source: string, target: string, evidence: string): string {
   return `edge:${stableId([type, source, target, evidence])}`;
 }
@@ -320,7 +338,11 @@ export async function buildProjectGraphFromDB(rootDir: string, db: ContextPlusDB
     const symbols = db.getSymbolsByFile(file.id);
     symbolsByFile.set(file.id, symbols);
     symbolCount += symbols.length;
+    const structuralRanges = symbols
+      .filter((sym) => GRAPH_STRUCTURAL_KINDS.has(sym.kind))
+      .map((sym) => ({ start: sym.line_start, end: sym.line_end ?? sym.line_start }));
     for (const symbol of symbols) {
+      if (!isGraphRelevantSymbol(symbol, structuralRanges)) continue;
       const symbolId = symbolNodeId(file.path, symbol);
       addNode(nodes, {
         id: symbolId,
@@ -799,6 +821,48 @@ export async function queryProjectGraph(rootDir: string, input: {
     return input.symbol ? node.type === "symbol" && node.label === input.symbol : false;
   });
   const startIds = new Set(startNodes.map((node) => node.id));
+
+  if (kind === "impact") {
+    // Impact: BFS over INCOMING dependencies — files that would need attention if the start file changes.
+    // Edge selection: an edge from S→T contributes S to the dependent frontier when:
+    //   - T is in the current frontier (a file) AND edge.type ∈ {imports, tests}
+    //   - T is a symbol DEFINED by a file in the current frontier AND edge.type ∈ {calls, references, tests}
+    // Limit is a SINGLE budget for edges in the output. Nodes are derived from the bounded edge set.
+    const MAX_HOPS = 3;
+    const fileFrontier = new Set<string>(startIds);
+    const symbolFrontier = new Set<string>();
+    const collectedEdges: ProjectGraphEdge[] = [];
+    const edgeBudget = limit;
+
+    for (let hop = 0; hop < MAX_HOPS && collectedEdges.length < edgeBudget; hop++) {
+      // For each new file in the frontier, collect its defined symbols once.
+      const newSymbols = new Set<string>();
+      for (const edge of graph.edges) {
+        if (!fileFrontier.has(edge.source)) continue;
+        if (edge.type !== "defines") continue;
+        if (symbolFrontier.has(edge.target)) continue;
+        symbolFrontier.add(edge.target);
+        newSymbols.add(edge.target);
+      }
+      const newDependents = new Set<string>();
+      for (const edge of graph.edges) {
+        if (collectedEdges.length >= edgeBudget) break;
+        const targetsFile = fileFrontier.has(edge.target) && (edge.type === "imports" || edge.type === "tests");
+        const targetsSymbol = symbolFrontier.has(edge.target) && (edge.type === "calls" || edge.type === "references" || edge.type === "tests");
+        if (!targetsFile && !targetsSymbol) continue;
+        if (fileFrontier.has(edge.source)) continue;
+        collectedEdges.push(edge);
+        newDependents.add(edge.source);
+      }
+      if (newDependents.size === 0) break;
+      for (const id of newDependents) fileFrontier.add(id);
+    }
+
+    const nodeIds = new Set<string>([...fileFrontier, ...symbolFrontier]);
+    const nodes = graph.nodes.filter((node) => nodeIds.has(node.id));
+    return { graph, nodes, edges: collectedEdges };
+  }
+
   const edges = graph.edges
     .filter((edge) => startIds.has(edge.source) || startIds.has(edge.target))
     .slice(0, limit);

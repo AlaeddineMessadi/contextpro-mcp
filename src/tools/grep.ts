@@ -68,22 +68,133 @@ function compilePattern(options: GrepOptions): RegExp {
   return new RegExp(source, flags);
 }
 
+const MAX_GLOB_EXPANSION = 1024;
+
+function expandBraces(pattern: string): string[] {
+  const open = pattern.indexOf("{");
+  if (open === -1) return [pattern];
+  let depth = 0;
+  let close = -1;
+  for (let i = open; i < pattern.length; i++) {
+    if (pattern[i] === "{") depth++;
+    else if (pattern[i] === "}") {
+      depth--;
+      if (depth === 0) {
+        close = i;
+        break;
+      }
+    }
+  }
+  if (close === -1) return [pattern];
+  const prefix = pattern.slice(0, open);
+  const suffix = pattern.slice(close + 1);
+  const inner = pattern.slice(open + 1, close);
+  const options: string[] = [];
+  let depthInner = 0;
+  let buffer = "";
+  for (const ch of inner) {
+    if (ch === "{") {
+      depthInner++;
+      buffer += ch;
+    } else if (ch === "}") {
+      depthInner--;
+      buffer += ch;
+    } else if (ch === "," && depthInner === 0) {
+      options.push(buffer);
+      buffer = "";
+    } else {
+      buffer += ch;
+    }
+  }
+  options.push(buffer);
+  const expansions: string[] = [];
+  for (const option of options) {
+    for (const tail of expandBraces(suffix)) {
+      if (expansions.length >= MAX_GLOB_EXPANSION) return expansions;
+      expansions.push(`${prefix}${option}${tail}`);
+    }
+  }
+  const out: string[] = [];
+  for (const expanded of expansions) {
+    if (out.length >= MAX_GLOB_EXPANSION) break;
+    for (const inner of expandBraces(expanded)) {
+      if (out.length >= MAX_GLOB_EXPANSION) break;
+      out.push(inner);
+    }
+  }
+  return out;
+}
+
+function globPartToRegex(part: string): string {
+  let regex = "";
+  for (let i = 0; i < part.length; i++) {
+    const ch = part[i];
+    if (ch === "*") {
+      if (part[i + 1] === "*") {
+        const next = part[i + 2];
+        if (next === "/" || next === undefined) {
+          regex += "(?:.*/)?";
+          i += next === "/" ? 2 : 1;
+        } else {
+          regex += ".*";
+          i++;
+        }
+      } else {
+        regex += "[^/]*";
+      }
+    } else if (ch === "?") {
+      regex += "[^/]";
+    } else if ("./+^$()|[]\\".includes(ch)) {
+      regex += `\\${ch}`;
+    } else {
+      regex += ch;
+    }
+  }
+  return regex;
+}
+
+function splitGlobInput(input: string): string[] {
+  const out: string[] = [];
+  let buffer = "";
+  let depth = 0;
+  for (const ch of input) {
+    if (ch === "{") {
+      depth++;
+      buffer += ch;
+    } else if (ch === "}") {
+      depth = Math.max(0, depth - 1);
+      buffer += ch;
+    } else if (depth === 0 && (ch === "," || /\s/.test(ch))) {
+      if (buffer.length > 0) {
+        out.push(buffer);
+        buffer = "";
+      }
+    } else {
+      buffer += ch;
+    }
+  }
+  if (buffer.length > 0) out.push(buffer);
+  return out;
+}
+
 function matchesGlob(relativePath: string, glob: string | undefined): boolean {
   if (!glob || glob.trim().length === 0) return true;
   const trimmed = glob.trim();
-  const regexSource = trimmed
-    .split(/[,\s]+/)
-    .filter((part) => part.length > 0)
-    .map((part) => part
-      .replace(/[.+^$()|[\]\\]/g, "\\$&")
-      .replace(/\*\*/g, "@@DOUBLESTAR@@")
-      .replace(/\*/g, "[^/]*")
-      .replace(/@@DOUBLESTAR@@/g, ".*")
-      .replace(/\?/g, ".")
-    )
-    .map((part) => `^${part}$`)
+  const expanded = splitGlobInput(trimmed).flatMap((part) => expandBraces(part));
+  if (expanded.length === 0) return true;
+  if (expanded.length >= MAX_GLOB_EXPANSION) {
+    throw new Error(`Glob "${trimmed}" expands to >= ${MAX_GLOB_EXPANSION} sub-patterns (DoS guard). Simplify the brace expression — e.g., split into multiple comma-separated globs without nested {a,b}{c,d}...`);
+  }
+  const candidates = new Set<string>();
+  for (const part of expanded) {
+    candidates.add(part);
+    if (!part.startsWith("**/") && !part.includes("/")) {
+      candidates.add(`**/${part}`);
+    }
+  }
+  const regexSource = [...candidates]
+    .map((part) => `^${globPartToRegex(part)}$`)
     .join("|");
-  if (regexSource.length === 0) return true;
   return new RegExp(regexSource).test(relativePath);
 }
 
@@ -143,8 +254,14 @@ export async function grepProject(options: GrepOptions): Promise<string> {
   const contextChars = Math.max(40, Math.min(400, options.contextChars ?? DEFAULT_CONTEXT_CHARS));
 
   const entries = await walkDirectory({ rootDir: options.rootDir, targetPath: options.targetPath, depthLimit: 0 });
-  const candidates = entries
-    .filter((e) => !e.isDirectory && !shouldSkipExtension(e.relativePath) && matchesGlob(e.relativePath, options.glob));
+  let candidates;
+  try {
+    candidates = entries
+      .filter((e) => !e.isDirectory && !shouldSkipExtension(e.relativePath) && matchesGlob(e.relativePath, options.glob));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return `Error: ${message}`;
+  }
 
   const result: GrepResult = {
     matches: [],

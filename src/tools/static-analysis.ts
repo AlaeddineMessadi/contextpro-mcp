@@ -59,11 +59,69 @@ async function commandExists(cmd: string): Promise<boolean> {
   }
 }
 
+async function resolveLocalBinary(rootDir: string, name: string): Promise<string | null> {
+  const candidates = [
+    resolve(rootDir, "node_modules", ".bin", name),
+    resolve(rootDir, "node_modules", ".bin", `${name}.cmd`),
+  ];
+  for (const candidate of candidates) {
+    if (await exists(candidate)) return candidate;
+  }
+  return null;
+}
+
+async function resolvePythonTool(rootDir: string, name: string): Promise<{ cmd: string; args: string[] } | null> {
+  // Priority order:
+  // 1) ./.venv/bin/<name>  (uv/poetry/venv standard)
+  // 2) ./.venv/Scripts/<name>.exe  (Windows venv)
+  // 3) uv run <name>  (uv-managed projects)
+  // 4) poetry run <name>  (poetry-managed projects)
+  // 5) system <name>
+  const venvBin = resolve(rootDir, ".venv", "bin", name);
+  if (await exists(venvBin)) return { cmd: venvBin, args: [] };
+  const venvScripts = resolve(rootDir, ".venv", "Scripts", `${name}.exe`);
+  if (await exists(venvScripts)) return { cmd: venvScripts, args: [] };
+  if (await exists(resolve(rootDir, "pyproject.toml")) || await exists(resolve(rootDir, "uv.lock"))) {
+    if (await commandExists("uv")) {
+      return { cmd: "uv", args: ["run", name] };
+    }
+  }
+  if (await exists(resolve(rootDir, "poetry.lock"))) {
+    if (await commandExists("poetry")) {
+      return { cmd: "poetry", args: ["run", name] };
+    }
+  }
+  if (await commandExists(name)) return { cmd: name, args: [] };
+  return null;
+}
+
+async function readPackageJsonScripts(rootDir: string): Promise<Record<string, string>> {
+  try {
+    const raw = await readFile(resolve(rootDir, "package.json"), "utf-8");
+    const parsed = JSON.parse(raw) as { scripts?: Record<string, string> };
+    return parsed.scripts ?? {};
+  } catch {
+    return {};
+  }
+}
+
 async function detectLinters(rootDir: string): Promise<LinterConfig[]> {
   const linters: LinterConfig[] = [];
 
   if (await exists(resolve(rootDir, "tsconfig.json"))) {
-    linters.push({ name: "tsc", extensions: [".ts", ".tsx"], cmd: "npx", args: ["tsc", "--noEmit", "--pretty"] });
+    const localTsc = await resolveLocalBinary(rootDir, "tsc");
+    if (localTsc) {
+      linters.push({ name: "tsc", extensions: [".ts", ".tsx"], cmd: localTsc, args: ["--noEmit", "--pretty"] });
+    } else {
+      // Use npx --no-install so we never silently fall through to a system tsc
+      // (macOS ships /usr/bin/tsc as Apple's TextureSetCompiler, which is unrelated).
+      const npxAvailable = await commandExists("npx");
+      if (npxAvailable) {
+        linters.push({ name: "tsc", extensions: [".ts", ".tsx"], cmd: "npx", args: ["--no-install", "tsc", "--noEmit", "--pretty"] });
+      } else {
+        linters.push({ name: "tsc-missing", extensions: [".ts", ".tsx"], cmd: "echo", args: ["[lint] TypeScript not installed. Run 'npm install' to enable tsc, or add a 'typecheck' npm script."] });
+      }
+    }
   }
 
   if (await exists(resolve(rootDir, "eslint.config.mjs")) ||
@@ -72,15 +130,28 @@ async function detectLinters(rootDir: string): Promise<LinterConfig[]> {
       await exists(resolve(rootDir, ".eslintrc.json")) ||
       await exists(resolve(rootDir, ".eslintrc.js")) ||
       await exists(resolve(rootDir, ".eslintrc.yml"))) {
-    linters.push({ name: "eslint", extensions: [".js", ".ts", ".tsx", ".jsx"], cmd: "npx", args: ["eslint", "."] });
+    const localEslint = await resolveLocalBinary(rootDir, "eslint");
+    if (localEslint) {
+      linters.push({ name: "eslint", extensions: [".js", ".ts", ".tsx", ".jsx"], cmd: localEslint, args: ["."] });
+    } else {
+      linters.push({ name: "eslint", extensions: [".js", ".ts", ".tsx", ".jsx"], cmd: "npx", args: ["--no-install", "eslint", "."] });
+    }
   }
 
-  if (await commandExists("ruff")) {
-    linters.push({ name: "ruff", extensions: [".py"], cmd: "ruff", args: ["check", "."] });
-  } else if (await commandExists("python3")) {
-    linters.push({ name: "python3", extensions: [".py"], cmd: "python3", args: ["-m", "py_compile"] });
-  } else if (await commandExists("python")) {
-    linters.push({ name: "python", extensions: [".py"], cmd: "python", args: ["-m", "py_compile"] });
+  // Python: prefer ruff (in .venv, then `uv run`, then `poetry run`, then system).
+  // Fall back to mypy if ruff missing. Final fallback: python3 -m py_compile.
+  const ruff = await resolvePythonTool(rootDir, "ruff");
+  if (ruff) {
+    linters.push({ name: "ruff", extensions: [".py"], cmd: ruff.cmd, args: [...ruff.args, "check", "."] });
+  } else {
+    const mypy = await resolvePythonTool(rootDir, "mypy");
+    if (mypy) {
+      linters.push({ name: "mypy", extensions: [".py"], cmd: mypy.cmd, args: [...mypy.args, "--no-error-summary", "."] });
+    } else if (await commandExists("python3")) {
+      linters.push({ name: "python3", extensions: [".py"], cmd: "python3", args: ["-m", "py_compile"] });
+    } else if (await commandExists("python")) {
+      linters.push({ name: "python", extensions: [".py"], cmd: "python", args: ["-m", "py_compile"] });
+    }
   }
 
   if (await exists(resolve(rootDir, "Cargo.toml"))) {

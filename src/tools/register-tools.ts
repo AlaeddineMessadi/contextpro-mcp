@@ -27,6 +27,7 @@ import { impactDeltaTool } from "./impact-delta.js";
 import { exactReferencesTool } from "./exact-references.js";
 import { scipImportTool, scipStatusTool } from "./scip-index.js";
 import { buildTaskPack, buildChangeImpact, buildEditScope, buildDecisionBrief, buildValidateScope, recordTaskMemory, getWorkspaceContext, promotePattern } from "./agentic-context.js";
+import { findSymbol, replaceSymbolBody, insertAroundSymbol, renameSymbol } from "./symbolic-edit.js";
 import { listArtifacts, readArtifact } from "../core/artifacts.js";
 import { formatStartupHealthReport, runStartupHealthCheck } from "../core/startup-health.js";
 import { recordToolTiming } from "../core/tool-metrics.js";
@@ -1041,5 +1042,114 @@ export function registerTools(
         }),
       }],
     }), { toolName: "promote_pattern" }),
+  );
+
+  server.tool(
+    "find_symbol",
+    "Find symbols (functions, classes, methods, types) by name path pattern. " +
+    "A name path is a Serena-style path through the symbol tree within a file, e.g., \"ClassName/methodName\" or \"/AbsoluteRoot/Nested\". " +
+    "Returns location, signature, and optionally body and children. Use this before symbolic edits or to navigate a file's API surface.",
+    {
+      name_path_pattern: z.string().min(1).describe("Name path pattern. Use \"name\" to match anywhere, \"Class/method\" for relative, \"/Class/method\" for absolute."),
+      relative_path: z.string().optional().describe("Restrict search to a specific file. Omit to scan the whole project."),
+      include_body: z.boolean().optional().describe("Include the symbol's source body in results. Use judiciously."),
+      depth: z.number().optional().describe("Depth of descendants to retrieve (e.g., 1 returns class methods). Default: 0."),
+      max_matches: z.number().optional().describe("Maximum matches to return. Default: 50."),
+      substring_matching: z.boolean().optional().describe("If true, the last path element matches by substring."),
+      include_kinds: z.array(z.string()).optional().describe("Only return symbols of these kinds (function, class, method, etc.)."),
+      exclude_kinds: z.array(z.string()).optional().describe("Exclude symbols of these kinds."),
+      format: z.enum(["text", "json"]).optional().describe("Return plain text or structured JSON. Default: text."),
+    },
+    withRequestActivity(async ({ name_path_pattern, relative_path, include_body, depth, max_matches, substring_matching, include_kinds, exclude_kinds, format }) => ({
+      content: [{
+        type: "text" as const,
+        text: await findSymbol({
+          rootDir,
+          namePathPattern: name_path_pattern,
+          relativePath: relative_path,
+          includeBody: include_body,
+          depth,
+          maxMatches: max_matches,
+          substringMatching: substring_matching,
+          includeKinds: include_kinds,
+          excludeKinds: exclude_kinds,
+          format,
+        }),
+      }],
+    }), { toolName: "find_symbol" }),
+  );
+
+  server.tool(
+    "replace_symbol_body",
+    "Replace the entire body (definition through closing brace/dedent) of a symbol identified by its name path. " +
+    "Creates a shadow restore point before writing. Use this for surgical refactors instead of file-level edits. " +
+    "Only call after find_symbol/skeleton/explain confirms the target.",
+    {
+      relative_path: z.string().min(1).describe("File containing the symbol (relative to project root)."),
+      name_path: z.string().min(1).describe("Name path of the symbol to replace (e.g., \"ClassName/methodName\")."),
+      body: z.string().min(1).describe("Full replacement text for the symbol definition, including signature line."),
+      message: z.string().optional().describe("Optional restore-point message for traceability."),
+    },
+    withRequestActivity(async ({ relative_path, name_path, body, message }) => ({
+      content: [{
+        type: "text" as const,
+        text: await replaceSymbolBody({ rootDir, relativePath: relative_path, namePath: name_path, body, message }),
+      }],
+    }), { toolName: "replace_symbol_body" }),
+  );
+
+  server.tool(
+    "insert_after_symbol",
+    "Insert new code immediately after the closing line of an existing symbol. " +
+    "Useful for adding sibling functions, methods, or class members without re-reading the file. Creates a shadow restore point.",
+    {
+      relative_path: z.string().min(1).describe("File to modify (relative to project root)."),
+      name_path: z.string().min(1).describe("Name path of the anchor symbol (insertion happens after its end)."),
+      body: z.string().min(1).describe("Code to insert after the symbol."),
+      message: z.string().optional().describe("Optional restore-point message."),
+    },
+    withRequestActivity(async ({ relative_path, name_path, body, message }) => ({
+      content: [{
+        type: "text" as const,
+        text: await insertAroundSymbol({ rootDir, relativePath: relative_path, namePath: name_path, body, position: "after", message }),
+      }],
+    }), { toolName: "insert_after_symbol" }),
+  );
+
+  server.tool(
+    "insert_before_symbol",
+    "Insert new code immediately before the first line of an existing symbol. " +
+    "Useful for prepending imports, helpers, or decorators. Creates a shadow restore point.",
+    {
+      relative_path: z.string().min(1).describe("File to modify (relative to project root)."),
+      name_path: z.string().min(1).describe("Name path of the anchor symbol (insertion happens before its start)."),
+      body: z.string().min(1).describe("Code to insert before the symbol."),
+      message: z.string().optional().describe("Optional restore-point message."),
+    },
+    withRequestActivity(async ({ relative_path, name_path, body, message }) => ({
+      content: [{
+        type: "text" as const,
+        text: await insertAroundSymbol({ rootDir, relativePath: relative_path, namePath: name_path, body, position: "before", message }),
+      }],
+    }), { toolName: "insert_before_symbol" }),
+  );
+
+  server.tool(
+    "rename_symbol",
+    "Rename a symbol in its defining file and propagate the rename to callers and importers based on the indexed graph. " +
+    "Creates shadow restore points for the defining file and each updated cross-file site. " +
+    "Best-effort textual rename — does not understand scopes; always inspect blast_radius first to confirm safety.",
+    {
+      relative_path: z.string().min(1).describe("File where the symbol is defined."),
+      name_path: z.string().min(1).describe("Name path of the symbol to rename."),
+      new_name: z.string().min(1).describe("The new identifier name."),
+      message: z.string().optional().describe("Optional restore-point message."),
+    },
+    withRequestActivity(async ({ relative_path, name_path, new_name, message }) => ({
+      content: [{
+        type: "text" as const,
+        text: await renameSymbol({ rootDir, relativePath: relative_path, namePath: name_path, newName: new_name, message }),
+      }],
+    }), { toolName: "rename_symbol" }),
   );
 }

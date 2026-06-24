@@ -371,6 +371,107 @@ function addReactWrapperSymbols(content: string, lines: string[], symbols: CodeS
     : symbols;
 }
 
+function isConfigFile(filePath: string): boolean {
+  const lower = filePath.toLowerCase();
+  return /\.(config|conf|settings)\.(ts|tsx|js|jsx|mjs|cjs)$/.test(lower)
+    || /(^|\/)(rsbuild|webpack|vite|rollup|next|nuxt|astro|svelte|tailwind|postcss|babel|eslint|jest|vitest|playwright|cypress)\.config\.[jt]sx?$/.test(lower);
+}
+
+const CONFIG_KEY_PATTERNS: RegExp[] = [
+  /^\s*([a-zA-Z_$][a-zA-Z0-9_$]*)\s*:\s*[{[]/,
+  /^\s*([a-zA-Z_$][a-zA-Z0-9_$]*)\s*:\s*(?:true|false)\s*(?:[,}]|$)/,
+  /^\s*"([a-zA-Z_$][a-zA-Z0-9_$ -]*)"\s*:\s*[{[]/,
+];
+
+const CONFIG_MAX_DEPTH = 2;
+
+function extractConfigKeys(lines: string[]): CodeSymbol[] {
+  const keys: CodeSymbol[] = [];
+  const seenNames = new Set<string>();
+  let depth = 0;
+  let inExportDefault = false;
+  let braceDepthAtExport = -1;
+  let inBlockComment = false;
+  let inString: string | null = null;
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+
+    // Lightweight string/comment state machine so we don't extract from comments or string contents.
+    // Tracks per-character; we don't need a perfect tokenizer, just good-enough for typical configs.
+    let lineHasCode = "";
+    for (let c = 0; c < line.length; c++) {
+      const ch = line[c];
+      const next = line[c + 1];
+      if (inBlockComment) {
+        if (ch === "*" && next === "/") { inBlockComment = false; c++; }
+        continue;
+      }
+      if (inString) {
+        lineHasCode += ch;
+        if (ch === "\\") { lineHasCode += next ?? ""; c++; continue; }
+        if (ch === inString) inString = null;
+        continue;
+      }
+      if (ch === "/" && next === "/") break; // line comment
+      if (ch === "/" && next === "*") { inBlockComment = true; c++; continue; }
+      if (ch === '"' || ch === "'" || ch === "`") { inString = ch; lineHasCode += ch; continue; }
+      lineHasCode += ch;
+    }
+
+    // Detect entry into an export default object literal — this is what we consider the "config root".
+    if (!inExportDefault && /^(?:\s*export\s+default\s+|\s*module\.exports\s*=\s*|\s*export\s+const\s+\w+\s*[:=])/m.test(lineHasCode) && lineHasCode.includes("{")) {
+      inExportDefault = true;
+      braceDepthAtExport = depth;
+    }
+
+    // Track depth only on the in-code portion of the line so braces in strings/comments don't count.
+    const opens = (lineHasCode.match(/[{[(]/g) ?? []).length;
+    const closes = (lineHasCode.match(/[}\])]/g) ?? []).length;
+    const startingDepth = depth;
+    depth += opens - closes;
+    if (depth < 0) depth = 0;
+
+    if (inExportDefault && depth <= braceDepthAtExport) {
+      // Closed the top-level object — leave the config root.
+      inExportDefault = false;
+      braceDepthAtExport = -1;
+    }
+
+    // Skip if we're not inside the config root, or too deep.
+    if (!inExportDefault) continue;
+    const relativeDepth = startingDepth - braceDepthAtExport;
+    if (relativeDepth >= CONFIG_MAX_DEPTH) continue;
+
+    for (const pattern of CONFIG_KEY_PATTERNS) {
+      const match = lineHasCode.match(pattern);
+      if (match?.[1]) {
+        const name = match[1].trim();
+        if (name.length < 2 || name.length > 40) continue;
+        if (CONFIG_KEY_RESERVED.has(name)) continue;
+        if (seenNames.has(name)) continue;
+        seenNames.add(name);
+        keys.push({
+          name,
+          kind: SymbolKind.Const,
+          line: i + 1,
+          endLine: i + 1,
+          signature: line.trim().slice(0, 180),
+          children: [],
+        });
+        break;
+      }
+    }
+  }
+  return keys;
+}
+
+const CONFIG_KEY_RESERVED = new Set([
+  "default", "if", "for", "while", "return", "function", "class", "type", "const", "let",
+  "var", "import", "export", "from", "as", "true", "false", "null", "undefined",
+  "case", "switch", "throw", "new", "delete", "typeof", "instanceof", "in", "of",
+]);
+
 export async function analyzeFile(filePath: string): Promise<FileAnalysis> {
   const raw = await readFile(filePath, "utf-8");
   const content = (raw.startsWith("﻿") ? raw.slice(1) : raw).replace(/\r\n/g, "\n");
@@ -401,6 +502,14 @@ export async function analyzeFile(filePath: string): Promise<FileAnalysis> {
 
   if ([".ts", ".tsx", ".js", ".jsx", ".mjs"].includes(ext)) {
     symbols = addReactWrapperSymbols(content, lines, symbols);
+  }
+
+  if (isConfigFile(filePath)) {
+    const existingNames = new Set(symbols.map((sym) => `${sym.name}@${sym.line}`));
+    const configKeys = extractConfigKeys(lines).filter((key) => !existingNames.has(`${key.name}@${key.line}`));
+    if (configKeys.length > 0) {
+      symbols = [...symbols, ...configKeys].sort((left, right) => left.line - right.line || left.name.localeCompare(right.name));
+    }
   }
 
   return {
@@ -552,10 +661,25 @@ export interface CallSite {
   context: string;
 }
 
+const CALL_SITE_KEYWORDS = new Set([
+  "if", "for", "while", "switch", "return", "throw", "catch", "new", "delete", "typeof",
+  "void", "yield", "await", "async", "function", "class", "do", "in", "of", "instanceof",
+  "import", "export", "default", "from", "as", "case", "break", "continue", "let", "const",
+  "var", "static", "public", "private", "protected", "true", "false", "null", "undefined",
+  "this", "super", "with", "try", "finally", "else", "interface", "type", "enum", "extends",
+  "implements", "abstract", "readonly", "declare", "namespace", "module", "package",
+]);
+
+const STDLIB_GLOBALS = new Set([
+  "Math", "JSON", "Object", "Array", "String", "Number", "Boolean", "Date", "RegExp",
+  "Map", "Set", "WeakMap", "WeakSet", "Promise", "Symbol", "BigInt", "Error", "TypeError",
+  "Reflect", "Proxy", "globalThis", "console", "process",
+]);
+
 export function extractCallSites(content: string): CallSite[] {
   const lines = content.split("\n");
   const sites: CallSite[] = [];
-  const callPattern = /\b([a-zA-Z_$][a-zA-Z0-9_$]*)\s*\(/g;
+  const callPattern = /(?<![A-Za-z0-9_$.])([a-zA-Z_$][a-zA-Z0-9_$]*)\s*\(/g;
   const definitionPattern = /(?:function|class|interface|enum|type|const|let|var|def|fn|func|pub)\s+[a-zA-Z_$]/;
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
@@ -566,6 +690,9 @@ export function extractCallSites(content: string): CallSite[] {
     while ((match = callPattern.exec(line)) !== null) {
       const callee = match[1];
       if (seen.has(callee)) continue;
+      if (CALL_SITE_KEYWORDS.has(callee)) continue;
+      if (STDLIB_GLOBALS.has(callee)) continue;
+      if (callee.length < 2) continue;
       seen.add(callee);
       sites.push({ callee, line: i + 1, context: line.trim().substring(0, 120) });
     }

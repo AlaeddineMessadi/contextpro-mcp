@@ -435,7 +435,18 @@ function computeCombinedScore(semanticScore: number, keywordScore: number, optio
   const semanticComponent = Math.max(semanticScore, 0);
   const totalWeight = options.semanticWeight + options.keywordWeight;
   if (totalWeight <= 0) return semanticComponent;
-  return clamp01((options.semanticWeight * semanticComponent + options.keywordWeight * keywordScore) / totalWeight);
+  const blended = (options.semanticWeight * semanticComponent + options.keywordWeight * keywordScore) / totalWeight;
+  // Trust dampener: when one component is essentially zero, the combined score is misleading.
+  // A pure-keyword 94 should not look like a high-confidence hybrid match. Cap at 0.7 when
+  // semantic ≈ 0, and at 0.7 when keyword ≈ 0 (allows lexical hits to surface without claiming
+  // high hybrid confidence). 0.7 is the "medium" threshold in the qualityLabel UI.
+  const SEMANTIC_FLOOR = 0.05;
+  const KEYWORD_FLOOR = 0.05;
+  const SINGLE_COMPONENT_CAP = 0.7;
+  if (semanticComponent < SEMANTIC_FLOOR || keywordScore < KEYWORD_FLOOR) {
+    return clamp01(Math.min(blended, SINGLE_COMPONENT_CAP));
+  }
+  return clamp01(blended);
 }
 
 const FILE_SEARCH_SOURCE_TYPE = "file_search_cache";

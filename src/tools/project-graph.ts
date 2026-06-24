@@ -89,7 +89,27 @@ export async function queryProjectGraphTool(options: GraphQueryOptions): Promise
   }
   if (kind === "file" || kind === "impact") {
     if (result.nodes.length === 0) {
-      return `No graph nodes found for file "${file}". The file may not be indexed yet — run reindex, or check the path is correct (project-relative).`;
+      const fullGraph = await buildProjectGraph(options.rootDir);
+      const startNodeExists = fullGraph.nodes.some((node) => node.path === file);
+      if (!startNodeExists) {
+        return `No graph node found for file "${file}". The file may not be indexed yet — run reindex, or check the path is correct (project-relative).`;
+      }
+      if (kind === "impact") {
+        return `File "${file}" is indexed but has no incoming dependencies (no other files import it, call its symbols, or test it). This usually means it's a leaf module, types-only file, or entry point.`;
+      }
+      return `File "${file}" is indexed but has no graph edges. The file may have no imports, calls, or test relationships.`;
+    }
+    if (kind === "impact") {
+      // For impact, check if any node OTHER than the start file or its own symbols is in the result.
+      const hasDependents = result.nodes.some((node) => {
+        if (node.path === file) return false;
+        if (node.type === "symbol" && node.path === file) return false;
+        return node.type === "file" || (node.type === "symbol" && node.path !== file);
+      });
+      const hasFileDependent = result.nodes.some((node) => node.type === "file" && node.path !== file);
+      if (!hasFileDependent && !hasDependents) {
+        return `File "${file}" is indexed but has no incoming dependencies (no other files import it, call its symbols, or test it). This usually means it's a leaf module, types-only file, or entry point.`;
+      }
     }
   }
   if (kind === "symbol" && result.nodes.length === 0) {
