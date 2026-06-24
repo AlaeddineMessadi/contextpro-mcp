@@ -4,6 +4,37 @@ All notable changes to this project are recorded here. The project follows [Sema
 
 ## [Unreleased]
 
+### Fixed — Round-5 audit (B+ → A path)
+
+Four critical heuristic/ranking-layer fixes plus high/medium items from the third external audit. The indexing/graph/embedding layers were already sound; these close the "heuristics don't model what an LLM agent is doing" gap.
+
+**Critical**
+
+- **`replace_symbol_body` now parse-validates before committing, and preserves body indentation.** The previous reindent logic flattened nested indentation (`return 3` landed at 4 spaces instead of 8 inside a method), shipping broken Python with a success message. `reindentBody` now re-anchors the block so every line keeps its indent *relative to the signature line*. A new `validateSyntax` (tree-sitter) runs the post-edit content and **rejects + leaves the file untouched** if the edit would introduce a syntax error — applied to `replace_symbol_body`, `insert_after_symbol`, and `insert_before_symbol` for a consistent contract. (`src/core/tree-sitter.ts`, `src/tools/symbolic-edit.ts`)
+- **Search trust is decomposed and bound by `min(semantic, keyword)`.** A keyword-only top hit (semantic≈0) previously got the same 0.74 confidence as a semantically-strong hit. Now `unifiedSearchData` emits a `topResultBreakdown` (`{semantic, keyword, combined, signal, confidenceLabel}`), the base confidence is derived from the top result's weaker component, and an ambiguities entry fires: *"top hit is keyword-only (semantic≈0); it matches the query text but may not be semantically relevant."* (`src/tools/search.ts`)
+- **Directory-purpose / Protocol-implementation ranker prior.** For "add a new X for Y" tasks, `task_pack`/`edit_scope`/`decision_brief` previously surfaced unrelated single-token keyword hits (`status.py` for a fee-model task) at 98% while the entire `fees/` directory and the `FeeModel` Protocol stayed invisible. New `findDirectoryPriorMatches` detects add-intent + a directory hosting ≥2 sibling implementations matching a query noun (singular/plural aware), boosts every file in that directory plus the base/Protocol definition to the top of the candidate set before reranking. (`src/tools/directory-prior.ts`, `src/tools/agentic-context.ts`)
+- **`cluster` labels stopword the Python import vocabulary.** `__future__`, `annotations`, `decimal`, `dataclass`, `pathlib`, `typing`, `collections`, `abc`, etc. were producing labels like `[future]`/`[decimal]`. Added to the stopword set; the directory-name preference threshold dropped from 50% → 40% so feature folders win more reliably. (`src/tools/semantic-navigate.ts`)
+
+**High**
+
+- **`graph_query` shows scoped counts.** The `kind=file` view header reported the *global* node/edge totals, reading as if it hadn't scoped. Now shows `This view: N nodes | M edges` plus `Project total: …`. (`src/tools/project-graph.ts`)
+- **`related()` fuzzy-resolves src-layout paths** (`tradebot/scanner.py` → `src/tradebot/scanner.py`) and replaces the misleading "Run reindex" message with a "did you mean `<canonical>`?" hint when the file IS indexed under a different prefix. (`src/tools/related.ts`)
+- **`resolve_symbol` uses snake_case/camelCase word-boundary scoring with tie-breakers.** `'fee'` no longer collides with `run_venue_a_feed` (substring tier dropped to 20; whole-word-segment match scores 50–55). Tie-breakers when `file_context` is absent: de-prioritize test files, bonus for importer count. (`src/tools/resolve-symbol.ts`)
+- **Artifact cache carries `indexGeneration`** with a `readArtifactIfFresh` helper that returns null on stale generations, plus LRU eviction (max 200 per manifest). Search and agentic artifacts now stamp the live generation. (`src/core/artifacts.ts`, `src/tools/search.ts`, `src/tools/agentic-context.ts`)
+- **Restore points are session-tagged and tombstone-aware.** Each point records a `session` id; `checkpoints` marks foreign-session points `[OTHER SESSION]`. Snapshots of not-yet-existing files are flagged as tombstones, and restoring one deletes the file (instead of the silent "backup was empty" no-op). (`src/git/shadow.ts`, `src/tools/register-tools.ts`)
+
+**Medium**
+
+- **`repo_map` default covers ~60% of the project** (capped at 80 files) instead of a flat 40 when no budget is given. (`src/tools/repo-map.ts`)
+- **`diff` tags changed symbols `[M]`** by intersecting git hunk line ranges with symbol line ranges — the symbol list now reflects *what changed*, not the file's whole table of contents. (`src/tools/diff.ts`)
+- **`scip_status` explains what SCIP is**, which tools gain `SCIP_RESOLVED` evidence, and how to generate an index per language, when none is present. (`src/tools/scip-index.ts`)
+- **`find_symbol` supports wildcards** — `*` lists all symbols, `get*` matches by prefix, `**` spans path separators. (`src/tools/symbolic-edit.ts`)
+
+### Testing
+
+- New `test/main/round5-fixes.test.mjs` (6 tests): indentation preservation, syntax-error rejection, find_symbol wildcards, directory prior, resolve_symbol word-boundary scoring, search trust decomposition.
+- Full suite: **330 tests, 0 failures**.
+
 ### Fixed — Audit feedback from tradebot-plus (Python project)
 
 A B-grade external audit on a 112-file uv-managed Python project exposed several heuristic gaps that hurt agents using ContextPro for Python work and edit planning. Critical/High items addressed:
