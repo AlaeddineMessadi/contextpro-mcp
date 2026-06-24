@@ -42,7 +42,8 @@ const ARTIFACT_DIR = ".contextpro/artifacts";
 const MANIFEST_FILE = "manifest.json";
 const MANIFEST_LOCK_FILE = "manifest.lock";
 const LOCK_RETRY_MS = 40;
-const LOCK_TIMEOUT_MS = 5_000;
+const LOCK_TIMEOUT_MS = 15_000;
+const STALE_LOCK_AGE_MS = 30_000;
 
 async function readJsonFile<T>(path: string, fallback: T): Promise<T> {
   try {
@@ -93,6 +94,21 @@ async function withManifestLock<T>(rootDir: string, fn: () => Promise<T>): Promi
         await unlink(lockPath).catch(() => undefined);
       }
     } catch (error) {
+      // Stale-lock detection: if the lock file is older than STALE_LOCK_AGE_MS, an earlier
+      // process crashed before releasing it. Clear it and retry. Without this we'd block until
+      // LOCK_TIMEOUT_MS just because of a crashed prior process.
+      if ((error as NodeJS.ErrnoException).code === "EEXIST") {
+        try {
+          const statMod = await import("node:fs/promises");
+          const lockStats = await statMod.stat(lockPath).catch(() => null);
+          if (lockStats && Date.now() - lockStats.mtimeMs > STALE_LOCK_AGE_MS) {
+            await unlink(lockPath).catch(() => undefined);
+            continue;
+          }
+        } catch {
+          // best-effort stale check
+        }
+      }
       if (Date.now() >= deadline) throw error;
       await sleep(LOCK_RETRY_MS);
     }

@@ -145,9 +145,15 @@ async function applyExactSymbolFileBoosts(
     const exactPathBoost = exactPaths.has(result.path) ? 25 : 0;
     const exactSymbolBoost = matchedExactSymbols.length > 0 ? 12 : 0;
     if (exactPathBoost === 0 && exactSymbolBoost === 0) return result;
+    // Trust dampener: when semantic ≈ 0, cap the boosted total at 70% so a pure-keyword hit
+    // never looks like a "high confidence" hybrid match. Keep the keyword score honest at 100
+    // because the hit IS a real lexical match — but the combined score reflects the missing
+    // semantic component.
+    const rawCombined = result.score + exactPathBoost + exactSymbolBoost;
+    const cap = result.semanticScore < 5 ? 70 : 100;
     return {
       ...result,
-      score: Math.min(100, Math.round((result.score + exactPathBoost + exactSymbolBoost) * 10) / 10),
+      score: Math.min(cap, Math.round(rawCombined * 10) / 10),
       keywordScore: Math.min(100, Math.round(Math.max(result.keywordScore, matchedExactSymbols.length > 0 ? 96 : result.keywordScore) * 10) / 10),
       matchedSymbols: [...new Set([...matchedExactSymbols, ...result.matchedSymbols])],
       matchedSymbolLocations: [...new Set([...(symbolLocationsByPath.get(result.path) ?? []), ...result.matchedSymbolLocations])],
@@ -159,7 +165,9 @@ async function applyExactSymbolFileBoosts(
     const dbFile = db.getFile(path);
     boosted.push({
       path,
-      score: 99.9,
+      // Was 99.9 — but a hit found ONLY via the symbol-name path with no embedding signal is
+      // not a high-confidence hybrid match; cap at 65% so the UI label says "medium".
+      score: 65,
       semanticScore: 0,
       keywordScore: 100,
       header: dbFile?.header ?? "",

@@ -188,6 +188,10 @@ function deriveHeuristicLabel(cluster: { files: FileInfo[]; pathPattern: string 
     "return", "true", "false", "null", "undefined", "new", "delete", "typeof",
     "value", "values", "data", "info", "result", "results", "item", "items", "list", "obj",
     "object", "objects", "param", "params", "arg", "args", "ref", "refs",
+    // Generic project terms that show up everywhere; bad cluster labels.
+    "project", "build", "system", "library", "framework", "runtime", "api", "service",
+    "config", "configuration", "settings", "options", "preferences", "manage", "manager",
+    "factory", "provider", "controller", "handler", "context", "node", "edge",
   ]);
 
   // 1) STRONG signal: a directory segment that appears in ≥50% of cluster files becomes the label.

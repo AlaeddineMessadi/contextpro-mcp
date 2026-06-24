@@ -302,9 +302,13 @@ async function fuseFtsMatches(rootDir: string, query: string, results: SearchRes
     const lexicalScore = Math.max(45, 100 - i * 6);
     const existing = byPath.get(match.path);
     if (existing) {
+      // Trust dampener: when semantic ≈ 0, cap the combined at 70 so the rolled-up label can
+      // never show "high (100%)" on a pure-keyword hit. Keep the keyword component honest.
+      const semantic = existing.semanticScore;
+      const cap = semantic < 5 ? 70 : 100;
       byPath.set(match.path, {
         ...existing,
-        score: Math.min(100, Math.max(existing.score, Math.round((existing.score + lexicalScore * 0.18) * 10) / 10)),
+        score: Math.min(cap, Math.max(existing.score, Math.round((existing.score + lexicalScore * 0.18) * 10) / 10)),
         keywordScore: Math.max(existing.keywordScore, lexicalScore),
       });
       continue;
@@ -315,9 +319,10 @@ async function fuseFtsMatches(rootDir: string, query: string, results: SearchRes
     const matchedSymbols = symbols
       .filter((symbol) => terms.some((term) => symbol.name.toLowerCase().includes(term) || (symbol.signature ?? "").toLowerCase().includes(term)))
       .map((symbol) => symbol.name);
+    // Synthetic FTS-only entry: semantic is genuinely zero so cap the headline score at 65.
     byPath.set(match.path, {
       path: match.path,
-      score: lexicalScore,
+      score: Math.min(65, lexicalScore),
       semanticScore: 0,
       keywordScore: lexicalScore,
       header: file.header ?? "",
