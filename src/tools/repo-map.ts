@@ -88,6 +88,20 @@ export async function getRepoMapData(options: RepoMapOptions): Promise<RepoMapDa
   const allFiles = db.getAllFiles()
     .filter((file) => !options.targetPath || file.path.startsWith(options.targetPath));
 
+  // Compute an effective file budget. If max_tokens is set and max_files wasn't, scale breadth
+  // proportionally so repo_map can actually surface a meaningful coverage on large repos.
+  // Heuristic: ~120 tokens per file row (path + header + ~6 signatures truncated), so
+  // budget = max_tokens / 120, clamped to [40, 400]. The user can still override with max_files.
+  let effectiveMaxFiles: number;
+  if (options.maxFiles !== undefined) {
+    effectiveMaxFiles = Math.max(1, options.maxFiles);
+  } else if (options.maxTokens !== undefined) {
+    const TOKENS_PER_FILE_ESTIMATE = 120;
+    effectiveMaxFiles = Math.max(40, Math.min(400, Math.floor(options.maxTokens / TOKENS_PER_FILE_ESTIMATE)));
+  } else {
+    effectiveMaxFiles = 40;
+  }
+
   const files = allFiles
     .map((file) => {
       const symbols = db.getSymbolsByFile(file.id);
@@ -116,7 +130,7 @@ export async function getRepoMapData(options: RepoMapOptions): Promise<RepoMapDa
       } satisfies RepoMapFileEntry;
     })
     .sort((left, right) => right.importance - left.importance || left.path.localeCompare(right.path))
-    .slice(0, options.maxFiles ?? 40);
+    .slice(0, effectiveMaxFiles);
 
   const freshness = buildFreshnessMetadata(indexState, {
     staleCount: 0,

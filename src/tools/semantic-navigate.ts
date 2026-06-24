@@ -177,19 +177,57 @@ function formatLineRange(line: number, endLine: number): string {
 
 function deriveHeuristicLabel(cluster: { files: FileInfo[]; pathPattern: string | null }, index: number): string {
   if (cluster.pathPattern) return cluster.pathPattern;
-  const tokens = new Map<string, number>();
-  const stop = new Set(["the", "and", "for", "src", "test", "main", "tools", "core", "lib", "index", "is", "of", "to", "a", "in", "on", "with"]);
+  const stop = new Set([
+    "the", "and", "for", "src", "test", "main", "tools", "core", "lib", "index", "is", "of",
+    "to", "a", "in", "on", "with", "from", "into", "this", "that", "esports", "feature",
+    "module", "modules", "file", "files", "function", "functions", "class", "classes", "type",
+    "types", "test", "tests", "spec", "specs", "demo", "demos", "common", "shared", "util",
+    "utils", "helper", "helpers", "import", "imports", "as",
+  ]);
+
+  // 1) Prefer a common directory segment (e.g., "fees", "auth", "scoring") across files.
+  const dirSegmentCounts = new Map<string, number>();
   for (const file of cluster.files) {
-    const segs = file.relativePath.toLowerCase().split(/[\/_.\-\s]+/).filter((t) => t.length > 2 && !stop.has(t));
-    for (const seg of segs) tokens.set(seg, (tokens.get(seg) ?? 0) + 1);
-    if (file.header) {
-      const headerWords = file.header.toLowerCase().split(/\s+/).filter((t) => t.length > 3 && !stop.has(t));
-      for (const w of headerWords) tokens.set(w, (tokens.get(w) ?? 0) + 1);
+    const segs = file.relativePath.split("/").slice(0, -1); // exclude filename
+    for (const seg of segs) {
+      const lower = seg.toLowerCase();
+      if (lower.length < 3 || stop.has(lower)) continue;
+      dirSegmentCounts.set(lower, (dirSegmentCounts.get(lower) ?? 0) + 1);
     }
   }
-  const top = [...tokens.entries()].sort((a, b) => b[1] - a[1]).slice(0, 2).map(([t]) => t);
-  if (top.length === 0) return `Cluster ${index + 1}`;
-  return top.join(" ");
+  const dominantDir = [...dirSegmentCounts.entries()]
+    .filter(([, count]) => count >= Math.max(2, Math.floor(cluster.files.length * 0.5)))
+    .sort((a, b) => b[1] - a[1])[0];
+
+  // 2) Look at file headers for repeated meaningful nouns.
+  const headerTokenCounts = new Map<string, number>();
+  for (const file of cluster.files) {
+    if (!file.header) continue;
+    const words = file.header
+      .toLowerCase()
+      .replace(/[^a-z0-9\s/-]/g, " ")
+      .split(/\s+/)
+      .filter((t) => t.length > 3 && !stop.has(t));
+    for (const w of words) headerTokenCounts.set(w, (headerTokenCounts.get(w) ?? 0) + 1);
+  }
+  const dominantHeader = [...headerTokenCounts.entries()]
+    .filter(([, count]) => count >= 2)
+    .sort((a, b) => b[1] - a[1])[0];
+
+  // 3) Combine: prefer directory name + dominant header word for richer labels.
+  if (dominantDir && dominantHeader && dominantDir[0] !== dominantHeader[0]) {
+    return `${dominantDir[0]} (${dominantHeader[0]})`;
+  }
+  if (dominantDir) return dominantDir[0];
+  if (dominantHeader) return dominantHeader[0];
+
+  // 4) Last resort: filename basenames joined.
+  const basenames = cluster.files
+    .map((f) => f.relativePath.split("/").pop()?.replace(/\.\w+$/, "") ?? "")
+    .filter((n) => n.length > 0)
+    .slice(0, 3);
+  if (basenames.length > 0) return basenames.join(", ").substring(0, 50);
+  return `Cluster ${index + 1}`;
 }
 
 async function labelSiblingClusters(clusters: { files: FileInfo[]; pathPattern: string | null }[]): Promise<string[]> {

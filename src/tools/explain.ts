@@ -312,9 +312,11 @@ export async function explain(options: ExplainOptions): Promise<string> {
       lines.push("");
       lines.push(`--- Called functions (depth ${depth}) ---`);
       const seen = new Set<string>();
+      let directCount = 0;
       for (const c of called) {
         if (seen.has(c.name)) continue;
         seen.add(c.name);
+        if (c.file === symbolBody.file || called.indexOf(c) < called.length) directCount++;
         lines.push("");
         lines.push(`${c.kind}: ${c.name} (${c.file} L${c.lineStart}-L${c.lineEnd})`);
         lines.push("```");
@@ -327,6 +329,20 @@ export async function explain(options: ExplainOptions): Promise<string> {
         }
         lines.push("```");
       }
+      if (depth > 1) {
+        const directCalled = await getCalledSymbols(options.rootDir, symbolBody.body, symbolBody.file, 1);
+        const deeperAdded = seen.size - new Set(directCalled.map((c) => c.name)).size;
+        if (deeperAdded === 0) {
+          lines.push("");
+          lines.push(`(depth ${depth} added 0 nodes beyond depth 1 — the call graph saturates at depth 1 for this symbol.)`);
+        } else {
+          lines.push("");
+          lines.push(`(depth ${depth} added ${deeperAdded} additional node(s) beyond depth 1.)`);
+        }
+      }
+    } else {
+      lines.push("");
+      lines.push(`(No called functions resolved at depth ${depth}. The body has no recognizable identifier calls, or callees are not in the indexed symbol set.)`);
     }
   }
 
