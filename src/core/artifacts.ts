@@ -191,12 +191,28 @@ export async function persistArtifact<T>(options: PersistArtifactOptions<T>): Pr
   return nextRef;
 }
 
+function migrateLegacyArtifactPath(path: string): string {
+  // .contextplus was renamed to .contextpro in 1.2.0; manifest entries written before the rename
+  // still carry the old path string. Rewrite on read so the user never sees the stale path.
+  return path.replace(/(^|\/)\.contextplus(\/|$)/g, "$1.contextpro$2");
+}
+
+function migrateReference(ref: ArtifactReference): ArtifactReference {
+  const migrated = migrateLegacyArtifactPath(ref.path);
+  return migrated === ref.path ? ref : { ...ref, path: migrated };
+}
+
 export async function readArtifact<T = unknown>(rootDir: string, artifactId: string): Promise<StoredArtifact<T> | null> {
   const manifest = await loadManifestWithRepair(rootDir);
   const ref = manifest.artifacts.find((artifact) => artifact.id === artifactId);
   if (ref) {
-    const record = await readJsonFile<StoredArtifact<T> | null>(ref.path, null);
+    const migratedPath = migrateLegacyArtifactPath(ref.path);
+    const record = await readJsonFile<StoredArtifact<T> | null>(migratedPath, null);
     if (record) return record;
+    if (migratedPath !== ref.path) {
+      const original = await readJsonFile<StoredArtifact<T> | null>(ref.path, null);
+      if (original) return original;
+    }
   }
 
   const fallback = (await scanArtifactsOnDisk(rootDir)).find((artifact) => artifact.id === artifactId);
@@ -207,6 +223,7 @@ export async function readArtifact<T = unknown>(rootDir: string, artifactId: str
 export async function listArtifacts(rootDir: string, kind?: string, limit: number = 20): Promise<ArtifactReference[]> {
   const manifest = await loadManifestWithRepair(rootDir);
   return manifest.artifacts
+    .map(migrateReference)
     .filter((artifact) => !kind || artifact.kind === kind)
     .slice(0, Math.max(1, limit));
 }

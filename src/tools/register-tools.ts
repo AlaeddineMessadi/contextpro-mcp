@@ -279,7 +279,7 @@ export function registerTools(
     {
       query: z.string().min(1).describe("Natural language description of what you're looking for."),
       mode: z.enum(["file", "identifier", "hybrid"]).optional().describe("Search mode: 'file' for files, 'identifier' for functions/classes, 'hybrid' for both. Default: hybrid."),
-      preset: z.enum(["fast", "balanced", "exhaustive"]).optional().describe("Ranking preset. fast favors cheap lexical recall, balanced is default, exhaustive returns a wider set."),
+      preset: z.enum(["fast", "balanced", "exhaustive", "semantic_only", "keyword_only"]).optional().describe("Ranking preset. fast favors cheap lexical recall, balanced is default, exhaustive returns a wider set, semantic_only ignores keyword overlap (pure embedding similarity), keyword_only ignores embedding similarity (pure lexical match)."),
       format: z.enum(["text", "json"]).optional().describe("Return plain text or structured JSON. Default: text."),
       top_k: z.number().optional().describe("Number of matches to return. Default: 5."),
       top_calls_per_identifier: z.number().optional().describe("How many ranked call sites per identifier (identifier/hybrid mode). Default: 10."),
@@ -649,16 +649,17 @@ export function registerTools(
   server.tool(
     "diff",
     "Structured git diff showing changed files, lines added/removed, and affected symbols. " +
-    "Supports: working tree (default), since a commit, vs a branch, or a specific file.",
+    "Supports: working tree (default), since a commit, vs a branch, a specific file, or staged/both scopes.",
     {
       since: z.string().optional().describe("Show changes since this commit (e.g. HEAD~3, abc123)."),
       branch: z.string().optional().describe("Compare current branch against this branch (e.g. main)."),
       file: z.string().optional().describe("Show diff for a specific file (includes raw diff output)."),
+      scope: z.enum(["unstaged", "staged", "both"]).optional().describe("Working-tree scope. 'unstaged' (default) shows the worktree vs index. 'staged' shows index vs HEAD. 'both' shows worktree vs HEAD."),
     },
-    withRequestActivity(async ({ since, branch, file }) => ({
+    withRequestActivity(async ({ since, branch, file, scope }) => ({
       content: [{
         type: "text" as const,
-        text: await getDiff({ rootDir, since, branch, file }),
+        text: await getDiff({ rootDir, since, branch, file, scope }),
       }],
     })),
   );

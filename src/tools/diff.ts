@@ -13,6 +13,7 @@ export interface DiffOptions {
   since?: string;
   branch?: string;
   file?: string;
+  scope?: "unstaged" | "staged" | "both";
 }
 
 interface FileDiff {
@@ -70,6 +71,7 @@ async function getAffectedSymbols(rootDir: string, filePath: string): Promise<st
 
 export async function getDiff(options: DiffOptions): Promise<string> {
   const diffArgs: string[] = [];
+  const scope = options.scope ?? "unstaged";
 
   if (options.file) {
     diffArgs.push("--", toProjectRelativePath(options.rootDir, options.file, "file"));
@@ -77,10 +79,17 @@ export async function getDiff(options: DiffOptions): Promise<string> {
     diffArgs.push(`${options.branch}...HEAD`);
   } else if (options.since) {
     diffArgs.push(options.since);
+  } else if (scope === "staged") {
+    diffArgs.push("--cached");
+  } else if (scope === "both") {
+    diffArgs.push("HEAD");
   }
+  // scope === "unstaged" is the default git diff behavior — no extra flag.
 
   const changedFiles = await getChangedFiles(options.rootDir, diffArgs);
-  const untracked = !options.since && !options.branch ? await getUntrackedFiles(options.rootDir) : [];
+  const untracked = !options.since && !options.branch && scope !== "staged"
+    ? await getUntrackedFiles(options.rootDir)
+    : [];
 
   if (changedFiles.length === 0 && untracked.length === 0) {
     return "No changes detected.";

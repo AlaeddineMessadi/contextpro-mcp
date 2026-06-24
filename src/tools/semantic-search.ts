@@ -22,7 +22,7 @@ import { extname } from "path";
 export interface SemanticSearchOptions {
   rootDir: string;
   query: string;
-  preset?: "fast" | "balanced" | "exhaustive";
+  preset?: "fast" | "balanced" | "exhaustive" | "semantic_only" | "keyword_only";
   topK?: number;
   semanticWeight?: number;
   keywordWeight?: number;
@@ -80,6 +80,24 @@ function applySearchPreset(options: SemanticSearchOptions): SemanticSearchOption
       semanticWeight: options.semanticWeight ?? 0.62,
       keywordWeight: options.keywordWeight ?? 0.38,
       minCombinedScore: options.minCombinedScore ?? 0,
+    };
+  }
+  if (preset === "semantic_only") {
+    return {
+      ...options,
+      topK: options.topK ?? 5,
+      semanticWeight: options.semanticWeight ?? 1,
+      keywordWeight: options.keywordWeight ?? 0,
+      requireSemanticMatch: options.requireSemanticMatch ?? true,
+    };
+  }
+  if (preset === "keyword_only") {
+    return {
+      ...options,
+      topK: options.topK ?? 5,
+      semanticWeight: options.semanticWeight ?? 0,
+      keywordWeight: options.keywordWeight ?? 1,
+      requireKeywordMatch: options.requireKeywordMatch ?? true,
     };
   }
   return {

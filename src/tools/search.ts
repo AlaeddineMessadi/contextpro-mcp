@@ -19,7 +19,7 @@ export interface UnifiedSearchOptions {
   rootDir: string;
   query: string;
   mode?: SearchMode;
-  preset?: "fast" | "balanced" | "exhaustive";
+  preset?: "fast" | "balanced" | "exhaustive" | "semantic_only" | "keyword_only";
   format?: SearchFormat;
   topK?: number;
   topCallsPerIdentifier?: number;

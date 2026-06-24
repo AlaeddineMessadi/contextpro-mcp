@@ -47,7 +47,21 @@ function formatQueryResult(result: ProjectGraphQueryResult): string {
 }
 
 export async function exportProjectGraphTool(options: GraphExportOptions): Promise<string> {
-  const result = await writeProjectGraphArtifacts(options.rootDir);
+  // Defend against a transient "database connection is not open" race when the DB pool is
+  // mid-bootstrap. Pre-warm with getDB() then retry once on failure.
+  let result;
+  try {
+    result = await writeProjectGraphArtifacts(options.rootDir);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (/database (connection )?is not open|SQLITE_MISUSE/i.test(message)) {
+      const { getDB } = await import("../core/db.js");
+      await getDB(options.rootDir);
+      result = await writeProjectGraphArtifacts(options.rootDir);
+    } else {
+      throw error;
+    }
+  }
   if (options.format === "json") {
     return JSON.stringify({
       graphPath: result.graphPath,
