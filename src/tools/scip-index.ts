@@ -55,7 +55,26 @@ export async function scipImportTool(options: ScipImportOptions): Promise<string
 export async function scipStatusTool(options: ScipStatusOptions): Promise<string> {
   const payload = summary(await loadScipIndex(options.rootDir));
   if (options.format === "json") return JSON.stringify(payload, null, 2);
-  if (!payload.available) return "No SCIP index is available for this project.";
+  if (!payload.available) {
+    return [
+      "No SCIP index is available for this project.",
+      "",
+      "What is SCIP? SCIP (SCIP Code Intelligence Protocol) is a precise, compiler-grade",
+      "cross-reference index. When present, exact_references and graph_query upgrade their",
+      "evidence from HEURISTIC/AST_EXTRACTED to SCIP_RESOLVED — exact, no false positives,",
+      "and cross-language.",
+      "",
+      "How to add one:",
+      "  • TypeScript/JavaScript: npx @sourcegraph/scip-typescript index",
+      "  • Python:                pip install scip-python && scip-python index",
+      "  • Go:                    scip-go",
+      "  • Rust:                  rust-analyzer scip .",
+      "Then convert to JSON and run: scip_import { index_path: \".contextpro/index.scip.json\" }",
+      "",
+      "Without SCIP, ContextPro still works — exact_references uses the local TS language service",
+      "(TS/JS) and a Python import/call index, and the graph uses AST-extracted edges.",
+    ].join("\n");
+  }
   return [
     "SCIP index available.",
     `Source: ${payload.sourcePath}`,

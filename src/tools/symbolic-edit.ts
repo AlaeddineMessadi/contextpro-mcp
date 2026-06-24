@@ -84,7 +84,29 @@ function flattenWithNamePath(symbols: CodeSymbol[], parentChain: string[] = []):
   return out;
 }
 
+function wildcardToRegExp(pattern: string): RegExp {
+  // `*` matches any run of name characters (not /); `**` matches across path separators.
+  const escaped = pattern
+    .replace(/[.+?^${}()|[\]\\]/g, "\\$&")
+    .replace(/\*\*/g, "@@DS@@")
+    .replace(/\*/g, "[^/]*")
+    .replace(/@@DS@@/g, ".*");
+  return new RegExp(`^${escaped}$`);
+}
+
 function matchesNamePathPattern(candidate: string, pattern: string, substringMatching: boolean): boolean {
+  // Bare "*" or "**" lists everything — common LLM expectation for "all symbols".
+  if (pattern === "*" || pattern === "**") return true;
+
+  // Wildcard support: any pattern containing * is treated as a glob over the name path.
+  if (pattern.includes("*")) {
+    const re = wildcardToRegExp(pattern.startsWith("/") ? pattern.slice(1) : pattern);
+    if (re.test(candidate)) return true;
+    // Also try matching just the last path segment for convenience (e.g. "get*").
+    const last = candidate.split("/").pop() ?? candidate;
+    return wildcardToRegExp(pattern).test(last);
+  }
+
   if (pattern.startsWith("/")) {
     return candidate === pattern.slice(1);
   }

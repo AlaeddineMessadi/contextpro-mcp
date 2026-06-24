@@ -125,7 +125,9 @@ export async function getRepoMapData(options: RepoMapOptions): Promise<RepoMapDa
     const TOKENS_PER_FILE_ESTIMATE = 120;
     effectiveMaxFiles = Math.max(8, Math.min(400, Math.floor(options.maxTokens / TOKENS_PER_FILE_ESTIMATE)));
   } else {
-    effectiveMaxFiles = 40;
+    // No budget given: cover ~60% of the project (capped at 80 files) so the default map is
+    // genuinely useful for orientation rather than truncating at a flat 40.
+    effectiveMaxFiles = Math.max(40, Math.min(80, Math.ceil(allFiles.length * 0.6)));
   }
 
   const files = allFiles

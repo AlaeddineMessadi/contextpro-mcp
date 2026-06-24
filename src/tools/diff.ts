@@ -58,12 +58,56 @@ async function getUntrackedFiles(rootDir: string): Promise<string[]> {
   }
 }
 
-async function getAffectedSymbols(rootDir: string, filePath: string): Promise<string[]> {
+interface ChangedRange {
+  start: number;
+  end: number;
+}
+
+/**
+ * Parse `git diff` unified hunk headers to find the NEW-side line ranges that changed.
+ * Hunk header form: @@ -oldStart,oldCount +newStart,newCount @@
+ */
+function parseChangedRanges(diffText: string): ChangedRange[] {
+  const ranges: ChangedRange[] = [];
+  const hunkRe = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/gm;
+  let match: RegExpExecArray | null;
+  while ((match = hunkRe.exec(diffText)) !== null) {
+    const start = parseInt(match[1], 10);
+    const count = match[2] !== undefined ? parseInt(match[2], 10) : 1;
+    if (count === 0) {
+      // Pure deletion — represent as a zero-width range at the anchor line.
+      ranges.push({ start, end: start });
+    } else {
+      ranges.push({ start, end: start + count - 1 });
+    }
+  }
+  return ranges;
+}
+
+function rangesOverlap(a: ChangedRange, b: ChangedRange): boolean {
+  return a.start <= b.end && b.start <= a.end;
+}
+
+async function getAffectedSymbols(rootDir: string, filePath: string, changedRanges?: ChangedRange[]): Promise<string[]> {
   const fullPath = resolveProjectPath(rootDir, filePath, "diff file");
   if (!isSupportedFile(fullPath)) return [];
   try {
     const analysis = await analyzeFile(fullPath);
-    return flattenSymbols(analysis.symbols).map((s) => `${s.kind}: ${s.name} (L${s.line})`);
+    const flat = flattenSymbols(analysis.symbols);
+    if (!changedRanges || changedRanges.length === 0) {
+      // No hunk data (e.g., --numstat only) — fall back to listing the inventory but mark it.
+      return flat.map((s) => `${s.kind}: ${s.name} (L${s.line})`);
+    }
+    // Tag each symbol that overlaps a changed range as [M]odified. Symbols with no overlap are
+    // omitted — the list now reflects WHAT CHANGED, not the whole file's table of contents.
+    const touched: string[] = [];
+    for (const s of flat) {
+      const symRange: ChangedRange = { start: s.line, end: s.endLine && s.endLine >= s.line ? s.endLine : s.line };
+      if (changedRanges.some((r) => rangesOverlap(symRange, r))) {
+        touched.push(`[M] ${s.kind}: ${s.name} (L${s.line}-L${symRange.end})`);
+      }
+    }
+    return touched;
   } catch {
     return [];
   }
@@ -108,12 +152,17 @@ export async function getDiff(options: DiffOptions): Promise<string> {
   for (const f of changedFiles) {
     lines.push(`  ${f.path} (+${f.additions} -${f.deletions})`);
 
-    const symbols = await getAffectedSymbols(options.rootDir, f.path);
-    if (symbols.length > 0 && symbols.length <= 10) {
+    // Get the per-file hunk ranges so we can tag only the symbols that actually changed.
+    const fileDiffText = await runGitDiff(options.rootDir, [...diffArgs, "--", f.path]);
+    const changedRanges = parseChangedRanges(fileDiffText);
+    const symbols = await getAffectedSymbols(options.rootDir, f.path, changedRanges);
+    if (symbols.length === 0 && changedRanges.length > 0) {
+      lines.push(`    (changes are outside any tracked symbol — imports, comments, or top-level statements)`);
+    } else if (symbols.length > 0 && symbols.length <= 10) {
       for (const sym of symbols) lines.push(`    ${sym}`);
     } else if (symbols.length > 10) {
       for (const sym of symbols.slice(0, 8)) lines.push(`    ${sym}`);
-      lines.push(`    ... and ${symbols.length - 8} more symbols`);
+      lines.push(`    ... and ${symbols.length - 8} more changed symbols`);
     }
   }
 
