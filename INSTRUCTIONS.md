@@ -56,9 +56,14 @@ Canonical prefix is `CONTEXTPRO_*` (since 1.2.0). Legacy `CONTEXTPLUS_*` names c
 
 | Variable                                | Recommended          | Description                                                      |
 | --------------------------------------- | -------------------- | ---------------------------------------------------------------- |
-| `CONTEXTPRO_EMBED_PROVIDER`             | `ollama`             | Embedding provider: `ollama` or `openai`                         |
-| `OLLAMA_EMBED_MODEL`                    | `nomic-embed-text:latest` | Embedding model name                                             |
-| `OLLAMA_CHAT_MODEL`                     | `nemotron-3-ultra:cloud` | Chat model for cluster labeling and hub name derivation          |
+| `CONTEXTPRO_EMBED_PROVIDER`             | `ollama`             | `ollama`, `openai`, or any OpenAI-compatible alias (`openrouter`, `groq`, `vllm`, …) |
+| `CONTEXTPRO_CHAT_PROVIDER`              | (= embed provider)   | Override the chat backend independently of embeddings            |
+| `OLLAMA_EMBED_MODEL`                    | `nomic-embed-text:latest` | Ollama embedding model name                                     |
+| `OLLAMA_CHAT_MODEL`                     | `gemma4:12b`         | Ollama chat model for cluster labeling and hub name derivation   |
+| `CONTEXTPRO_OPENAI_API_KEY`            | (none)               | API key for the OpenAI-compatible path                            |
+| `CONTEXTPRO_OPENAI_BASE_URL`           | `https://api.openai.com/v1` | Endpoint base URL — point at any OpenAI-compatible provider |
+| `CONTEXTPRO_OPENAI_EMBED_MODEL`        | `text-embedding-3-small` | Embedding model for the OpenAI path                         |
+| `CONTEXTPRO_OPENAI_CHAT_MODEL`         | `gpt-4o-mini`        | Chat model for the OpenAI path                                   |
 | `CONTEXTPRO_EMBED_BATCH_SIZE`           | `8`                  | Embedding batch per GPU call (hard-capped to 5-10)               |
 | `CONTEXTPRO_EMBED_TRACKER`              | `lazy`               | Enable realtime embedding updates for changed files/functions    |
 | `CONTEXTPRO_EMBED_TRACKER_MAX_FILES`    | `8`                  | Max changed files per tracker tick (hard-capped to 5-10)         |

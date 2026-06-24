@@ -2,6 +2,13 @@
 
 All notable changes to this project are recorded here. The project follows [Semantic Versioning](https://semver.org/) and [Keep a Changelog](https://keepachangelog.com/) conventions. Pair with `STATUS.md` (live state) and `AUDIT.md` (deep findings with evidence).
 
+## [Unreleased]
+
+### Changed — Providers & docs
+
+- **OpenAI-compatible providers are now first-class.** `CONTEXTPRO_EMBED_PROVIDER` / `CONTEXTPRO_CHAT_PROVIDER` accept friendly aliases (`openrouter`, `groq`, `together`, `deepinfra`, `vllm`, `lmstudio`, `litellm`, `anyscale`, `openai-compatible`) that all map to the OpenAI-compatible HTTP path. Behavior is unchanged from `openai` — the aliases just make it obvious that any provider speaking the OpenAI `/embeddings` + `/chat/completions` API works by setting `CONTEXTPRO_OPENAI_BASE_URL`. (`src/core/embeddings.ts`, `src/core/chat-model.ts`)
+- **README rewritten for clarity:** new **LLM providers** section (Ollama / OpenAI / OpenRouter / Groq / local examples, with the Anthropic-via-proxy note since Claude has no embeddings endpoint), a clearer **Multiple projects** section explaining per-project isolation (one server = one `.contextpro/` = one project, never mixed), and a corrected env-var table (OpenAI base-URL/key/model vars, `CONTEXTPRO_CHAT_PROVIDER`, `CONTEXTPRO_MAX_FILE_SIZE`, accurate `gemma4:12b` chat default, 54-tool count). (`README.md`, `INSTRUCTIONS.md`)
+
 ## [1.3.0] - 2026-06-25
 
 Production-readiness pass. A 13-agent adversarial audit (6 lenses × find + skeptic-verify + synthesis) returned **READY-WITH-FIXES, no ship blockers**; the one "CRITICAL" command-injection finding was refuted by direct test (`execFile` uses arg arrays — no shell). All SHIP-WITH-MONITORING items below are now fixed.

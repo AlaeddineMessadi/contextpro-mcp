@@ -74,7 +74,16 @@ export interface EmbeddingCache {
   [path: string]: { hash: string; vector: number[] };
 }
 
-const EMBED_PROVIDER = (process.env.CONTEXTPRO_EMBED_PROVIDER ?? process.env.CONTEXTPLUS_EMBED_PROVIDER ?? "ollama").toLowerCase();
+// `openai` selects the OpenAI-compatible HTTP path. Friendly aliases map to the same path so
+// users don't have to know it's "the openai one" — any provider that speaks the OpenAI
+// /embeddings + /chat/completions API works by pointing CONTEXTPRO_OPENAI_BASE_URL at it
+// (OpenRouter, Groq, Together, DeepInfra, vLLM, LM Studio, etc.).
+const OPENAI_COMPATIBLE_ALIASES = new Set(["openai", "openai-compatible", "openrouter", "groq", "together", "deepinfra", "vllm", "lmstudio", "litellm", "anyscale"]);
+function normalizeProvider(raw: string): "ollama" | "openai" {
+  const p = raw.trim().toLowerCase();
+  return OPENAI_COMPATIBLE_ALIASES.has(p) ? "openai" : "ollama";
+}
+const EMBED_PROVIDER = normalizeProvider(process.env.CONTEXTPRO_EMBED_PROVIDER ?? process.env.CONTEXTPLUS_EMBED_PROVIDER ?? "ollama");
 const EMBED_MODEL = process.env.OLLAMA_EMBED_MODEL ?? "nomic-embed-text:latest";
 const OPENAI_EMBED_MODEL = process.env.CONTEXTPRO_OPENAI_EMBED_MODEL ?? process.env.CONTEXTPLUS_OPENAI_EMBED_MODEL ?? process.env.OPENAI_EMBED_MODEL ?? "text-embedding-3-small";
 const OPENAI_API_KEY = process.env.CONTEXTPRO_OPENAI_API_KEY ?? process.env.CONTEXTPLUS_OPENAI_API_KEY ?? process.env.OPENAI_API_KEY ?? "";

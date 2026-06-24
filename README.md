@@ -67,7 +67,7 @@ Add to your project's `.mcp.json`:
       "env": {
         "CONTEXTPRO_EMBED_PROVIDER": "ollama",
         "OLLAMA_EMBED_MODEL": "nomic-embed-text:latest",
-        "OLLAMA_CHAT_MODEL": "nemotron-3-ultra:cloud",
+        "OLLAMA_CHAT_MODEL": "gemma4:12b",
         "CONTEXTPRO_EMBED_TRACKER": "lazy"
       }
     }
@@ -87,7 +87,7 @@ args = ["-y", "contextpro-mcp", "--root", "/absolute/path/to/your/project"]
 [mcp_servers.contextpro.env]
 CONTEXTPRO_EMBED_PROVIDER = "ollama"
 OLLAMA_EMBED_MODEL = "nomic-embed-text:latest"
-OLLAMA_CHAT_MODEL = "nemotron-3-ultra:cloud"
+OLLAMA_CHAT_MODEL = "gemma4:12b"
 CONTEXTPRO_EMBED_TRACKER = "lazy"
 ```
 
@@ -106,7 +106,7 @@ Add to `opencode.json`:
       "environment": {
         "CONTEXTPRO_EMBED_PROVIDER": "ollama",
         "OLLAMA_EMBED_MODEL": "nomic-embed-text:latest",
-        "OLLAMA_CHAT_MODEL": "nemotron-3-ultra:cloud",
+        "OLLAMA_CHAT_MODEL": "gemma4:12b",
         "CONTEXTPRO_EMBED_TRACKER": "lazy"
       }
     }
@@ -124,26 +124,61 @@ npx -y contextpro-mcp init cursor     # writes .cursor/mcp.json
 
 ### First-time setup
 
-ContextPro needs an embedding model. The recommended local stack is [Ollama](https://ollama.com):
+ContextPro needs an embedding model for semantic `search`. The default is local [Ollama](https://ollama.com):
 
 ```bash
-brew install --cask ollama         # or your platform equivalent
 ollama serve
 ollama pull nomic-embed-text       # 137M params, 768-dim, fast
 ```
 
-Or use any OpenAI-compatible API (OpenAI, Gemini, vLLM, LiteLLM):
+Prefer a hosted API (OpenAI, OpenRouter, Groq, …) or a different local runtime? See **[LLM providers](#llm-providers)** below — any OpenAI-compatible endpoint works with one base-URL setting.
 
-```json
-{
-  "CONTEXTPRO_EMBED_PROVIDER": "openai",
-  "CONTEXTPRO_OPENAI_API_KEY": "YOUR_KEY",
-  "CONTEXTPRO_OPENAI_BASE_URL": "https://api.openai.com/v1",
-  "CONTEXTPRO_OPENAI_EMBED_MODEL": "text-embedding-3-small"
-}
+> **No provider configured?** ContextPro still works — `search` falls back to FTS5/BM25 keyword ranking and `status` reports the degraded mode. Structural tools (`tree`, `skeleton`, `blast_radius`, `find_symbol`, `change_impact`, …) never need a provider.
+
+---
+
+## LLM providers
+
+ContextPro uses an LLM for two things only: **embeddings** (semantic `search`) and an optional **chat model** (cluster labels, hub names, planning rerank). Everything else is pure AST/graph work with no model.
+
+There are exactly two backends, but the second covers almost everything:
+
+| Set `CONTEXTPRO_EMBED_PROVIDER` to | Uses | For |
+| --- | --- | --- |
+| `ollama` (default) | local Ollama daemon | offline, no API key, free |
+| `openai` *(or any alias below)* | OpenAI-compatible HTTP API | any hosted or self-hosted endpoint |
+
+The `openai` path speaks the standard `/embeddings` + `/chat/completions` API, so **any provider that implements it works** — just point `CONTEXTPRO_OPENAI_BASE_URL` at the endpoint. These aliases all select that path (purely for readability — they behave identically): `openai-compatible`, `openrouter`, `groq`, `together`, `deepinfra`, `vllm`, `lmstudio`, `litellm`, `anyscale`.
+
+**Examples** (drop into the `env` block of your MCP config):
+
+```jsonc
+// OpenAI
+{ "CONTEXTPRO_EMBED_PROVIDER": "openai",
+  "CONTEXTPRO_OPENAI_API_KEY": "sk-...",
+  "CONTEXTPRO_OPENAI_EMBED_MODEL": "text-embedding-3-small",
+  "CONTEXTPRO_OPENAI_CHAT_MODEL": "gpt-4o-mini" }
+
+// OpenRouter (chat-only providers — keep embeddings on Ollama)
+{ "CONTEXTPRO_EMBED_PROVIDER": "ollama",
+  "OLLAMA_EMBED_MODEL": "nomic-embed-text:latest",
+  "CONTEXTPRO_CHAT_PROVIDER": "openrouter",
+  "CONTEXTPRO_OPENAI_BASE_URL": "https://openrouter.ai/api/v1",
+  "CONTEXTPRO_OPENAI_API_KEY": "sk-or-...",
+  "CONTEXTPRO_OPENAI_CHAT_MODEL": "anthropic/claude-3.5-haiku" }
+
+// Local OpenAI-compatible server (LM Studio / vLLM / llama.cpp)
+{ "CONTEXTPRO_EMBED_PROVIDER": "openai",
+  "CONTEXTPRO_OPENAI_BASE_URL": "http://localhost:1234/v1",
+  "CONTEXTPRO_OPENAI_API_KEY": "not-needed",
+  "CONTEXTPRO_OPENAI_EMBED_MODEL": "nomic-embed-text" }
 ```
 
-> **No embedding provider?** ContextPro still works — `search` falls back to FTS5/BM25 keyword ranking and emits a `Provider unreachable` warning in `status`.
+Notes:
+- **Embeddings and chat are independent.** You can embed locally with Ollama and rerank/label with a hosted chat model (or skip chat entirely — it's optional). Set `CONTEXTPRO_CHAT_PROVIDER` to override the chat backend separately from `CONTEXTPRO_EMBED_PROVIDER`.
+- **Anthropic / Claude:** Claude has no native embeddings endpoint, so run embeddings on Ollama or OpenAI and route *chat* to Claude through an OpenAI-compatible proxy (OpenRouter, LiteLLM) via `CONTEXTPRO_OPENAI_BASE_URL`.
+- **Switching embedding models changes the vector dimension.** ContextPro detects the drift, clears the stale cache, and `status` flags it — just run `reindex` once after switching.
+- **Verify what's active:** `status` shows `Provider: <name> | Model: <model>`.
 
 ---
 
@@ -263,7 +298,7 @@ Pass `no_embed: true` (or set `CONTEXTPRO_REINDEX_NO_EMBED=true`) to skip step 2
 ┌─────────────────────────────────────────────────────────────────┐
 │                       ContextPro MCP server                     │
 │  ┌─────────────────────────────────────────────────────────┐    │
-│  │  47 tools  ·  registered via Zod schemas                │    │
+│  │  54 tools  ·  registered via Zod schemas                │    │
 │  └──────┬──────────────────────────────────────────────────┘    │
 │         │                                                       │
 │  ┌──────▼─────────┐  ┌──────────────┐  ┌──────────────────┐     │
@@ -290,17 +325,29 @@ Pass `no_embed: true` (or set `CONTEXTPRO_REINDEX_NO_EMBED=true`) to skip step 2
 
 ---
 
-## Multi-project safety
+## Multiple projects (standalone, never mixed)
 
-A single MCP process pins to one `--root`. ContextPro refuses to start when:
+**One server process = one project.** Each project is fully isolated:
 
-- `--root` is `/`, the user's home directory, or a top-level home subdirectory (it would create `.contextpro/` and SQLite databases there).
-- The project root drifts mid-session (multi-project trust check).
-- Native bindings hit an ABI mismatch and auto-repair fails.
+- All state lives in **that project's own `.contextpro/` directory** — its SQLite index (`index.db`), embeddings, memory graph, artifacts, restore points, and config. Nothing is shared or global.
+- A server pins to a single root via `--root` and refuses to drift; queries can only ever see the project it was started for.
+- Run one ContextPro server **per project** — give each its own entry in your agent config. They never see each other's data.
 
-Override the unsafe-root check explicitly with `CONTEXTPRO_ALLOW_UNSAFE_ROOT=true`.
+```jsonc
+// .mcp.json — two projects, two isolated servers
+{
+  "mcpServers": {
+    "contextpro-web":  { "command": "npx", "args": ["-y", "contextpro-mcp", "--root", "/abs/path/web"] },
+    "contextpro-api":  { "command": "npx", "args": ["-y", "contextpro-mcp", "--root", "/abs/path/api"] }
+  }
+}
+```
 
-For multi-project workflows, use `workspace_context` to list registered projects and `promote_pattern` to share memory across them.
+Each project's index is keyed by its absolute root, so even identically-named files in different projects never collide.
+
+**Guardrails.** ContextPro refuses to start when `--root` is `/`, your home directory, or a top-level home folder (it would scatter `.contextpro/` databases somewhere harmful) — override only if you mean it with `CONTEXTPRO_ALLOW_UNSAFE_ROOT=true`. It also self-heals native-binding ABI drift (see below).
+
+**Optional cross-project layer.** If you *want* to relate projects (e.g. a consulting client with several repos), `workspace_context` lists registered projects and `promote_pattern` shares a reusable memory note up to a `client`/`global` scope. This is opt-in — by default nothing crosses the project boundary. Set `CONTEXTPRO_CLIENT_ID` to group projects under one client.
 
 ---
 
@@ -330,23 +377,33 @@ which node && node --version
 
 Canonical prefix is `CONTEXTPRO_*` (since 1.2.0). Legacy `CONTEXTPLUS_*` names work as aliases through 2.0.
 
+**Providers** (see [LLM providers](#llm-providers)):
+
 | Variable | Default | Description |
 | --- | --- | --- |
-| `CONTEXTPRO_EMBED_PROVIDER` | `ollama` | `ollama` or `openai` |
-| `OLLAMA_EMBED_MODEL` | `nomic-embed-text:latest` | Embedding model name |
-| `OLLAMA_CHAT_MODEL` | `nemotron-3-ultra:cloud` | Chat model for cluster labels and hub names |
+| `CONTEXTPRO_EMBED_PROVIDER` | `ollama` | `ollama`, `openai`, or an OpenAI-compatible alias (`openrouter`, `groq`, `vllm`, …) |
+| `CONTEXTPRO_CHAT_PROVIDER` | (= embed) | Override the chat backend independently of embeddings |
+| `OLLAMA_EMBED_MODEL` | `nomic-embed-text:latest` | Ollama embedding model |
+| `OLLAMA_CHAT_MODEL` | `gemma4:12b` | Ollama chat model (cluster labels, hub names, rerank) |
+| `OLLAMA_HOST` | `http://127.0.0.1:11434` | Non-default Ollama endpoint |
+| `CONTEXTPRO_OPENAI_API_KEY` | (none) | API key for the OpenAI-compatible path |
+| `CONTEXTPRO_OPENAI_BASE_URL` | `https://api.openai.com/v1` | Endpoint base URL — point at any compatible provider |
+| `CONTEXTPRO_OPENAI_EMBED_MODEL` | `text-embedding-3-small` | Embedding model for the OpenAI path |
+| `CONTEXTPRO_OPENAI_CHAT_MODEL` | `gpt-4o-mini` | Chat model for the OpenAI path |
+
+**Indexing & runtime:**
+
+| Variable | Default | Description |
+| --- | --- | --- |
 | `CONTEXTPRO_EMBED_BATCH_SIZE` | `8` | Embedding batch per call (clamped to 5–10) |
 | `CONTEXTPRO_EMBED_TRACKER` | `lazy` | `off`, `lazy`, or `eager` realtime updates |
 | `CONTEXTPRO_REINDEX_NO_EMBED` | `false` | Skip eager embedding population during reindex |
+| `CONTEXTPRO_MAX_FILE_SIZE` | `5242880` | Skip source files larger than this (bytes) |
 | `CONTEXTPRO_QUICKREFRESH_MAX_FILES` | `30` | Max stale files auto-patched per search |
 | `CONTEXTPRO_NATIVE_AUTO_REPAIR` | `true` | Auto-rebuild native bindings on ABI drift |
 | `CONTEXTPRO_ALLOW_UNSAFE_ROOT` | `false` | Allow `/` or home-level project roots |
-| `CONTEXTPRO_INSTRUCTIONS_REMOTE` | `false` | Fetch agent instructions from URL instead of bundle |
 | `CONTEXTPRO_PROJECT_ID` | (auto) | Override project identity |
-| `CONTEXTPRO_CLIENT_ID` | (none) | Group projects under a client |
-| `CONTEXTPRO_SESSION_SOURCE` | `mcp` | Session source tag |
-
-Plus standard `OLLAMA_HOST` for non-default Ollama endpoints.
+| `CONTEXTPRO_CLIENT_ID` | (none) | Group projects under one client for cross-project memory |
 
 ---
 
