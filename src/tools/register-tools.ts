@@ -415,7 +415,10 @@ export function registerTools(
       const session = currentSessionId();
       const lines = points.map((p) => {
         const foreign = p.session && p.session !== session ? " [OTHER SESSION]" : "";
-        const tomb = p.tombstoneFiles && p.tombstoneFiles.length > 0 ? " [new-file snapshot]" : "";
+        // Loud, unambiguous: restoring a point whose file was new at checkpoint time DELETES that file.
+        const tomb = p.tombstoneFiles && p.tombstoneFiles.length > 0
+          ? ` [⚠ RESTORE DELETES: ${p.tombstoneFiles.join(", ")} — file(s) did not exist at checkpoint]`
+          : "";
         return `${p.id} | ${new Date(p.timestamp).toISOString()} | ${p.files.join(", ")} | ${p.message}${foreign}${tomb}`;
       });
       const ownCount = points.filter((p) => !p.session || p.session === session).length;
@@ -426,21 +429,50 @@ export function registerTools(
 
   server.tool(
     "restore",
-    "Restore files to their state before a specific change. Uses the shadow restore point system. " +
-    "Does NOT affect git history. Call checkpoints first to find the point ID.",
+    "Restore files to their state at a checkpoint. Uses the shadow restore point system (does NOT affect git history). " +
+    "Call checkpoints first to find the point ID. SAFE BY DEFAULT: a pre-restore safety snapshot is taken before any " +
+    "file is overwritten or deleted, so a wrong restore is reversible. Pass preview:true to see exactly what would " +
+    "change (including any file the restore would DELETE) without writing anything.",
     {
-      point_id: z.string().min(1).describe("The restore point ID (format: rp-timestamp-hash). Get from list_restore_points."),
+      point_id: z.string().min(1).describe("The restore point ID (format: rp-timestamp-hash). Get it from checkpoints."),
+      preview: z.boolean().optional().describe("Dry run: show what would change (overwrite/create/delete) without writing. Recommended before a real restore."),
     },
-    withRequestActivity(async ({ point_id }) => {
-      const restored = await restorePoint(rootDir, point_id);
+    withRequestActivity(async ({ point_id, preview }) => {
+      const result = await restorePoint(rootDir, point_id, { preview: preview === true });
+
+      const renderPlan = (): string => {
+        const icon = { overwrite: "✏ overwrite", create: "+ create", delete: "⚠ DELETE", "missing-backup": "? skip (backup missing)" };
+        return result.plan.plans.map((p) => `  ${icon[p.action]}  ${p.file}${p.destructive ? "  (destroys current content)" : ""}`).join("\n");
+      };
+      const destructiveCount = result.plan.plans.filter((p) => p.destructive).length;
+
+      if (result.preview) {
+        const willDelete = result.plan.plans.filter((p) => p.action === "delete").length;
+        const note = willDelete > 0
+          ? `\n\n⚠ ${willDelete} file(s) would be DELETED (they did not exist at checkpoint time). `
+            + `Restoring the earliest point of a newly-created file removes that file.`
+          : "";
+        return {
+          content: [{
+            type: "text" as const,
+            text: `PREVIEW — restoring ${point_id} ("${result.plan.message}") would affect ${result.plan.plans.length} file(s); `
+              + `${destructiveCount} destructive:\n${renderPlan()}${note}\n\nRe-call restore without preview to apply. `
+              + `A safety snapshot will be taken first so you can undo.`,
+          }],
+        };
+      }
+
       invalidateSearchCache();
       invalidateIdentifierSearchCache();
+      const undo = result.safetyPointId
+        ? `\n\nUndo this restore with: restore point_id="${result.safetyPointId}"`
+        : "";
       return {
         content: [{
           type: "text" as const,
-          text: restored.length > 0
-            ? `Restored ${restored.length} file(s):\n${restored.join("\n")}`
-            : "No files were restored. The backup may be empty.",
+          text: result.restoredFiles.length > 0
+            ? `Restored ${result.restoredFiles.length} file(s):\n${result.restoredFiles.join("\n")}${undo}`
+            : `No files were restored. The backup may be empty or its files were not found.${undo}`,
         }],
       };
     }, { toolName: "restore" }),

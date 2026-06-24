@@ -81,7 +81,7 @@ describe("shadow", async () => {
         "utf-8",
       );
       assert.equal(content1, "after change");
-      const restoredFiles = await restorePoint(FIXTURE_DIR, point.id);
+      const { restoredFiles } = await restorePoint(FIXTURE_DIR, point.id);
       assert.ok(restoredFiles.includes("restore_test.txt"));
       const content2 = await readFile(
         join(FIXTURE_DIR, "restore_test.txt"),
@@ -105,7 +105,7 @@ describe("shadow", async () => {
         "multi backup",
       );
       await writeFile(join(FIXTURE_DIR, "multi1.txt"), "changed");
-      const restored = await restorePoint(FIXTURE_DIR, point.id);
+      const { restoredFiles: restored } = await restorePoint(FIXTURE_DIR, point.id);
       assert.ok(restored.length >= 2);
     });
   });

@@ -61,11 +61,12 @@ describe("DEMO: shadow restore points", () => {
     console.log("\n--- BEFORE RESTORE ---");
     console.log(before);
 
-    const restored = await restorePoint(FIXTURE, lastPoint.id);
+    const { restoredFiles, safetyPointId } = await restorePoint(FIXTURE, lastPoint.id);
 
     const after = await readFile(join(FIXTURE, "src", "config.ts"), "utf-8");
     console.log("\n--- OUTPUT (restored files) ---");
-    console.log(restored);
+    console.log(restoredFiles);
+    console.log("safety snapshot:", safetyPointId);
     console.log("\n--- AFTER RESTORE ---");
     console.log(after);
     console.log("--- END ---\n");

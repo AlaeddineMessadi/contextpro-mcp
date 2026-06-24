@@ -30,6 +30,16 @@ interface ClusterNode {
 }
 
 const MAX_FILES_PER_LEAF = 20;
+
+// Structural / layout directories that group code by KIND, not by FEATURE. A cluster sharing one of
+// these is not telling us anything about what the feature is, so they're excluded from dir-anchor
+// labeling. Feature folders (fees/, esports/, venues/) are deliberately NOT here.
+const STRUCTURAL_DIR_SEGMENTS = new Set([
+  "src", "lib", "test", "tests", "spec", "specs", "__tests__", "dist", "build", "out",
+  "node_modules", "vendor", "main", "app", "pkg", "internal", "common", "shared", "core",
+  "utils", "util", "helpers", "helper", "tools", "scripts", "bin", "public", "static",
+  "assets", "docs", "examples", "demo", "demos", "fixtures", "mocks", "__mocks__", "types",
+]);
 const NON_CODE_NAVIGATE_EXTENSIONS = new Set([
   ".json",
   ".jsonc",
@@ -153,13 +163,22 @@ async function embedFilesWithFallback(files: FileInfo[]): Promise<{ files: FileI
   }
 }
 
+// A comment line that is really just restating an import (e.g. a docstring line
+// "from decimal import InvalidOperation") must not seed cluster labels — those tokens
+// are module/stdlib vocabulary, not feature vocabulary. Strip them at the source.
+function isImportLikeLine(text: string): boolean {
+  return /^\s*(from\s+[\w.]+\s+import\b|import\s+[\w.]+|const\s+\{?[\w\s,]+\}?\s*=\s*require\(|export\s+\*\s+from\b)/.test(text);
+}
+
 function extractHeader(content: string): string {
   const lines = content.split("\n");
   const headerLines: string[] = [];
   for (const line of lines.slice(0, 5)) {
     const trimmed = line.trim();
     if (trimmed.startsWith("//") || trimmed.startsWith("#") || trimmed.startsWith("--")) {
-      headerLines.push(trimmed.replace(/^\/\/\s*|^#\s*|^--\s*/, ""));
+      const text = trimmed.replace(/^\/\/\s*|^#\s*|^--\s*/, "");
+      if (isImportLikeLine(text)) continue;
+      headerLines.push(text);
     } else if (trimmed.length > 0) {
       break;
     }
@@ -171,11 +190,13 @@ function formatLineRange(line: number, endLine: number): string {
   return endLine > line ? `L${line}-L${endLine}` : `L${line}`;
 }
 
-function deriveHeuristicLabel(cluster: { files: FileInfo[]; pathPattern: string | null }, index: number, allFiles?: FileInfo[]): string {
+// Exported for testing — the cluster-label heuristic is the audited surface (import-vocab leakage,
+// bare repo-name labels, raw path globs). Tests assert it recovers feature-dir names.
+export function deriveHeuristicLabel(cluster: { files: FileInfo[]; pathPattern: string | null }, index: number, allFiles?: FileInfo[]): string {
   if (cluster.pathPattern) return cluster.pathPattern;
   const stop = new Set([
     "the", "and", "for", "src", "test", "main", "tools", "core", "lib", "index", "is", "of",
-    "to", "a", "in", "on", "with", "from", "into", "this", "that", "esports", "feature",
+    "to", "a", "in", "on", "with", "from", "into", "this", "that", "feature",
     "module", "modules", "file", "files", "function", "functions", "class", "classes", "type",
     "types", "test", "tests", "spec", "specs", "demo", "demos", "common", "shared", "util",
     "utils", "helper", "helpers", "import", "imports", "as",
@@ -195,22 +216,35 @@ function deriveHeuristicLabel(cluster: { files: FileInfo[]; pathPattern: string 
     "os", "sys", "re", "math", "functools", "itertools", "contextlib", "warnings", "copy",
     "optional", "union", "any", "dict", "tuple", "callable", "iterator", "sequence", "mapping",
     "field", "namedtuple", "defaultdict", "counter", "path", "decimal",
+    // Exception/type names that ride along on import lines and aren't feature vocabulary.
+    "invalidoperation", "exception", "error", "errors", "valueerror", "keyerror", "typeerror",
+    "runtimeerror", "getcontext", "localcontext", "rounding",
   ]);
 
-  // 1) STRONG signal: a directory segment that appears in ≥40% of cluster files becomes the label.
-  //    This recovers `fees/`, `auth/`, `esports/`, etc. as the "feature folder" name automatically.
+  // 1) STRONGEST signal: a directory segment shared by ≥60% of cluster files IS the feature name.
+  //    The clustering geometry already co-locates a feature's files, so the directory they share
+  //    (`fees/`, `auth/`, `esports/`) is the most reliable label — far more so than header tokens,
+  //    which leak import/stdlib vocabulary. We exclude the repo-root segment so a cluster that simply
+  //    spans the whole repo can't be labeled with the bare project name.
+  //
+  //    A directory name is filtered ONLY against structural-layout dirs (src/, lib/, tests/, …) — NOT
+  //    the content stopword set. A folder named `esports/` or `decimal/` is a real feature label even
+  //    though those words are stopworded as header tokens; a directory name is intrinsically meaningful.
+  const repoRootSegment = inferRepoRootSegment(cluster.files);
   const dirSegmentCounts = new Map<string, number>();
   for (const file of cluster.files) {
+    // Only count the *immediate* parent directory of each file — the segment that actually groups
+    // siblings — not every ancestor. Counting ancestors let a shallow common root win spuriously.
     const segs = file.relativePath.split("/").slice(0, -1);
-    for (const seg of segs) {
-      const lower = seg.toLowerCase();
-      if (lower.length < 3 || stop.has(lower)) continue;
-      dirSegmentCounts.set(lower, (dirSegmentCounts.get(lower) ?? 0) + 1);
-    }
+    const parent = segs[segs.length - 1];
+    if (!parent) continue;
+    const lower = parent.toLowerCase();
+    if (lower.length < 3 || STRUCTURAL_DIR_SEGMENTS.has(lower) || lower === repoRootSegment) continue;
+    dirSegmentCounts.set(lower, (dirSegmentCounts.get(lower) ?? 0) + 1);
   }
-  const dominantDir = [...dirSegmentCounts.entries()]
-    .filter(([, count]) => count >= Math.max(2, Math.ceil(cluster.files.length * 0.4)))
-    .sort((a, b) => b[1] - a[1])[0];
+  const sortedDirs = [...dirSegmentCounts.entries()].sort((a, b) => b[1] - a[1]);
+  const dirThreshold = Math.max(2, Math.ceil(cluster.files.length * 0.6));
+  const dominantDir = sortedDirs.find(([, count]) => count >= dirThreshold);
 
   // 2) TF-IDF over header docstrings. A word's score = freq-in-cluster × log(totalClusters / freq-in-corpus).
   //    Without TF-IDF, common words like "manager" or "config" tie. With TF-IDF, distinctive feature
@@ -241,20 +275,41 @@ function deriveHeuristicLabel(cluster: { files: FileInfo[]; pathPattern: string 
   scored.sort((a, b) => b[1] - a[1]);
   const dominantHeader = scored[0];
 
-  // 3) Combine: prefer directory + distinctive header word for richer labels.
+  // 3) Combine. The directory name is the trusted anchor; the header word only refines it when it is
+  //    a genuinely distinctive feature noun (passed TF-IDF with freq ≥ 2 across the cluster).
   if (dominantDir && dominantHeader && dominantDir[0] !== dominantHeader[0]) {
     return `${dominantDir[0]} (${dominantHeader[0]})`;
   }
   if (dominantDir) return dominantDir[0];
   if (dominantHeader) return dominantHeader[0];
 
-  // 4) Last resort: filename basenames joined.
-  const basenames = cluster.files
-    .map((f) => f.relativePath.split("/").pop()?.replace(/\.\w+$/, "") ?? "")
-    .filter((n) => n.length > 0)
-    .slice(0, 3);
-  if (basenames.length > 0) return basenames.join(", ").substring(0, 50);
+  // 4) No dir anchor and no distinctive header term. Rather than emit a bare repo name or a raw path
+  //    glob, summarize from filename basenames — but stopword-filter them so import/stdlib vocabulary
+  //    (e.g. a `decimal.py` shim) can't become the label, and drop the repo-root token.
+  const basenameTokens = new Map<string, number>();
+  for (const f of cluster.files) {
+    const base = f.relativePath.split("/").pop()?.replace(/\.\w+$/, "") ?? "";
+    for (const tok of base.toLowerCase().split(/[\s._-]+/)) {
+      if (tok.length < 3 || stop.has(tok) || tok === repoRootSegment) continue;
+      basenameTokens.set(tok, (basenameTokens.get(tok) ?? 0) + 1);
+    }
+  }
+  const topBasenames = [...basenameTokens.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 3)
+    .map(([t]) => t);
+  if (topBasenames.length > 0) return topBasenames.join(", ").substring(0, 50);
   return `Cluster ${index + 1}`;
+}
+
+// The repo-root directory segment (e.g. the project folder name) is NOT a useful feature label —
+// it's shared by every file. Infer it as the first path segment common to all cluster files, if any.
+function inferRepoRootSegment(files: { relativePath: string }[]): string | null {
+  if (files.length === 0) return null;
+  const firstSegs = files.map((f) => f.relativePath.split("/")[0]?.toLowerCase() ?? "");
+  const candidate = firstSegs[0];
+  if (!candidate) return null;
+  return firstSegs.every((s) => s === candidate) ? candidate : null;
 }
 
 function tokenizeHeader(header: string, stop: Set<string>): string[] {
