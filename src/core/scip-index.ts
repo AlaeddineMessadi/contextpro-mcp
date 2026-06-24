@@ -2,9 +2,10 @@
 // FEATURE: SCIP import — normalize external code indexes into portable Context+ evidence
 
 import { createHash } from "crypto";
-import { mkdir, readFile, writeFile } from "fs/promises";
+import { mkdir, readFile } from "fs/promises";
 import { dirname } from "path";
 import { resolveProjectPath, toProjectRelativePath } from "./path-guard.js";
+import { writeFileAtomic } from "./artifacts.js";
 
 export const DEFAULT_SCIP_CACHE_PATH = ".contextpro/scip-index.json";
 
@@ -303,7 +304,7 @@ export async function importScipIndex(rootDir: string, indexPath: string): Promi
   const index = normalizeScipIndex(raw, sourcePath);
   const cachePath = resolveProjectPath(rootDir, DEFAULT_SCIP_CACHE_PATH, "scip cache");
   await mkdir(dirname(cachePath), { recursive: true });
-  await writeFile(cachePath, JSON.stringify(index, null, 2) + "\n", "utf-8");
+  await writeFileAtomic(cachePath, JSON.stringify(index, null, 2) + "\n");
   return { cachePath, index };
 }
 

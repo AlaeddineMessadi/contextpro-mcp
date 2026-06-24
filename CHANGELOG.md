@@ -2,6 +2,38 @@
 
 All notable changes to this project are recorded here. The project follows [Semantic Versioning](https://semver.org/) and [Keep a Changelog](https://keepachangelog.com/) conventions. Pair with `STATUS.md` (live state) and `AUDIT.md` (deep findings with evidence).
 
+## [1.3.0] - 2026-06-25
+
+Production-readiness pass. A 13-agent adversarial audit (6 lenses × find + skeptic-verify + synthesis) returned **READY-WITH-FIXES, no ship blockers**; the one "CRITICAL" command-injection finding was refuted by direct test (`execFile` uses arg arrays — no shell). All SHIP-WITH-MONITORING items below are now fixed.
+
+### Fixed — Production hardening
+
+- **Atomic file writes** for every JSON artifact a crash could corrupt. New `writeFileAtomic` (tmp + rename, reused from the shadow.ts pattern) now backs artifact records, the artifact manifest, `graph.json` / `GRAPH_REPORT.md` / dashboard, and the SCIP cache. A crash mid-write leaves the original intact, never a torn file. (`src/core/artifacts.ts`, `src/core/project-graph.ts`, `src/core/scip-index.ts`)
+- **`impact_delta` no longer crashes on a missing or corrupt baseline.** Returns "run graph_export first" or "baseline is corrupt — regenerate" instead of throwing a raw `SyntaxError`. (`src/tools/impact-delta.ts`)
+- **`related` no longer crashes on malformed import JSON.** Uses the safe `parseJsonArray` helper instead of a bare `JSON.parse` on `symbols_imported`. (`src/tools/related.ts`)
+- **`shadow.ts` manifest-mutex entry leak fixed.** The identity check compared two distinct `previous.then()` promises (never equal), so the per-root Map entry was never cleared. Now stores the chained promise in a variable. (`src/git/shadow.ts`)
+- **`quickRefresh` logs degraded files** instead of swallowing per-file failures silently — surfaces a count + per-path stderr line so a stale graph is visible. (`src/tools/reindex.ts`)
+- **Bounded in-memory caches.** `toolMetricsByRoot` is now an LRU capped at 50 roots; `attemptedRepairKeys` clears past 200 entries. Prevents slow unbounded growth in a long-lived multi-project server. (`src/core/tool-metrics.ts`, `src/core/native-repair.ts`)
+- **Schema-version migration gates use numeric comparison** (`current < 2`) instead of lexicographic string compare (`"10" < "2"` was a latent bug that would misfire past v9). (`src/core/db.ts`)
+- **`diff` validates `branch`/`since` against a git-ref whitelist** (defense-in-depth) and rejects leading `-` so an arg can't be misread as a git flag. (`src/tools/diff.ts`)
+- **`unhandledRejection` safety-net handler** added so a stray promise rejection produces a clear log instead of silent termination. (`src/index.ts`)
+
+### Added — Build/version visibility
+
+- **`health` now reports `version=` and `build=` (compiled-artifact mtime).** After a server restart you can confirm the new code is actually loaded — if `build=` matches the latest `tsc` run, the fresh modules are live; if it's stale, the process is still running old code. This directly addresses the "reconnect vs rebuild+restart" confusion: `/mcp reconnect` reuses the running process, so a code change requires the **process** to restart, not just the connection. (`src/core/startup-health.ts`, `package.json` → 1.3.0)
+
+### Strengths confirmed by the audit (genuinely production-grade)
+
+- Reindex crash-safety: any in-process exception resets the index lock to IDLE and does **not** bump the generation (bump only on the success path) — "stuck lock" / "generation drift" apply only to a hard process kill.
+- Graceful shutdown: SIGINT/SIGTERM/SIGHUP/disconnect + broken-pipe detection on all std streams, re-entrancy guard, idle + parent-exit monitors, `Promise.allSettled` cleanup.
+- Embedding-provider degradation: Ollama/OpenAI failure falls back to keyword-only ranking at query and index time; server stays up.
+- Path traversal: uniform `resolveProjectPath()` on every write. SQL: parameterized prepared statements throughout. External commands: `execFile` with arg arrays (no shell).
+
+### Testing
+
+- New `test/main/production-hardening.test.mjs` (6 tests): atomic write + no temp leftovers, impact_delta corrupt/missing baseline, related() malformed JSON, diff git-ref validation.
+- Full suite: **336 tests, 0 failures**.
+
 ## [Unreleased]
 
 ### Fixed — Round-5 audit (B+ → A path)

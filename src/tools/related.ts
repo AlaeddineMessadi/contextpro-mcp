@@ -6,6 +6,7 @@ import { walkDirectory } from "../core/walker.js";
 import { discoverHubs, parseHubFile } from "../core/hub.js";
 import { dirname } from "path";
 import { resolveProjectPath, toProjectRelativePath } from "../core/path-guard.js";
+import { parseJsonArray } from "./retrieval-helpers.js";
 
 export interface RelatedOptions {
   rootDir: string;
@@ -83,7 +84,9 @@ export async function getRelated(options: RelatedOptions): Promise<string> {
       lines.push("Imports:");
       for (const imp of importsFrom) {
         const targetFile = imp.target_file_id ? fileById.get(imp.target_file_id) : null;
-        lines.push(`  → ${targetFile?.path ?? imp.target_path}${imp.symbols_imported ? ` (${JSON.parse(imp.symbols_imported).join(", ")})` : ""}`);
+        const importedSymbols = parseJsonArray(imp.symbols_imported);
+        const symbolSuffix = importedSymbols.length > 0 ? ` (${importedSymbols.join(", ")})` : "";
+        lines.push(`  → ${targetFile?.path ?? imp.target_path}${symbolSuffix}`);
       }
       lines.push("");
     }

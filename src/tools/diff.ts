@@ -113,6 +113,16 @@ async function getAffectedSymbols(rootDir: string, filePath: string, changedRang
   }
 }
 
+// A git revision/ref is a conservative subset: word chars, /, ., -, ~, ^, @, {, }, : and digits.
+// Rejecting anything else is defense-in-depth — execFile already uses an arg array (no shell),
+// but a leading "-" could still be misread as a git flag, so we bar it explicitly.
+const SAFE_GIT_REF = /^[A-Za-z0-9_./~^@{}:-]+$/;
+function assertSafeGitRef(value: string, field: string): void {
+  if (!SAFE_GIT_REF.test(value) || value.startsWith("-")) {
+    throw new Error(`diff: "${field}" contains characters that are not valid in a git revision: ${JSON.stringify(value)}`);
+  }
+}
+
 export async function getDiff(options: DiffOptions): Promise<string> {
   const diffArgs: string[] = [];
   const scope = options.scope ?? "unstaged";
@@ -120,8 +130,10 @@ export async function getDiff(options: DiffOptions): Promise<string> {
   if (options.file) {
     diffArgs.push("--", toProjectRelativePath(options.rootDir, options.file, "file"));
   } else if (options.branch) {
+    assertSafeGitRef(options.branch, "branch");
     diffArgs.push(`${options.branch}...HEAD`);
   } else if (options.since) {
+    assertSafeGitRef(options.since, "since");
     diffArgs.push(options.since);
   } else if (scope === "staged") {
     diffArgs.push("--cached");

@@ -91,8 +91,21 @@ function formatImpactDelta(delta: ImpactDelta): string {
 }
 
 export async function impactDeltaTool(options: ImpactDeltaOptions): Promise<string> {
-  const baselinePath = resolveProjectPath(options.rootDir, options.baselinePath ?? ".contextpro/graph.json", "baselinePath");
-  const before = JSON.parse(await readFile(baselinePath, "utf-8")) as ProjectGraph;
+  const relativeBaseline = options.baselinePath ?? ".contextpro/graph.json";
+  const baselinePath = resolveProjectPath(options.rootDir, relativeBaseline, "baselinePath");
+  let rawBaseline: string;
+  try {
+    rawBaseline = await readFile(baselinePath, "utf-8");
+  } catch {
+    return `No baseline graph found at "${relativeBaseline}". Run graph_export first to create a baseline, then edit + reindex + impact_delta to see structural changes.`;
+  }
+  let before: ProjectGraph;
+  try {
+    before = JSON.parse(rawBaseline) as ProjectGraph;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return `Baseline graph at "${relativeBaseline}" is corrupt (${message}). Re-run graph_export to regenerate it.`;
+  }
   const after = await buildProjectGraph(options.rootDir);
   const delta = compareGraphs(baselinePath, before, after);
   if (options.format === "json") return JSON.stringify(delta, null, 2);

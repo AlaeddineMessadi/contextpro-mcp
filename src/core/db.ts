@@ -259,9 +259,11 @@ export class ContextPlusDB {
   }
 
   private runMigrations(): void {
-    const current = (this.db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get() as { value: string } | undefined)?.value ?? "1";
-    if (current === SCHEMA_VERSION) return;
-    if (current < "2") {
+    const currentStr = (this.db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get() as { value: string } | undefined)?.value ?? "1";
+    if (currentStr === SCHEMA_VERSION) return;
+    // Numeric comparison so the gates stay correct past version 9 (lexicographic "10" < "2" was a bug).
+    const current = Number.parseInt(currentStr, 10) || 1;
+    if (current < 2) {
       this.db.exec(`
         CREATE TABLE IF NOT EXISTS memory_edges_new (
           id TEXT PRIMARY KEY,
@@ -279,7 +281,7 @@ export class ContextPlusDB {
         CREATE INDEX IF NOT EXISTS idx_edges_target ON memory_edges(target);
       `);
     }
-    if (current < "3") {
+    if (current < 3) {
       this.db.exec(`
         CREATE TABLE IF NOT EXISTS call_sites (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -292,7 +294,7 @@ export class ContextPlusDB {
         CREATE INDEX IF NOT EXISTS idx_call_sites_callee ON call_sites(callee);
       `);
     }
-    if (current < "4") {
+    if (current < 4) {
       this.db.exec(`
         CREATE VIRTUAL TABLE IF NOT EXISTS file_search_fts USING fts5(
           path UNINDEXED,

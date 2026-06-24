@@ -4,6 +4,31 @@
 import { closeDB, getDB, probeNativeStorage, type NativeStorageProbe } from "./db.js";
 import { attemptNativeAutoRepair } from "./native-repair.js";
 import { verifyProjectContext, type VerifiedProjectContext } from "./project-config.js";
+import { readFileSync, statSync } from "fs";
+import { dirname, resolve } from "path";
+import { fileURLToPath } from "url";
+
+const HEALTH_PACKAGE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
+
+function readServerVersion(): string {
+  try {
+    const pkg = JSON.parse(readFileSync(resolve(HEALTH_PACKAGE_ROOT, "package.json"), "utf8")) as { version?: string };
+    return typeof pkg.version === "string" ? pkg.version : "0.0.0";
+  } catch {
+    return "unknown";
+  }
+}
+
+function readBuildStamp(): string {
+  // The mtime of the compiled entry point. Lets a user confirm — after a restart — that the
+  // running process is using a freshly-built artifact (different timestamp = new code loaded).
+  try {
+    const stat = statSync(resolve(HEALTH_PACKAGE_ROOT, "build/index.js"));
+    return stat.mtime.toISOString();
+  } catch {
+    return "unknown";
+  }
+}
 
 export interface StartupHealthReport {
   status: "ok" | "degraded";
@@ -13,6 +38,8 @@ export interface StartupHealthReport {
     nodeVersion: string;
     nodeAbi: string;
     pid: number;
+    serverVersion: string;
+    buildStamp: string;
   };
   project: {
     ok: boolean;
@@ -97,6 +124,8 @@ export async function runStartupHealthCheck(rootDir: string): Promise<StartupHea
       nodeVersion: process.version,
       nodeAbi: process.versions.modules ?? "unknown",
       pid: process.pid,
+      serverVersion: readServerVersion(),
+      buildStamp: readBuildStamp(),
     },
     project,
     storage: {
@@ -109,6 +138,7 @@ export async function runStartupHealthCheck(rootDir: string): Promise<StartupHea
 export function formatStartupHealthReport(report: StartupHealthReport): string {
   const lines = [
     `[contextpro/startup] status=${report.status} root=${report.rootDir}`,
+    `[contextpro/startup] version=${report.runtime.serverVersion} build=${report.runtime.buildStamp}`,
     `[contextpro/startup] runtime node=${report.runtime.nodeVersion} abi=${report.runtime.nodeAbi} pid=${report.runtime.pid}`,
     `[contextpro/startup] project ok=${report.project.ok} projectId=${report.project.projectId ?? "unknown"} gitRoot=${report.project.gitRoot ?? "unknown"} fingerprint=${report.project.fingerprint ?? "unknown"}`,
     `[contextpro/startup] storage ok=${report.storage.ok} dbOpen=${report.storage.databaseOpen.ok}`,

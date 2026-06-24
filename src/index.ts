@@ -458,5 +458,14 @@ process.on("uncaughtException", (error) => {
     process.exit(0);
   }
   console.error("Uncaught exception:", error);
+  // The `process.once("exit")` handler in main() synchronously stops the idle monitor, parent
+  // monitor, and embedding tracker — those run even on this hard exit. Async cleanup (server /
+  // transport close) cannot run during a synchronous exit and is reclaimed by the OS.
   process.exit(1);
+});
+
+process.on("unhandledRejection", (reason) => {
+  // Surface unhandled rejections instead of letting Node terminate silently in some versions.
+  // Most paths use try/catch; this is a safety net so a stray rejection produces a clear log.
+  console.error("Unhandled promise rejection:", reason);
 });

@@ -178,6 +178,9 @@ export async function attemptNativeAutoRepair(issueCode: string | undefined, roo
   if (attemptedRepairKeys.has(repairKey)) return false;
   if (activeRepair) return activeRepair;
 
+  // Bound the dedup set — it can only realistically grow with (#roots × #node-versions), but
+  // cap it defensively for a very long-lived multi-project server.
+  if (attemptedRepairKeys.size > 200) attemptedRepairKeys.clear();
   attemptedRepairKeys.add(repairKey);
   activeRepair = withRepairLock(rootDir, async () => {
     const actions = await repairNativeDependencies(rootDir, issueCode);

@@ -2,8 +2,28 @@
 // FEATURE: Artifact cache — stable IDs for low-token reuse across MCP turns
 
 import { createHash } from "crypto";
-import { mkdir, open, readFile, readdir, unlink, writeFile } from "fs/promises";
+import { mkdir, open, readFile, readdir, rename, unlink, writeFile } from "fs/promises";
 import { join, resolve } from "path";
+
+/**
+ * Atomic file write: write to a unique temp file then rename over the target. A crash mid-write
+ * leaves the (untouched) original or the temp file, never a half-written target.
+ */
+export async function writeFileAtomic(target: string, data: string): Promise<void> {
+  const tmp = `${target}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2, 8)}.tmp`;
+  await writeFile(tmp, data, "utf-8");
+  try {
+    await rename(tmp, target);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "EEXIST" || (err as NodeJS.ErrnoException).code === "EPERM") {
+      await unlink(target).catch(() => undefined);
+      await rename(tmp, target);
+    } else {
+      await unlink(tmp).catch(() => undefined);
+      throw err;
+    }
+  }
+}
 
 export interface ArtifactReference {
   id: string;
@@ -216,7 +236,7 @@ export async function persistArtifact<T>(options: PersistArtifactOptions<T>): Pr
   };
 
   await mkdir(kindDir, { recursive: true });
-  await writeFile(artifactFile, JSON.stringify(record, null, 2) + "\n", "utf-8");
+  await writeFileAtomic(artifactFile, JSON.stringify(record, null, 2) + "\n");
 
   const nextRef: ArtifactReference = {
     id: record.id,
@@ -235,7 +255,7 @@ export async function persistArtifact<T>(options: PersistArtifactOptions<T>): Pr
     // LRU eviction: keep at most MAX_ARTIFACTS_PER_MANIFEST entries.
     const trimmed = filtered.slice(0, MAX_ARTIFACTS_PER_MANIFEST);
     await mkdir(baseDir, { recursive: true });
-    await writeFile(manifestPath(options.rootDir), JSON.stringify({ artifacts: trimmed }, null, 2) + "\n", "utf-8");
+    await writeFileAtomic(manifestPath(options.rootDir), JSON.stringify({ artifacts: trimmed }, null, 2) + "\n");
   });
 
   return nextRef;

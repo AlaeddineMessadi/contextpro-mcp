@@ -1,15 +1,1 @@
-{
-  "hooks": {
-    "PostToolUse": [
-      {
-        "matcher": "Edit|Write|MultiEdit",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node -e \"const r=JSON.parse(require('fs').readFileSync(0,'utf-8')); const p=(r.tool_input?.file_path||r.tool_input?.path||''); if (/\\\\/contextpro-mcp\\\\/(src|test)\\\\/.*\\\\.(ts|mjs)$/.test(p)) { process.exit(0); } process.exit(1);\" && (cd /path/to/contextpro-mcp && npm run --silent build > /dev/null 2>&1 && pkill -f 'contextpro-mcp/build/index.js' 2>/dev/null; echo '[contextpro-hook] rebuilt and killed MCP server; next tool call will respawn fresh modules' >&2) || true"
-          }
-        ]
-      }
-    ]
-  }
-}
+{}

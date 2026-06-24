@@ -43,13 +43,18 @@ async function withManifestLock<T>(rootDir: string, fn: () => Promise<T>): Promi
   const previous = manifestMutex.get(key) ?? Promise.resolve();
   let release: () => void = () => undefined;
   const next = new Promise<void>((resolve) => { release = resolve; });
-  manifestMutex.set(key, previous.then(() => next));
+  // Store the chained promise in a variable so the identity check in `finally` can match it.
+  // (Calling previous.then() twice allocates two distinct promises — the old code could never
+  // match and leaked one Map entry per concurrent call.)
+  const chained = previous.then(() => next);
+  manifestMutex.set(key, chained);
   await previous;
   try {
     return await fn();
   } finally {
     release();
-    if (manifestMutex.get(key) === previous.then(() => next)) {
+    // Only clear the entry if no later caller has queued behind us (i.e. we're still the tail).
+    if (manifestMutex.get(key) === chained) {
       manifestMutex.delete(key);
     }
   }

@@ -502,6 +502,7 @@ export async function quickRefresh(rootDir: string): Promise<{
     if (totalStale <= maxStale) {
       const changedSymbols: string[] = [];
       const pendingImports: PendingImportSet[] = [];
+      let degradedCount = 0;
       for (const path of stale) {
         try {
         const fullPath = resolveProjectPath(rootDir, path, "indexed file");
@@ -538,7 +539,16 @@ export async function quickRefresh(rootDir: string): Promise<{
           imports: extractImports(content, fullPath),
         });
         db.upsertCallSites(fileId, extractCallSites(content));
-      } catch {}
+      } catch (error) {
+        // A failed quick-refresh of one file leaves its prior (stale) imports intact. Log it so
+        // the user knows the graph for that file may be out of date until the next full reindex.
+        degradedCount++;
+        const message = error instanceof Error ? error.message : String(error);
+        process.stderr.write(`[contextpro/quickrefresh] skipped ${path}: ${message}\n`);
+      }
+    }
+    if (degradedCount > 0) {
+      process.stderr.write(`[contextpro/quickrefresh] ${degradedCount} file(s) failed quick refresh; run reindex --force for a clean rebuild\n`);
     }
     const resolvablePaths = new Set([...db.getAllFiles().map((file) => file.path), ...currentPaths]);
     for (const pending of pendingImports) {

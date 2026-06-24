@@ -3,11 +3,12 @@
 
 import { createHash } from "crypto";
 import { execFile } from "child_process";
-import { mkdir, writeFile } from "fs/promises";
+import { mkdir } from "fs/promises";
 import { dirname, posix } from "path";
 import { promisify } from "util";
 import { getDB, type ContextPlusDB, type FileRow, type SymbolRow } from "./db.js";
 import { resolveProjectPath } from "./path-guard.js";
+import { writeFileAtomic } from "./artifacts.js";
 import { loadScipIndex, scipSymbolDisplayName, scipSymbolNodeId } from "./scip-index.js";
 
 const execFileAsync = promisify(execFile);
@@ -796,9 +797,10 @@ export async function writeProjectGraphArtifacts(rootDir: string): Promise<{ gra
   const reportPath = resolveProjectPath(rootDir, ".contextpro/GRAPH_REPORT.md", "reportPath");
   const dashboardPath = resolveProjectPath(rootDir, ".contextpro/graph-dashboard.html", "dashboardPath");
   await mkdir(dirname(graphPath), { recursive: true });
-  await writeFile(graphPath, JSON.stringify(graph, null, 2) + "\n", "utf-8");
-  await writeFile(reportPath, formatGraphReport(graph), "utf-8");
-  await writeFile(dashboardPath, formatGraphDashboard(graph), "utf-8");
+  // graph.json is read by impact_delta — write it atomically so a crash can't leave a torn file.
+  await writeFileAtomic(graphPath, JSON.stringify(graph, null, 2) + "\n");
+  await writeFileAtomic(reportPath, formatGraphReport(graph));
+  await writeFileAtomic(dashboardPath, formatGraphDashboard(graph));
   return { graph, graphPath, reportPath, dashboardPath };
 }
 
