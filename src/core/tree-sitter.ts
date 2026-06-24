@@ -251,3 +251,80 @@ export async function parseWithTreeSitter(content: string, ext: string): Promise
 export function getSupportedExtensions(): string[] {
   return Object.keys(EXT_TO_GRAMMAR);
 }
+
+export interface SyntaxValidationResult {
+  ok: boolean;
+  // null = couldn't validate (no grammar / parser unavailable). Callers should treat null as
+  // "validation skipped" rather than "valid" or "invalid".
+  checked: boolean;
+  firstError: { line: number; column: number; type: "ERROR" | "MISSING" } | null;
+}
+
+function nodeIsMissing(node: TSNode): boolean {
+  // `isMissing` is a method in web-tree-sitter, a property in some node bindings.
+  const v = (node as { isMissing?: unknown }).isMissing;
+  if (typeof v === "function") return Boolean((node as { isMissing: () => boolean }).isMissing());
+  return Boolean(v);
+}
+
+function nodeHasError(node: TSNode): boolean {
+  const v = (node as { hasError?: unknown }).hasError;
+  if (typeof v === "function") return Boolean((node as { hasError: () => boolean }).hasError());
+  return Boolean(v);
+}
+
+function findFirstSyntaxError(node: TSNode): SyntaxValidationResult["firstError"] {
+  // Depth-first search for the first ERROR or MISSING node. Tree-sitter marks malformed regions
+  // with `type === "ERROR"` and inserted-recovery tokens via isMissing().
+  const stack: TSNode[] = [node];
+  while (stack.length > 0) {
+    const current = stack.pop();
+    if (!current) continue;
+    const missing = nodeIsMissing(current);
+    if (current.type === "ERROR" || missing) {
+      const point = current.startPosition ?? { row: 0, column: 0 };
+      return { line: point.row + 1, column: point.column + 1, type: missing ? "MISSING" : "ERROR" };
+    }
+    const count = current.childCount ?? 0;
+    for (let i = count - 1; i >= 0; i--) {
+      const child = current.child(i);
+      if (child) stack.push(child);
+    }
+  }
+  return null;
+}
+
+/**
+ * Parse `content` with the grammar for `ext` and report the first syntax error, if any.
+ * Returns checked=false when no grammar is available (caller should skip validation rather than
+ * block the edit). This is the safety check used before committing a replace_symbol_body edit.
+ */
+export async function validateSyntax(content: string, ext: string): Promise<SyntaxValidationResult> {
+  const grammarName = getGrammarName(ext);
+  if (!grammarName) return { ok: true, checked: false, firstError: null };
+  const lang = await loadGrammar(grammarName);
+  if (!lang) return { ok: true, checked: false, firstError: null };
+
+  let parser: TSParser | null = null;
+  let tree: any = null;
+  try {
+    const Parser = await initParser();
+    parser = new Parser();
+    parser.setLanguage(lang);
+    tree = parser.parse(content);
+    const root = tree.rootNode;
+    // Fast path: when the tree reports no error at all, skip the full walk.
+    if (!nodeHasError(root)) {
+      return { ok: true, checked: true, firstError: null };
+    }
+    const firstError = findFirstSyntaxError(root);
+    // hasError was true but we couldn't pinpoint a node — still treat as invalid.
+    return { ok: false, checked: true, firstError: firstError ?? { line: 1, column: 1, type: "ERROR" } };
+  } catch {
+    // Parser failure shouldn't block the edit; treat as "not checked".
+    return { ok: true, checked: false, firstError: null };
+  } finally {
+    tree?.delete?.();
+    parser?.delete?.();
+  }
+}

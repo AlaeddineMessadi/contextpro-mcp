@@ -20,6 +20,7 @@ import {
   buildExactIdentifierPathSet, rerankPlanningFiles, maybeChatRerankPlanningFiles, upsertRanked,
   detectCodeChangeIntent, extractIdentifierHints, isDocumentationPath, isHubPath, isSourcePath, isTestPath, splitQueryTerms, clamp01,
 } from "./planning-helpers.js";
+import { findDirectoryPriorMatches } from "./directory-prior.js";
 
 type OutputFormat = "text" | "json";
 
@@ -156,6 +157,44 @@ function formatMaybeJson(format: OutputFormat | undefined, value: unknown, textR
   return textRenderer();
 }
 
+/**
+ * Merge directory-purpose / Protocol-implementation prior matches into a candidate set.
+ * For "add a new X for Y" tasks, the directory hosting sibling implementations is surfaced even
+ * when those files didn't make the semantic top-K. Prior matches get a high base score so they
+ * outrank generic single-token matches like status.py.
+ */
+async function applyDirectoryPrior(
+  rootDir: string,
+  task: string,
+  candidates: PlanningFileCandidate[],
+): Promise<{ candidates: PlanningFileCandidate[]; priorPaths: string[] }> {
+  const priors = await findDirectoryPriorMatches(rootDir, task).catch(() => []);
+  if (priors.length === 0) return { candidates, priorPaths: [] };
+  const byPath = new Map(candidates.map((c) => [c.path, c]));
+  for (const prior of priors) {
+    const existing = byPath.get(prior.path);
+    // Prior boost maps to a strong base score (0.7–0.85) so implementation-directory files
+    // clearly outrank generic keyword hits.
+    const priorScore = 0.7 + prior.boost * 0.3;
+    if (existing) {
+      byPath.set(prior.path, {
+        ...existing,
+        score: Math.max(existing.score, priorScore),
+        reason: `${existing.reason}; ${prior.reason}`,
+        symbols: existing.symbols.length > 0 ? existing.symbols : prior.symbols,
+      });
+    } else {
+      byPath.set(prior.path, {
+        path: prior.path,
+        reason: prior.reason,
+        score: priorScore,
+        symbols: prior.symbols,
+      });
+    }
+  }
+  return { candidates: [...byPath.values()], priorPaths: priors.map((p) => p.path) };
+}
+
 function weightForFileRole(path: string): number {
   if (isTestFile(path)) return 0.85;
   if (/\.(json|toml|yaml|yml|ini|cfg)$/i.test(path)) return 0.65;
@@ -261,19 +300,17 @@ export async function buildTaskPack(options: TaskPackOptions): Promise<string> {
   const fileResults = search.files?.results ?? [];
   const identifierResults = search.identifiers?.results ?? [];
   const exactIdentifierPaths = buildExactIdentifierPathSet(search, options.task);
+  const baseTaskCandidates = fileResults.slice(0, Math.max(maxFiles, 8)).map((item) => ({
+    path: item.path,
+    reason: `Top semantic and structural match (${Math.round(item.semanticScore)} semantic / ${Math.round(item.keywordScore)} keyword)`,
+    score: item.score / 100,
+    symbols: item.matchedSymbols,
+  }));
+  const { candidates: taskCandidatesWithPrior } = await applyDirectoryPrior(options.rootDir, options.task, baseTaskCandidates);
   const rankedTaskFiles = await maybeChatRerankPlanningFiles(
     options.rootDir,
     options.task,
-    rerankPlanningFiles(
-      fileResults.slice(0, Math.max(maxFiles, 8)).map((item) => ({
-        path: item.path,
-        reason: `Top semantic and structural match (${Math.round(item.semanticScore)} semantic / ${Math.round(item.keywordScore)} keyword)`,
-        score: item.score / 100,
-        symbols: item.matchedSymbols,
-      })),
-      options.task,
-      exactIdentifierPaths,
-    ),
+    rerankPlanningFiles(taskCandidatesWithPrior, options.task, exactIdentifierPaths),
   );
   const topFiles = rankedTaskFiles.slice(0, maxFiles).map((item) => ({
     path: item.path,
@@ -599,19 +636,17 @@ export async function buildEditScope(options: EditScopeOptions): Promise<string>
   const identifierAnchorPaths = identifierTop
     .filter((item) => item.score >= 50 || item.keywordScore >= 80 || (item.semanticScore >= 60 && item.totalCalls >= 2))
     .map((item) => item.path);
+  const baseScopeCandidates = (search.files?.results ?? []).slice(0, Math.max(maxFiles, 6)).map((file) => ({
+    path: file.path,
+    reason: `Scoped from semantic file matches (${Math.round(file.semanticScore)} semantic / ${Math.round(file.keywordScore)} keyword)`,
+    score: file.score / 100,
+    symbols: file.matchedSymbols,
+  }));
+  const { candidates: scopeCandidatesWithPrior } = await applyDirectoryPrior(options.rootDir, options.task, baseScopeCandidates);
   const rankedScopeFiles = await maybeChatRerankPlanningFiles(
     options.rootDir,
     options.task,
-    rerankPlanningFiles(
-      (search.files?.results ?? []).slice(0, Math.max(maxFiles, 6)).map((file) => ({
-        path: file.path,
-        reason: `Scoped from semantic file matches (${Math.round(file.semanticScore)} semantic / ${Math.round(file.keywordScore)} keyword)`,
-        score: file.score / 100,
-        symbols: file.matchedSymbols,
-      })),
-      options.task,
-      exactIdentifierPaths,
-    ),
+    rerankPlanningFiles(scopeCandidatesWithPrior, options.task, exactIdentifierPaths),
   );
   const rankedPathList = rankedScopeFiles.map((file) => file.path);
   const orderedPaths = Array.from(new Set([...identifierAnchorPaths, ...rankedPathList]));
@@ -738,19 +773,17 @@ export async function buildDecisionBrief(options: DecisionBriefOptions): Promise
     persistArtifact: false,
   });
   const exactIdentifierPaths = buildExactIdentifierPathSet(search, options.query);
+  const baseBriefCandidates = (search.files?.results ?? []).slice(0, 10).map((item) => ({
+    path: item.path,
+    reason: `Decision candidate (${Math.round(item.semanticScore)} semantic / ${Math.round(item.keywordScore)} keyword)`,
+    score: item.score / 100,
+    symbols: item.matchedSymbols,
+  }));
+  const { candidates: briefCandidatesWithPrior } = await applyDirectoryPrior(options.rootDir, options.query, baseBriefCandidates);
   const rankedBriefFiles = await maybeChatRerankPlanningFiles(
     options.rootDir,
     options.query,
-    rerankPlanningFiles(
-      (search.files?.results ?? []).slice(0, 10).map((item) => ({
-        path: item.path,
-        reason: `Decision candidate (${Math.round(item.semanticScore)} semantic / ${Math.round(item.keywordScore)} keyword)`,
-        score: item.score / 100,
-        symbols: item.matchedSymbols,
-      })),
-      options.query,
-      exactIdentifierPaths,
-    ),
+    rerankPlanningFiles(briefCandidatesWithPrior, options.query, exactIdentifierPaths),
   );
   const filesFromFileSearch = rankedBriefFiles.map((item) => item.path);
   const topIdentifiers = search.identifiers?.results.slice(0, 5) ?? [];

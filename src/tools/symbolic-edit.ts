@@ -2,8 +2,10 @@
 // FEATURE: Symbol-precise editing without LSP — parser-driven find / replace / insert / rename
 
 import { readFile, writeFile } from "fs/promises";
+import { extname } from "path";
 import { resolveProjectPath } from "../core/path-guard.js";
 import { analyzeFile, flattenSymbols, isSupportedFile, type CodeSymbol, type SymbolLocation } from "../core/parser.js";
+import { validateSyntax } from "../core/tree-sitter.js";
 import { walkDirectory } from "../core/walker.js";
 import { getDB } from "../core/db.js";
 import { createRestorePoint } from "../git/shadow.js";
@@ -269,25 +271,38 @@ function detectBodyIndent(originalLines: string[], symbol: CodeSymbol): string {
   return detectIndent(originalLines[symbol.line - 1] ?? "");
 }
 
+function indentWidth(line: string): number {
+  const match = line.match(/^[ \t]*/);
+  return match ? match[0].length : 0;
+}
+
 function reindentBody(body: string, definitionIndent: string): string {
   const bodyLines = body.split("\n");
   if (bodyLines.length === 0) return body;
-  // Find the minimum indent across non-empty lines AFTER the first line — these are the "body"
-  // lines whose indent should be normalized relative to the new definitionIndent.
-  let minBodyIndent = Infinity;
-  for (let i = 1; i < bodyLines.length; i++) {
-    const trimmed = bodyLines[i].trim();
-    if (trimmed.length === 0) continue;
-    const indent = bodyLines[i].length - bodyLines[i].trimStart().length;
-    if (indent < minBodyIndent) minBodyIndent = indent;
+
+  // The provided body has its own internal indentation that MUST be preserved relative to the
+  // first (signature) line. We re-anchor the whole block so the signature line sits at
+  // `definitionIndent`, and every other line keeps its indent RELATIVE to the signature line.
+  //
+  // Find the base indent = indent of the first non-blank line (the signature). Then for each
+  // line, the new indent = definitionIndent + (lineIndent - baseIndent), clamped at 0 so a body
+  // line that is less-indented than the signature doesn't go negative.
+  let baseIndent = 0;
+  let baseFound = false;
+  for (const line of bodyLines) {
+    if (line.trim().length === 0) continue;
+    baseIndent = indentWidth(line);
+    baseFound = true;
+    break;
   }
-  if (!Number.isFinite(minBodyIndent)) minBodyIndent = 0;
+  if (!baseFound) return body;
+
   return bodyLines
-    .map((line, idx) => {
-      if (idx === 0) return `${definitionIndent}${line.replace(/^[ \t]*/, "")}`;
-      if (line.length === 0) return "";
-      const stripped = line.length >= minBodyIndent ? line.slice(minBodyIndent) : line.trimStart();
-      return `${definitionIndent}${stripped}`;
+    .map((line) => {
+      if (line.trim().length === 0) return "";
+      const lineIndent = indentWidth(line);
+      const relativeIndent = Math.max(0, lineIndent - baseIndent);
+      return `${definitionIndent}${" ".repeat(relativeIndent)}${line.trimStart()}`;
     })
     .join("\n");
 }
@@ -295,6 +310,29 @@ function reindentBody(body: string, definitionIndent: string): string {
 function invalidateCaches(): void {
   invalidateSearchCache();
   invalidateIdentifierSearchCache();
+}
+
+async function assertEditKeepsSyntaxValid(
+  relativePath: string,
+  fullPath: string,
+  originalContent: string,
+  nextContent: string,
+  operation: string,
+): Promise<void> {
+  const ext = extname(fullPath).toLowerCase();
+  // Only enforce when the original file parsed cleanly — otherwise we'd block edits that fix
+  // a pre-existing syntax error.
+  const before = await validateSyntax(originalContent, ext);
+  if (!before.checked || !before.ok) return;
+  const after = await validateSyntax(nextContent, ext);
+  if (after.checked && !after.ok) {
+    const loc = after.firstError ? ` at L${after.firstError.line}:${after.firstError.column} (${after.firstError.type})` : "";
+    throw new Error(
+      `${operation}: the edit would introduce a syntax error${loc} in ${relativePath}. ` +
+      `The file was NOT modified. Check the body's indentation and that it includes the full ` +
+      `definition. (No restore point was created because nothing was written.)`
+    );
+  }
 }
 
 export async function replaceSymbolBody(options: SymbolicEditOptions): Promise<string> {
@@ -315,25 +353,28 @@ export async function replaceSymbolBody(options: SymbolicEditOptions): Promise<s
   }
 
   const replacement = reindentBody(options.body, definitionIndent);
-  await createRestorePoint(options.rootDir, [options.relativePath], options.message ?? `replace_symbol_body:${options.namePath}`);
   const next = applyLineEdit(content, symbol.line, symbol.endLine, replacement);
+  // Validate BEFORE writing or creating a restore point so a broken edit leaves no trace.
+  await assertEditKeepsSyntaxValid(options.relativePath, fullPath, content, next, "replace_symbol_body");
+  await createRestorePoint(options.rootDir, [options.relativePath], options.message ?? `replace_symbol_body:${options.namePath}`);
   await writeFile(fullPath, next, "utf-8");
   invalidateCaches();
-  return `Replaced ${symbol.kind} "${options.namePath}" in ${options.relativePath} (was L${symbol.line}-L${symbol.endLine}).`;
+  return `Replaced ${symbol.kind} "${options.namePath}" in ${options.relativePath} (was L${symbol.line}-L${symbol.endLine}). Syntax validated.`;
 }
 
 export async function insertAroundSymbol(options: InsertSymbolOptions): Promise<string> {
   const { symbol, fullPath } = await locateSymbolForEdit(options.rootDir, options.relativePath, options.namePath);
   const content = await readFile(fullPath, "utf-8");
-  await createRestorePoint(options.rootDir, [options.relativePath], options.message ?? `insert_${options.position}_symbol:${options.namePath}`);
   const insertion = options.position === "before"
     ? `${options.body}\n`
     : `\n${options.body}`;
   const insertLine = options.position === "before" ? symbol.line - 1 : symbol.endLine;
   const next = insertLines(content, insertLine, insertion);
+  await assertEditKeepsSyntaxValid(options.relativePath, fullPath, content, next, `insert_${options.position}_symbol`);
+  await createRestorePoint(options.rootDir, [options.relativePath], options.message ?? `insert_${options.position}_symbol:${options.namePath}`);
   await writeFile(fullPath, next, "utf-8");
   invalidateCaches();
-  return `Inserted ${options.position} ${symbol.kind} "${options.namePath}" in ${options.relativePath} at L${options.position === "before" ? symbol.line : symbol.endLine + 1}.`;
+  return `Inserted ${options.position} ${symbol.kind} "${options.namePath}" in ${options.relativePath} at L${options.position === "before" ? symbol.line : symbol.endLine + 1}. Syntax validated.`;
 }
 
 function escapeRegex(input: string): string {

@@ -192,9 +192,16 @@ function deriveHeuristicLabel(cluster: { files: FileInfo[]; pathPattern: string 
     "project", "build", "system", "library", "framework", "runtime", "api", "service",
     "config", "configuration", "settings", "options", "preferences", "manage", "manager",
     "factory", "provider", "controller", "handler", "context", "node", "edge",
+    // Python import vocabulary — these appear in headers/import lines across the whole project
+    // and were producing cluster labels like [future], [annotations], [decimal].
+    "future", "annotations", "decimal", "dataclass", "dataclasses", "pathlib", "typing",
+    "collections", "abc", "abstractmethod", "enum", "datetime", "asyncio", "logging", "json",
+    "os", "sys", "re", "math", "functools", "itertools", "contextlib", "warnings", "copy",
+    "optional", "union", "any", "dict", "tuple", "callable", "iterator", "sequence", "mapping",
+    "field", "namedtuple", "defaultdict", "counter", "path", "decimal",
   ]);
 
-  // 1) STRONG signal: a directory segment that appears in ≥50% of cluster files becomes the label.
+  // 1) STRONG signal: a directory segment that appears in ≥40% of cluster files becomes the label.
   //    This recovers `fees/`, `auth/`, `esports/`, etc. as the "feature folder" name automatically.
   const dirSegmentCounts = new Map<string, number>();
   for (const file of cluster.files) {
@@ -206,7 +213,7 @@ function deriveHeuristicLabel(cluster: { files: FileInfo[]; pathPattern: string 
     }
   }
   const dominantDir = [...dirSegmentCounts.entries()]
-    .filter(([, count]) => count >= Math.max(2, Math.floor(cluster.files.length * 0.5)))
+    .filter(([, count]) => count >= Math.max(2, Math.ceil(cluster.files.length * 0.4)))
     .sort((a, b) => b[1] - a[1])[0];
 
   // 2) TF-IDF over header docstrings. A word's score = freq-in-cluster × log(totalClusters / freq-in-corpus).

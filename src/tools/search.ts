@@ -34,6 +34,15 @@ export interface UnifiedSearchOptions {
   persistArtifact?: boolean;
 }
 
+export interface TopResultBreakdown {
+  path: string;
+  semantic: number;
+  keyword: number;
+  combined: number;
+  signal: "semantic-dominant" | "keyword-dominant" | "balanced" | "none";
+  confidenceLabel: "high" | "medium" | "low";
+}
+
 export interface UnifiedSearchData {
   repo: {
     root: string;
@@ -45,6 +54,7 @@ export interface UnifiedSearchData {
   mode: SearchMode;
   freshness: FreshnessMetadata;
   trust: TrustMetadata;
+  topResultBreakdown?: TopResultBreakdown;
   files?: SemanticCodeSearchData;
   identifiers?: SemanticIdentifierSearchData;
 }
@@ -64,6 +74,43 @@ function buildEvidence(input: {
   ];
 }
 
+function computeTopBreakdown(input: {
+  mode: SearchMode;
+  files?: SemanticCodeSearchData;
+  identifiers?: SemanticIdentifierSearchData;
+}): TopResultBreakdown | undefined {
+  // Pick the single best result across whichever surfaces are present.
+  const topFile = input.files?.results[0];
+  const topId = input.identifiers?.results[0];
+  let best: { path: string; semantic: number; keyword: number; combined: number } | null = null;
+  if (topFile && (topFile.score ?? 0) >= (topId?.score ?? 0)) {
+    best = { path: topFile.path, semantic: topFile.semanticScore, keyword: topFile.keywordScore, combined: topFile.score };
+  } else if (topId) {
+    best = { path: topId.path, semantic: topId.semanticScore, keyword: topId.keywordScore, combined: topId.score };
+  } else if (topFile) {
+    best = { path: topFile.path, semantic: topFile.semanticScore, keyword: topFile.keywordScore, combined: topFile.score };
+  }
+  if (!best) return undefined;
+
+  const sem = best.semantic;
+  const kw = best.keyword;
+  let signal: TopResultBreakdown["signal"];
+  if (sem < 5 && kw < 5) signal = "none";
+  else if (sem < 5) signal = "keyword-dominant";
+  else if (kw < 5) signal = "semantic-dominant";
+  else if (Math.abs(sem - kw) > 35) signal = sem > kw ? "semantic-dominant" : "keyword-dominant";
+  else signal = "balanced";
+
+  // Confidence label is bound by min(semantic, keyword) so a keyword-only hit can't read "high".
+  const minComponent = Math.min(sem, kw);
+  let confidenceLabel: TopResultBreakdown["confidenceLabel"];
+  if (minComponent >= 50) confidenceLabel = "high";
+  else if (minComponent >= 20) confidenceLabel = "medium";
+  else confidenceLabel = "low";
+
+  return { ...best, signal, confidenceLabel };
+}
+
 function buildAmbiguities(input: {
   files?: SemanticCodeSearchData;
   identifiers?: SemanticIdentifierSearchData;
@@ -74,9 +121,16 @@ function buildAmbiguities(input: {
   const identifiersAllKeywordOnly = input.identifiers
     && input.identifiers.results.length > 0
     && input.identifiers.results.every((result) => result.semanticScore <= 0);
+  const topFile = input.files?.results[0];
+  const topId = input.identifiers?.results[0];
+  const topKeywordOnly = (topFile && topFile.semanticScore < 20 && topFile.keywordScore > 60)
+    || (topId && topId.semanticScore < 20 && topId.keywordScore > 60);
   return [
     ...(input.files && input.files.results.length === 0 ? ["no file matches found"] : []),
     ...(input.identifiers && input.identifiers.results.length === 0 ? ["no identifier matches found"] : []),
+    ...(topKeywordOnly
+      ? [`top hit is keyword-only (semantic≈0); it matches the query text but may not be semantically relevant — verify before trusting`]
+      : []),
     ...(filesAllKeywordOnly ? ["file search is keyword-only because semantic embeddings are unavailable or empty"] : []),
     ...(identifiersAllKeywordOnly ? ["identifier search is keyword-only because semantic embeddings are unavailable or empty"] : []),
     ...(input.files && input.files.results.length > 1 && Math.abs(input.files.results[0].score - input.files.results[1].score) < 5
@@ -268,7 +322,20 @@ export async function unifiedSearchData(options: UnifiedSearchOptions): Promise<
 
   const evidence = buildEvidence({ mode, files, identifiers, freshness });
   const ambiguities = buildAmbiguities({ files, identifiers });
-  const baseConfidence = (files?.results.length ?? 0) > 0 || (identifiers?.results.length ?? 0) > 0 ? 0.74 : 0.32;
+  const topResultBreakdown = computeTopBreakdown({ mode, files, identifiers });
+  // Base confidence reflects the actual signal quality. A keyword-only top hit (semantic≈0)
+  // can't read as high confidence — bound by min(semantic, keyword) of the top result.
+  const hasResults = (files?.results.length ?? 0) > 0 || (identifiers?.results.length ?? 0) > 0;
+  let baseConfidence: number;
+  if (!hasResults) {
+    baseConfidence = 0.32;
+  } else if (topResultBreakdown) {
+    const minComp = Math.min(topResultBreakdown.semantic, topResultBreakdown.keyword) / 100;
+    // Map the min-component into a 0.4–0.85 band so we never over- or under-claim.
+    baseConfidence = Math.max(0.4, Math.min(0.85, 0.4 + minComp * 0.5));
+  } else {
+    baseConfidence = 0.74;
+  }
   const partial: UnifiedSearchData = {
     repo,
     query: options.query,
@@ -281,6 +348,7 @@ export async function unifiedSearchData(options: UnifiedSearchOptions): Promise<
       ambiguities,
       artifact: null,
     }),
+    topResultBreakdown,
     files,
     identifiers,
   };
@@ -319,50 +387,19 @@ export async function unifiedSearchData(options: UnifiedSearchOptions): Promise<
   };
 }
 
-function qualityLabel(topScore: number): string {
-  if (topScore >= 75) return "high";
-  if (topScore >= 45) return "medium";
-  return "low";
-}
-
 function buildQualityBanner(data: UnifiedSearchData): string {
-  const topFile = data.files?.results[0];
-  const topId = data.identifiers?.results[0];
-  // Pick the better hit overall and reason from BOTH its components when computing the label.
-  // If either component is essentially zero, dampen the rolled-up label so "Confidence: high (100%)"
-  // can't appear on a pure-keyword zero-semantic match.
-  let topScore = 0;
-  let topSemantic = 0;
-  let topKeyword = 0;
-  if (topFile && (topFile.score ?? 0) >= (topId?.score ?? 0)) {
-    topScore = topFile.score;
-    topSemantic = topFile.semanticScore;
-    topKeyword = topFile.keywordScore;
-  } else if (topId) {
-    topScore = topId.score;
-    topSemantic = topId.semanticScore;
-    topKeyword = topId.keywordScore;
-  } else if (topFile) {
-    topScore = topFile.score;
-    topSemantic = topFile.semanticScore;
-    topKeyword = topFile.keywordScore;
-  }
-  if (topScore === 0) return "";
-
-  // When one component is essentially zero, the rolled-up score is misleading. Cap to "medium"
-  // and append a hint that the user should look at component scores.
-  const onlyKeyword = topSemantic < 5 && topKeyword >= 5;
-  const onlySemantic = topKeyword < 5 && topSemantic >= 5;
-  let label = qualityLabel(topScore);
+  const b = data.topResultBreakdown;
+  if (!b) return "";
+  // confidenceLabel is already bound by min(semantic, keyword) in computeTopBreakdown.
   let suffix = "";
-  if (onlyKeyword) {
-    label = label === "high" ? "medium" : label;
-    suffix = ` — keyword-only (semantic=0); check matchedSymbols`;
-  } else if (onlySemantic) {
-    label = label === "high" ? "medium" : label;
-    suffix = ` — semantic-only (keyword=0); query may be too abstract`;
+  if (b.signal === "keyword-dominant" && b.semantic < 5) {
+    suffix = ` — keyword-only (semantic=0); matches query text but may not be semantically relevant`;
+  } else if (b.signal === "semantic-dominant" && b.keyword < 5) {
+    suffix = ` — semantic-only (keyword=0); conceptual match, no literal token overlap`;
+  } else {
+    suffix = ` — ${b.signal}`;
   }
-  return `Confidence: ${label} (top score: ${Math.round(topScore)}%, semantic=${Math.round(topSemantic)}%, keyword=${Math.round(topKeyword)}%)${suffix}\n\n`;
+  return `Confidence: ${b.confidenceLabel} (top: ${Math.round(b.combined)}% combined, semantic=${Math.round(b.semantic)}%, keyword=${Math.round(b.keyword)}%)${suffix}\n\n`;
 }
 
 export async function unifiedSearch(options: UnifiedSearchOptions): Promise<string> {
