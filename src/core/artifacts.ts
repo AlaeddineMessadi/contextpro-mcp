@@ -12,6 +12,7 @@ export interface ArtifactReference {
   path: string;
   createdAt: string;
   updatedAt: string;
+  indexGeneration?: number;
 }
 
 export interface StoredArtifact<T = unknown> extends ArtifactReference {
@@ -36,6 +37,7 @@ interface PersistArtifactOptions<T = unknown> {
   clientId?: string | null;
   metadata?: Record<string, string>;
   payload: T;
+  indexGeneration?: number;
 }
 
 const ARTIFACT_DIR = ".contextpro/artifacts";
@@ -44,6 +46,7 @@ const MANIFEST_LOCK_FILE = "manifest.lock";
 const LOCK_RETRY_MS = 40;
 const LOCK_TIMEOUT_MS = 15_000;
 const STALE_LOCK_AGE_MS = 30_000;
+const MAX_ARTIFACTS_PER_MANIFEST = 200;
 
 async function readJsonFile<T>(path: string, fallback: T): Promise<T> {
   try {
@@ -203,6 +206,7 @@ export async function persistArtifact<T>(options: PersistArtifactOptions<T>): Pr
     path: artifactFile,
     createdAt: existing?.createdAt ?? now,
     updatedAt: now,
+    indexGeneration: options.indexGeneration,
     repoRoot: resolve(options.rootDir),
     repoFingerprint: options.repoFingerprint ?? null,
     projectId: options.projectId ?? null,
@@ -221,17 +225,38 @@ export async function persistArtifact<T>(options: PersistArtifactOptions<T>): Pr
     path: record.path,
     createdAt: record.createdAt,
     updatedAt: record.updatedAt,
+    indexGeneration: record.indexGeneration,
   };
 
   await withManifestLock(options.rootDir, async () => {
     const manifest = await loadManifestWithRepair(options.rootDir);
     const filtered = manifest.artifacts.filter((artifact) => artifact.id !== id);
     filtered.unshift(nextRef);
+    // LRU eviction: keep at most MAX_ARTIFACTS_PER_MANIFEST entries.
+    const trimmed = filtered.slice(0, MAX_ARTIFACTS_PER_MANIFEST);
     await mkdir(baseDir, { recursive: true });
-    await writeFile(manifestPath(options.rootDir), JSON.stringify({ artifacts: filtered }, null, 2) + "\n", "utf-8");
+    await writeFile(manifestPath(options.rootDir), JSON.stringify({ artifacts: trimmed }, null, 2) + "\n", "utf-8");
   });
 
   return nextRef;
+}
+
+/**
+ * Read an artifact only if it's still fresh for the given index generation. When the stored
+ * artifact's indexGeneration is older than `currentGeneration`, returns null so the caller
+ * recomputes instead of serving stale rankings.
+ */
+export async function readArtifactIfFresh<T = unknown>(
+  rootDir: string,
+  artifactId: string,
+  currentGeneration: number,
+): Promise<StoredArtifact<T> | null> {
+  const record = await readArtifact<T>(rootDir, artifactId);
+  if (!record) return null;
+  if (record.indexGeneration !== undefined && record.indexGeneration < currentGeneration) {
+    return null;
+  }
+  return record;
 }
 
 function migrateLegacyArtifactPath(path: string): string {

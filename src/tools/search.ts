@@ -367,6 +367,7 @@ export async function unifiedSearchData(options: UnifiedSearchOptions): Promise<
       repoFingerprint: repo.fingerprint,
       projectId: repo.projectId,
       clientId: repo.clientId,
+      indexGeneration: freshness.indexGeneration,
       metadata: {
         query: options.query,
         mode,

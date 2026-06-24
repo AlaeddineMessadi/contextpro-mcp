@@ -142,6 +142,7 @@ async function persistAgentArtifact<T>(input: {
     repoFingerprint: input.repo.fingerprint,
     projectId: input.repo.projectId,
     clientId: input.repo.clientId,
+    indexGeneration: input.repo.indexGeneration,
     metadata: input.metadata,
     payload: input.payload,
   });

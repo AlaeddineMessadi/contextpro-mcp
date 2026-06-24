@@ -26,10 +26,10 @@ export interface GraphQueryOptions {
 
 function formatQueryResult(result: ProjectGraphQueryResult): string {
   const lines = [
-    `Project Graph`,
+    `Project Graph (scoped view)`,
     `Index generation: ${result.graph.indexGeneration}`,
-    `Nodes: ${result.graph.stats.nodes} | Edges: ${result.graph.stats.edges}`,
-    `Files: ${result.graph.stats.files} | Symbols: ${result.graph.stats.symbols} | Imports: ${result.graph.stats.imports} | Tests: ${result.graph.stats.tests}`,
+    `This view: ${result.nodes.length} nodes | ${result.edges.length} edges`,
+    `Project total: ${result.graph.stats.nodes} nodes | ${result.graph.stats.edges} edges | ${result.graph.stats.files} files | ${result.graph.stats.symbols} symbols`,
     "",
     "Nodes:",
   ];

@@ -9,7 +9,7 @@ import { unifiedSearch, invalidateSearchCache, invalidateIdentifierSearchCache }
 import { getBlastRadius } from "./blast-radius.js";
 import { runStaticAnalysis } from "./static-analysis.js";
 import { proposeCommit } from "./propose-commit.js";
-import { listRestorePoints, restorePoint } from "../git/shadow.js";
+import { listRestorePoints, restorePoint, currentSessionId } from "../git/shadow.js";
 import { semanticNavigate } from "./semantic-navigate.js";
 import { getFeatureHub } from "./feature-hub.js";
 import { toolUpsertMemoryNode, toolCreateRelation, toolSearchMemoryGraph, toolAddInterlinkedContext, toolRetrieveWithTraversal, toolDeleteMemoryNode, toolListMemoryNodes } from "./memory-tools.js";
@@ -412,10 +412,15 @@ export function registerTools(
       const points = await listRestorePoints(rootDir);
       if (points.length === 0) return { content: [{ type: "text" as const, text: "No restore points found." }] };
 
-      const lines = points.map((p) =>
-        `${p.id} | ${new Date(p.timestamp).toISOString()} | ${p.files.join(", ")} | ${p.message}`,
-      );
-      return { content: [{ type: "text" as const, text: `Restore Points (${points.length}):\n\n${lines.join("\n")}` }] };
+      const session = currentSessionId();
+      const lines = points.map((p) => {
+        const foreign = p.session && p.session !== session ? " [OTHER SESSION]" : "";
+        const tomb = p.tombstoneFiles && p.tombstoneFiles.length > 0 ? " [new-file snapshot]" : "";
+        return `${p.id} | ${new Date(p.timestamp).toISOString()} | ${p.files.join(", ")} | ${p.message}${foreign}${tomb}`;
+      });
+      const ownCount = points.filter((p) => !p.session || p.session === session).length;
+      const header = `Restore Points (${points.length} total, ${ownCount} from this session):`;
+      return { content: [{ type: "text" as const, text: `${header}\n\n${lines.join("\n")}` }] };
     }, { toolName: "checkpoints" }),
   );
 

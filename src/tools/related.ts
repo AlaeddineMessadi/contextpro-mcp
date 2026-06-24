@@ -36,15 +36,43 @@ function findTestFile(filePath: string, allFiles: string[]): string | null {
   return null;
 }
 
+function fuzzyResolveIndexedFile(db: ReturnType<typeof getDB> extends Promise<infer T> ? T : never, requested: string): { path: string; note: string | null } {
+  if (db.getFile(requested)) return { path: requested, note: null };
+  // Try common src-layout prefixes.
+  const allDbFiles = db.getAllFiles();
+  const indexedPaths = new Set(allDbFiles.map((f) => f.path));
+  for (const prefix of ["src", "app", "lib", "packages"]) {
+    const candidate = requested.startsWith(`${prefix}/`) ? null : `${prefix}/${requested}`;
+    if (candidate && indexedPaths.has(candidate)) {
+      return { path: candidate, note: `Fuzzy-resolved "${requested}" → "${candidate}".` };
+    }
+  }
+  // Basename suffix match.
+  const suffix = requested.split("/").pop();
+  if (suffix) {
+    const hits = allDbFiles.filter((f) => f.path.endsWith(`/${suffix}`)).map((f) => f.path);
+    if (hits.length === 1) {
+      return { path: hits[0], note: `Fuzzy-resolved "${requested}" → "${hits[0]}".` };
+    }
+  }
+  return { path: requested, note: null };
+}
+
 export async function getRelated(options: RelatedOptions): Promise<string> {
-  const requestedFile = toProjectRelativePath(options.rootDir, options.file, "file");
+  const requestedRaw = toProjectRelativePath(options.rootDir, options.file, "file");
   const db = await getDB(options.rootDir);
+  const resolution = fuzzyResolveIndexedFile(db, requestedRaw);
+  const requestedFile = resolution.path;
   const file = db.getFile(requestedFile);
 
   const entries = await walkDirectory({ rootDir: options.rootDir, depthLimit: 0 });
   const allFiles = entries.filter((e) => !e.isDirectory).map((e) => e.relativePath);
 
-  const lines: string[] = [`=== Related to: ${requestedFile} ===`, ""];
+  const lines: string[] = [
+    ...(resolution.note ? [`[${resolution.note}]`, ""] : []),
+    `=== Related to: ${requestedFile} ===`,
+    "",
+  ];
 
   if (file) {
     const allDbFiles = db.getAllFiles();
@@ -75,7 +103,14 @@ export async function getRelated(options: RelatedOptions): Promise<string> {
       lines.push("");
     }
   } else {
-    lines.push("File not in index. Run reindex to populate the database.");
+    // Distinguish "wrong path" from "truly not indexed" by checking the basename across the index.
+    const suffix = requestedFile.split("/").pop();
+    const sameNameHits = suffix ? db.getAllFiles().filter((f) => f.path.endsWith(`/${suffix}`)).map((f) => f.path) : [];
+    if (sameNameHits.length > 0) {
+      lines.push(`"${requestedFile}" is not in the index, but files with that name exist at: ${sameNameHits.slice(0, 5).join(", ")}. Did you mean one of those?`);
+    } else {
+      lines.push(`"${requestedFile}" is not in the index. If it exists, run reindex; otherwise check the path (project-relative).`);
+    }
     lines.push("");
   }
 

@@ -47,6 +47,23 @@ export interface ResolveSymbolData {
   candidates: ResolvedSymbolCandidate[];
 }
 
+function nameSegments(name: string): string[] {
+  // Split camelCase and snake_case into lowercase word segments.
+  return name
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/[_-]+/g, " ")
+    .toLowerCase()
+    .split(/\s+/)
+    .filter(Boolean);
+}
+
+function isLikelyTestPath(path: string): boolean {
+  return /(^|\/)(tests?|__tests__|spec)\//.test(path)
+    || /\.(test|spec|demo)\./.test(path)
+    || /(^|\/)test_[^/]+\.py$/.test(path)
+    || /_test\.go$/.test(path);
+}
+
 function scoreSymbolCandidate(input: {
   symbolName: string;
   expectedKind: string | undefined;
@@ -54,12 +71,15 @@ function scoreSymbolCandidate(input: {
   file: FileRow;
   fileContext: string | undefined;
   importedFileIds: Set<number>;
+  importerCount: number;
 }): { score: number; reasons: string[] } {
   let score = 0;
   const reasons: string[] = [];
   const exactMatch = input.symbol.name === input.symbolName;
   const normalizedQuery = input.symbolName.toLowerCase();
   const normalizedName = input.symbol.name.toLowerCase();
+  const querySegments = nameSegments(input.symbolName);
+  const nameSegs = nameSegments(input.symbol.name);
 
   if (exactMatch) {
     score += 100;
@@ -67,16 +87,28 @@ function scoreSymbolCandidate(input: {
   } else if (normalizedName === normalizedQuery) {
     score += 90;
     reasons.push("case-insensitive exact name match");
+  } else if (querySegments.length > 0 && querySegments.every((seg) => nameSegs.includes(seg))) {
+    // All query word-segments are present as whole words in the symbol name.
+    // e.g. "fee model" matches "FeeModel"; "run" matches "run_scanner" but NOT "drunk".
+    score += 55;
+    reasons.push("word-boundary segment match");
+  } else if (nameSegs.includes(normalizedQuery)) {
+    // The whole query is one of the symbol's word segments. This is what kills the
+    // fee-in-feed substring collision: "fee" is NOT a segment of "run_venue_a_feed".
+    score += 50;
+    reasons.push("matches a whole word segment");
   } else if (normalizedName.includes(normalizedQuery)) {
-    score += 35;
-    reasons.push("partial name match");
+    // Pure substring — lowest tier, and only counts when the query is reasonably long
+    // so 2-3 char queries don't spray across unrelated names.
+    score += normalizedQuery.length >= 4 ? 20 : 8;
+    reasons.push("partial (substring) name match");
   }
 
   if (input.expectedKind && input.symbol.kind === input.expectedKind) {
     score += 35;
     reasons.push(`kind match (${input.expectedKind})`);
   } else if (input.expectedKind && input.symbol.kind !== input.expectedKind) {
-    score -= 10;
+    score -= 15;
     reasons.push(`kind mismatch (${input.symbol.kind})`);
   }
 
@@ -98,6 +130,17 @@ function scoreSymbolCandidate(input: {
   if (input.symbol.parent_symbol_id !== null) {
     score += 5;
     reasons.push("nested/member definition");
+  }
+
+  // Tie-breakers when file_context is absent: prefer non-test, well-imported definitions.
+  if (isLikelyTestPath(input.file.path)) {
+    score -= 6;
+    reasons.push("in a test file (de-prioritized)");
+  }
+  if (input.importerCount > 0) {
+    const bump = Math.min(8, input.importerCount);
+    score += bump;
+    reasons.push(`${input.importerCount} importer(s)`);
   }
 
   return { score, reasons };
@@ -134,6 +177,7 @@ export async function resolveSymbolData(options: ResolveSymbolOptions): Promise<
       const file = filesById.get(symbol.file_id);
       if (!file) return null;
       const siblings = db.getSymbolsByFile(file.id);
+      const importerCount = db.getImportersOf(file.id).length;
       const { score, reasons } = scoreSymbolCandidate({
         symbolName: options.symbolName,
         expectedKind: options.kind,
@@ -141,6 +185,7 @@ export async function resolveSymbolData(options: ResolveSymbolOptions): Promise<
         file,
         fileContext: options.fileContext,
         importedFileIds,
+        importerCount,
       });
       const candidate: ResolvedSymbolCandidate = {
         name: symbol.name,

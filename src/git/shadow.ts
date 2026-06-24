@@ -14,7 +14,17 @@ export interface RestorePoint {
   files: string[];
   message: string;
   fileHashes?: Record<string, string>;
+  // Session tag = pid:bootTime. Lets `checkpoints`/`restore` distinguish this session's points
+  // from points another agent created in the same project directory.
+  session?: string;
+  // True when the captured file did not exist (tombstone); restoring deletes the file rather
+  // than writing empty content.
+  tombstoneFiles?: string[];
 }
+
+// A stable-per-process session id. process.pid plus a coarse start marker so two sequential
+// runs with a recycled PID don't collide within the same project.
+const SESSION_ID = `${process.pid}-${Math.floor(Date.now() / 1000 / 60)}`;
 
 async function ensureDataDir(rootDir: string): Promise<string> {
   const dataPath = join(rootDir, DATA_DIR);
@@ -87,6 +97,7 @@ export async function createRestorePoint(rootDir: string, files: string[], messa
   await mkdir(backupDir, { recursive: true });
   const safeFiles = files.map((file) => toProjectRelativePath(rootDir, file, "restore file"));
   const fileHashes: Record<string, string> = {};
+  const tombstoneFiles: string[] = [];
 
   for (const file of safeFiles) {
     const fullPath = resolveProjectPath(rootDir, file, "restore file");
@@ -100,14 +111,25 @@ export async function createRestorePoint(rootDir: string, files: string[], messa
       await writeFile(backupPath, content);
       fileHashes[file] = slug;
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        // The file doesn't exist yet — this is a tombstone. Restoring it should DELETE the file.
+        tombstoneFiles.push(file);
+      } else {
         const message = error instanceof Error ? error.message : String(error);
         process.stderr.write(`[contextpro/shadow] backup failed for ${file}: ${message}\n`);
       }
     }
   }
 
-  const point: RestorePoint = { id, timestamp: Date.now(), files: safeFiles, message, fileHashes };
+  const point: RestorePoint = {
+    id,
+    timestamp: Date.now(),
+    files: safeFiles,
+    message,
+    fileHashes,
+    session: SESSION_ID,
+    ...(tombstoneFiles.length > 0 ? { tombstoneFiles } : {}),
+  };
   await withManifestLock(rootDir, async () => {
     const manifest = await loadManifest(rootDir);
     manifest.push(point);
@@ -125,9 +147,17 @@ export async function restorePoint(rootDir: string, pointId: string): Promise<st
 
   const backupDir = join(rootDir, DATA_DIR, "backups", pointId);
   const restoredFiles: string[] = [];
+  const tombstones = new Set(point.tombstoneFiles ?? []);
 
   for (const file of point.files) {
     const targetPath = resolveProjectPath(rootDir, file, "restore file");
+    if (tombstones.has(file)) {
+      // The snapshot captured a non-existent file. Restoring means the file should not exist —
+      // delete it if it's there now.
+      await unlink(targetPath).catch(() => undefined);
+      restoredFiles.push(`${file} (deleted — file did not exist at checkpoint time)`);
+      continue;
+    }
     // Prefer the hash-based backup filename when the manifest entry carries one. Fall back to
     // the legacy `path.replace(/[\\/]/g, "__")` slug for restore points predating the hash scheme.
     const newSlug = point.fileHashes?.[file];
@@ -156,6 +186,10 @@ export async function restorePoint(rootDir: string, pointId: string): Promise<st
   }
 
   return restoredFiles;
+}
+
+export function currentSessionId(): string {
+  return SESSION_ID;
 }
 
 export async function listRestorePoints(rootDir: string): Promise<RestorePoint[]> {
