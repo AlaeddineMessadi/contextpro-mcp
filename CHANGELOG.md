@@ -4,6 +4,41 @@ All notable changes to this project are recorded here. The project follows [Sema
 
 ## [Unreleased]
 
+### Fixed — Audit feedback from tradebot-plus (Python project)
+
+A B-grade external audit on a 112-file uv-managed Python project exposed several heuristic gaps that hurt agents using ContextPro for Python work and edit planning. Critical/High items addressed:
+
+- **`lint` discovers Python tools via `.venv/bin/` and `uv run` before system PATH.** Previously `lint` only saw ruff/mypy when they were on the global PATH, so it fell back to `python3 -m py_compile` on every uv-managed project. New `resolvePythonTool()` tries `./.venv/bin/<tool>` → `./.venv/Scripts/<tool>.exe` → `uv run <tool>` (when `uv.lock`/`pyproject.toml` present) → `poetry run <tool>` (when `poetry.lock` present) → system. Same priority chain for `ruff`, `mypy`, `pytest`. (`src/tools/static-analysis.ts`)
+- **`validate_scope` parses `pyproject.toml` and `pytest.ini`.** New `detectPythonProfile()` reads `[tool.pytest.ini_options]`, `testpaths`, `[tool.ruff]`, `[tool.mypy]`, and presence of `.venv` / `uv.lock` / `poetry.lock`. `buildValidateScope` then emits the right `pytest`, `ruff check`, and `mypy` commands instead of "No safe script-level validation command could be inferred." (`src/tools/agentic-context.ts`)
+- **Hybrid search trust dampener** caps combined score at 0.7 when either component is below 0.05. Stops the "94% confidence" trust killer where a pure-keyword 94 looked like a high-confidence hybrid match. (`src/core/embeddings.ts`)
+- **Planning helpers learn lemmatization, directory-name match, and stopword filtering.** `lemmatize()` matches `fees`↔`fee`, `models`↔`model`. New `pathSegments()` adds directory bonus. `STOPWORD_VERBS` filters out generic verbs (`add`/`get`/`update`/etc.) that previously made `status.py` outrank `fees/*.py` for fee-model tasks. `rerankPlanningFiles` emits per-candidate `reason` evidence — the `why_picked` field requested in the audit. (`src/tools/planning-helpers.ts`)
+- **`repo_map` honors `max_tokens` for breadth.** Effective file budget = `floor(max_tokens / 120)` clamped to `[8, 400]`. Low floor (8) means small token budgets actually reduce breadth instead of landing on the same 40-file response. (`src/tools/repo-map.ts`)
+- **`hub` falls back to directory-derived hubs when the import graph is too sparse.** Groups files by `src/<dir>`, `app/<dir>`, `lib/<dir>`, `packages/<dir>` (≥2 files per group). (`src/tools/feature-hub.ts`)
+- **`cluster` labels use directory names + dominant header tokens.** Emits dominant dir if ≥50% file coverage, dominant header word if ≥2 files share it, combines as `"<dir> (<header>)"` when both differ. (`src/tools/semantic-navigate.ts`)
+- **`tree` fuzzy-resolves `target_path`.** Tries `src/<path>` / `app/<path>` / `lib/<path>` / `packages/<path>` prefixes; surfaces a `[Fuzzy-resolved → ...]` notice; errors explicitly when no candidate matches. (`src/tools/context-tree.ts`)
+- **`explain` reports depth-N status.** Emits `(depth N added 0 nodes beyond depth 1)` or `(depth N added M additional node(s))` so agents know whether to deepen further. (`src/tools/explain.ts`)
+- **Stale `.contextplus/` paths migrated on read** in `listArtifacts` / `readArtifact`. (`src/core/artifacts.ts`)
+- **`graph_export` cold-open race** caught with one-shot retry that pre-warms `getDB()`. (`src/tools/project-graph.ts`)
+- **Search exposes `semantic_only` / `keyword_only` presets** distinct from `hybrid`. (`src/tools/semantic-search.ts`, `src/tools/register-tools.ts`)
+- **`diff` accepts a `scope` arg** with `unstaged` (default), `staged`, or `both`. (`src/tools/diff.ts`)
+
+### Fixed — Bug-hunt adversarial pass
+
+Following the audit fixes, a separate adversarial bug-hunt found 5 critical bugs in the symbolic-edit + parser work. All fixed:
+
+- **`replaceSymbolBody` rejects malformed bodies** via a new `looksLikeDefinitionStart()` check. Previously, passing just inner statements silently dropped the function signature. Now throws with the original signature quoted. (`src/tools/symbolic-edit.ts`)
+- **`replaceSymbolBody` uses correct nested-method indent.** New `detectBodyIndent` walks past the definition line to find the actual body indent; `reindentBody` strips min body indent before reapplying context indent. (`src/tools/symbolic-edit.ts`)
+- **`renameSymbol` rejects same-file collisions** and identical-name no-op renames. (`src/tools/symbolic-edit.ts`)
+- **`extractConfigKeys` only fires inside `export default {…}` and respects `CONFIG_MAX_DEPTH=6`.** Brace-depth counter + string/comment state machine + global dedup. Previously matched anywhere in the file including type aliases, function parameter destructuring, and any object literal. (`src/core/parser.ts`)
+- **`isIndexableSymbol` detects exported consts with tree-sitter signatures.** Tree-sitter strips the `export ` keyword from `lexical_declaration` node text; the filter now also inspects the raw source line. (`src/tools/semantic-identifiers.ts`)
+
+### Testing
+
+- New `test/main/audit-improvements.test.mjs` covers the audit surface (5 tests).
+- Full suite: **324 tests, 0 failures** (was 319; +5 audit-coverage tests).
+
+## [Unreleased — earlier in this session]
+
 ### Fixed — Live-MCP performance sweep findings
 
 A post-reconnect sweep with a fresh MCP server surfaced two more issues that the cached-module sessions had masked. Both stem from the same root cause: the symbol table treats every `const`/`let` declaration as a callable symbol.
