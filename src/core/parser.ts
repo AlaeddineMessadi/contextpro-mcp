@@ -383,7 +383,7 @@ const CONFIG_KEY_PATTERNS: RegExp[] = [
   /^\s*"([a-zA-Z_$][a-zA-Z0-9_$ -]*)"\s*:\s*[{[]/,
 ];
 
-const CONFIG_MAX_DEPTH = 2;
+const CONFIG_MAX_DEPTH = 6;
 
 function extractConfigKeys(lines: string[]): CodeSymbol[] {
   const keys: CodeSymbol[] = [];
