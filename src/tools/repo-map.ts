@@ -91,13 +91,15 @@ export async function getRepoMapData(options: RepoMapOptions): Promise<RepoMapDa
   // Compute an effective file budget. If max_tokens is set and max_files wasn't, scale breadth
   // proportionally so repo_map can actually surface a meaningful coverage on large repos.
   // Heuristic: ~120 tokens per file row (path + header + ~6 signatures truncated), so
-  // budget = max_tokens / 120, clamped to [40, 400]. The user can still override with max_files.
+  // budget = max_tokens / 120, clamped to [8, 400]. The user can still override with max_files.
+  // The floor is intentionally low (8) so small token budgets actually reduce breadth instead of
+  // landing on the same 40-file response as larger budgets.
   let effectiveMaxFiles: number;
   if (options.maxFiles !== undefined) {
     effectiveMaxFiles = Math.max(1, options.maxFiles);
   } else if (options.maxTokens !== undefined) {
     const TOKENS_PER_FILE_ESTIMATE = 120;
-    effectiveMaxFiles = Math.max(40, Math.min(400, Math.floor(options.maxTokens / TOKENS_PER_FILE_ESTIMATE)));
+    effectiveMaxFiles = Math.max(8, Math.min(400, Math.floor(options.maxTokens / TOKENS_PER_FILE_ESTIMATE)));
   } else {
     effectiveMaxFiles = 40;
   }

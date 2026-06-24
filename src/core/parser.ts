@@ -441,7 +441,7 @@ function extractConfigKeys(lines: string[]): CodeSymbol[] {
     // Skip if we're not inside the config root, or too deep.
     if (!inExportDefault) continue;
     const relativeDepth = startingDepth - braceDepthAtExport;
-    if (relativeDepth >= CONFIG_MAX_DEPTH) continue;
+    if (relativeDepth > CONFIG_MAX_DEPTH) continue;
 
     for (const pattern of CONFIG_KEY_PATTERNS) {
       const match = lineHasCode.match(pattern);
