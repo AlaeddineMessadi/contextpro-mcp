@@ -175,7 +175,7 @@ function formatLineRange(line: number, endLine: number): string {
   return endLine > line ? `L${line}-L${endLine}` : `L${line}`;
 }
 
-function deriveHeuristicLabel(cluster: { files: FileInfo[]; pathPattern: string | null }, index: number): string {
+function deriveHeuristicLabel(cluster: { files: FileInfo[]; pathPattern: string | null }, index: number, allFiles?: FileInfo[]): string {
   if (cluster.pathPattern) return cluster.pathPattern;
   const stop = new Set([
     "the", "and", "for", "src", "test", "main", "tools", "core", "lib", "index", "is", "of",
@@ -183,12 +183,18 @@ function deriveHeuristicLabel(cluster: { files: FileInfo[]; pathPattern: string 
     "module", "modules", "file", "files", "function", "functions", "class", "classes", "type",
     "types", "test", "tests", "spec", "specs", "demo", "demos", "common", "shared", "util",
     "utils", "helper", "helpers", "import", "imports", "as",
+    "const", "let", "var", "use", "client", "server", "default", "export", "import",
+    "interface", "enum", "trait", "struct", "fn", "func", "def", "pub", "async", "await",
+    "return", "true", "false", "null", "undefined", "new", "delete", "typeof",
+    "value", "values", "data", "info", "result", "results", "item", "items", "list", "obj",
+    "object", "objects", "param", "params", "arg", "args", "ref", "refs",
   ]);
 
-  // 1) Prefer a common directory segment (e.g., "fees", "auth", "scoring") across files.
+  // 1) STRONG signal: a directory segment that appears in ≥50% of cluster files becomes the label.
+  //    This recovers `fees/`, `auth/`, `esports/`, etc. as the "feature folder" name automatically.
   const dirSegmentCounts = new Map<string, number>();
   for (const file of cluster.files) {
-    const segs = file.relativePath.split("/").slice(0, -1); // exclude filename
+    const segs = file.relativePath.split("/").slice(0, -1);
     for (const seg of segs) {
       const lower = seg.toLowerCase();
       if (lower.length < 3 || stop.has(lower)) continue;
@@ -199,22 +205,36 @@ function deriveHeuristicLabel(cluster: { files: FileInfo[]; pathPattern: string 
     .filter(([, count]) => count >= Math.max(2, Math.floor(cluster.files.length * 0.5)))
     .sort((a, b) => b[1] - a[1])[0];
 
-  // 2) Look at file headers for repeated meaningful nouns.
-  const headerTokenCounts = new Map<string, number>();
+  // 2) TF-IDF over header docstrings. A word's score = freq-in-cluster × log(totalClusters / freq-in-corpus).
+  //    Without TF-IDF, common words like "manager" or "config" tie. With TF-IDF, distinctive feature
+  //    nouns (e.g., "scanner", "venue", "esports") win.
+  const clusterTermFreq = new Map<string, number>();
   for (const file of cluster.files) {
     if (!file.header) continue;
-    const words = file.header
-      .toLowerCase()
-      .replace(/[^a-z0-9\s/-]/g, " ")
-      .split(/\s+/)
-      .filter((t) => t.length > 3 && !stop.has(t));
-    for (const w of words) headerTokenCounts.set(w, (headerTokenCounts.get(w) ?? 0) + 1);
+    const words = tokenizeHeader(file.header, stop);
+    for (const word of words) clusterTermFreq.set(word, (clusterTermFreq.get(word) ?? 0) + 1);
   }
-  const dominantHeader = [...headerTokenCounts.entries()]
-    .filter(([, count]) => count >= 2)
-    .sort((a, b) => b[1] - a[1])[0];
+  const corpusTermFreq = new Map<string, number>();
+  const totalFiles = allFiles?.length ?? cluster.files.length;
+  if (allFiles) {
+    for (const file of allFiles) {
+      if (!file.header) continue;
+      const words = new Set(tokenizeHeader(file.header, stop));
+      for (const word of words) corpusTermFreq.set(word, (corpusTermFreq.get(word) ?? 0) + 1);
+    }
+  }
+  const scored: Array<[string, number]> = [];
+  for (const [word, freq] of clusterTermFreq) {
+    if (freq < 2) continue;
+    const df = corpusTermFreq.get(word) ?? freq;
+    const idf = allFiles ? Math.log(1 + totalFiles / df) : 1;
+    const score = freq * idf;
+    scored.push([word, score]);
+  }
+  scored.sort((a, b) => b[1] - a[1]);
+  const dominantHeader = scored[0];
 
-  // 3) Combine: prefer directory name + dominant header word for richer labels.
+  // 3) Combine: prefer directory + distinctive header word for richer labels.
   if (dominantDir && dominantHeader && dominantDir[0] !== dominantHeader[0]) {
     return `${dominantDir[0]} (${dominantHeader[0]})`;
   }
@@ -230,6 +250,14 @@ function deriveHeuristicLabel(cluster: { files: FileInfo[]; pathPattern: string 
   return `Cluster ${index + 1}`;
 }
 
+function tokenizeHeader(header: string, stop: Set<string>): string[] {
+  return header
+    .toLowerCase()
+    .replace(/[^a-z0-9\s/_-]/g, " ")
+    .split(/[\s/_-]+/)
+    .filter((t) => t.length > 3 && !stop.has(t));
+}
+
 async function labelSiblingClusters(clusters: { files: FileInfo[]; pathPattern: string | null }[]): Promise<string[]> {
   if (clusters.length === 0) return [];
   if (clusters.length === 1) {
@@ -238,7 +266,8 @@ async function labelSiblingClusters(clusters: { files: FileInfo[]; pathPattern: 
     return [clusters[0].files.map((f) => f.relativePath.split("/").pop()).join(", ").substring(0, 40)];
   }
 
-  const heuristicLabels = clusters.map((c, i) => deriveHeuristicLabel(c, i));
+  const allFilesCorpus = clusters.flatMap((c) => c.files);
+  const heuristicLabels = clusters.map((c, i) => deriveHeuristicLabel(c, i, allFilesCorpus));
 
   const clusterDescriptions = clusters.map((c, i) => {
     const fileList = c.files.map((f) => `${f.relativePath}: ${f.header || "no description"}`).join("\n  ");

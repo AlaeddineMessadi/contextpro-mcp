@@ -610,7 +610,7 @@ export async function buildEditScope(options: EditScopeOptions): Promise<string>
   const rankedByPath = new Map(rankedScopeFiles.map((file) => [file.path, file]));
   const identifierScoreByPath = new Map(identifierTop.map((item) => [item.path, item.score]));
   const limit = options.preferSmallestScope === false ? maxFiles : Math.min(maxFiles, 3);
-  const recommendedScope = orderedPaths.slice(0, limit).map((path) => {
+  let recommendedScope = orderedPaths.slice(0, limit).map((path) => {
     const ranked = rankedByPath.get(path);
     const score = ranked?.score ?? ((identifierScoreByPath.get(path) ?? 60) / 100);
     return {
@@ -620,13 +620,24 @@ export async function buildEditScope(options: EditScopeOptions): Promise<string>
     };
   });
   const tests = await findTestsForFiles(options.rootDir, recommendedScope.map((item) => item.path));
+  const existingPaths = new Set(recommendedScope.map((item) => item.path));
   for (const test of tests.slice(0, 2)) {
+    if (existingPaths.has(test.path)) continue;
+    existingPaths.add(test.path);
     recommendedScope.push({
       path: test.path,
       action: "modify",
       confidence: Math.min(0.92, test.score),
     });
   }
+  // Final dedupe pass: keep the highest-confidence row per path. Ranking may produce the same
+  // path twice if both the file-search and identifier-search anchors include it.
+  const dedupedScope = new Map<string, typeof recommendedScope[0]>();
+  for (const row of recommendedScope) {
+    const existing = dedupedScope.get(row.path);
+    if (!existing || row.confidence > existing.confidence) dedupedScope.set(row.path, row);
+  }
+  recommendedScope = [...dedupedScope.values()];
   const optionalScope = search.identifiers?.results.slice(0, 3).map((item) => ({
     path: item.path,
     action: "review_only",
@@ -1015,9 +1026,13 @@ export async function recordTaskMemory(options: MemoryRecordTaskOptions): Promis
     content: contentParts.join("\n"),
     metadata,
   } satisfies MemoryNodeInput;
+  // Pre-check whether the task node already exists so we can report "Created N nodes" accurately.
+  const taskWasNew = !db.findMemoryNodeByLabel("note", node.label);
   const taskMemoryId = db.upsertMemoryNode(node, embedding.length > 0 ? embedding : undefined);
   const linkedNodes: string[] = [];
+  const newlyCreatedNodes: string[] = [];
   for (const file of options.files ?? []) {
+    const existingFileNode = db.findMemoryNodeByLabel("file", file);
     const fileNodeId = db.upsertMemoryNode({
       type: "file",
       label: file,
@@ -1029,6 +1044,7 @@ export async function recordTaskMemory(options: MemoryRecordTaskOptions): Promis
         record_kind: "file_ref",
       },
     });
+    if (!existingFileNode) newlyCreatedNodes.push(fileNodeId);
     db.upsertMemoryEdge({
       source: taskMemoryId,
       target: fileNodeId,
@@ -1040,12 +1056,15 @@ export async function recordTaskMemory(options: MemoryRecordTaskOptions): Promis
   const payload = {
     taskMemoryId,
     linkedNodes,
+    newlyCreatedNodes,
+    createdCount: newlyCreatedNodes.length + (taskWasNew ? 1 : 0),
     storedSummary: options.summary,
   };
   return formatMaybeJson(options.format, payload, () => {
     const lines = [
       `Task memory recorded: ${taskMemoryId}`,
       `Summary: ${options.summary}`,
+      `Created: ${payload.createdCount} new node(s), ${linkedNodes.length} edge(s)`,
     ];
     if (linkedNodes.length > 0) lines.push(`Linked Nodes: ${linkedNodes.join(", ")}`);
     return lines.join("\n");

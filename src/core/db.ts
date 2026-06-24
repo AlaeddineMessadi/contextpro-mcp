@@ -593,6 +593,10 @@ export class ContextPlusDB {
     return this.db.prepare("SELECT * FROM memory_nodes WHERE id = ?").get(id) as MemoryNodeRow | undefined ?? null;
   }
 
+  findMemoryNodeByLabel(type: string, label: string): MemoryNodeRow | null {
+    return this.db.prepare("SELECT * FROM memory_nodes WHERE type = ? AND label = ?").get(type, label) as MemoryNodeRow | undefined ?? null;
+  }
+
   getMemoryNode(id: string): MemoryNodeRow | null {
     const row = this.peekMemoryNode(id);
     if (row) {

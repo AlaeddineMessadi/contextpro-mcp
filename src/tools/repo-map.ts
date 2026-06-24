@@ -62,13 +62,37 @@ function fileRoleBoost(path: string): number {
   if (/\/(index|main|app|server|cli)\.[a-z]+$/i.test(path)) return 12;
   if (path.startsWith("src/tools/")) return 8;
   if (path.startsWith("src/core/")) return -2;
-  if (path.startsWith("test/") || path.startsWith("demo/") || path.includes(".test.") || path.includes(".spec.")) return -8;
+  if (
+    path.startsWith("test/") || path.startsWith("tests/") || path.startsWith("demo/") ||
+    path.includes(".test.") || path.includes(".spec.") || path.includes(".demo.") ||
+    path.endsWith("/test_*.py") || /\/test_[^/]+\.py$/.test(path) || /_test\.go$/.test(path)
+  ) return -20;
+  if (path.includes("scripts/") || path.includes("/scripts")) return -6;
   return 0;
+}
+
+function docstringBoost(dbFile: FileRow): number {
+  // Files with a real 2-line header docstring are more useful to surface in a repo map than
+  // files with a generic or missing header.
+  const header = (dbFile.header ?? "").trim();
+  if (header.length === 0) return -3;
+  if (header.length < 20) return 0;
+  return 2;
 }
 
 function scoreFileImportance(dbFile: FileRow, symbols: SymbolRow[], importsFromCount: number, importedByCount: number): number {
   const topLevelCount = symbols.filter((symbol) => symbol.parent_symbol_id === null).length;
-  return importedByCount * 4 + importsFromCount * 2 + topLevelCount * 1.25 + Math.min(dbFile.symbol_count, 20) * 0.25 + fileRoleBoost(dbFile.path);
+  // Strong dampener for files whose `importedByCount` is high purely because of test imports.
+  // We don't have a flag here, but the role boost above already strongly penalizes test paths,
+  // so a test file with 20 importers ends up below an entry point with 5 importers.
+  return (
+    importedByCount * 5 +
+    importsFromCount * 1.5 +
+    topLevelCount * 1.5 +
+    Math.min(dbFile.symbol_count, 20) * 0.3 +
+    fileRoleBoost(dbFile.path) +
+    docstringBoost(dbFile)
+  );
 }
 
 function formatSymbolLine(symbol: RepoMapFileEntry["symbols"][number], includeSignatures: boolean): string {

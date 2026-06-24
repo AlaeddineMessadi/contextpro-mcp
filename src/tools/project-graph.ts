@@ -90,17 +90,41 @@ export async function queryProjectGraphTool(options: GraphQueryOptions): Promise
   if (kind === "symbol" && !options.symbol) {
     return `Error: graph_query kind="symbol" requires a "symbol" argument.`;
   }
-  const file = options.file ? toProjectRelativePath(options.rootDir, options.file, "file") : undefined;
+  let file = options.file ? toProjectRelativePath(options.rootDir, options.file, "file") : undefined;
+  let fuzzyNote: string | null = null;
+  if ((kind === "file" || kind === "impact") && file) {
+    const fullGraph = await buildProjectGraph(options.rootDir);
+    const exists = fullGraph.nodes.some((node) => node.path === file);
+    if (!exists) {
+      // Fuzzy resolve: try common src-layout prefixes and a basename suffix match.
+      const candidatePaths = ["src", "app", "lib", "packages"]
+        .map((prefix) => `${prefix}/${file}`)
+        .filter((c) => fullGraph.nodes.some((node) => node.path === c));
+      if (candidatePaths.length === 1) {
+        fuzzyNote = `Fuzzy-resolved "${file}" → "${candidatePaths[0]}". Pass the full project-relative path next time.`;
+        file = candidatePaths[0];
+      } else if (candidatePaths.length > 1) {
+        return `No graph node found for "${options.file}". Did you mean one of: ${candidatePaths.join(", ")}? Pass the full project-relative path.`;
+      } else if (options.file) {
+        const suffix = options.file.split("/").pop();
+        const basenameHits = suffix ? fullGraph.nodes.filter((node) => node.type === "file" && node.path?.endsWith(`/${suffix}`)).map((n) => n.path).slice(0, 5) : [];
+        if (basenameHits.length > 0) {
+          return `No graph node found for "${options.file}". Files with that basename exist at: ${basenameHits.join(", ")}.`;
+        }
+      }
+    }
+  }
   const result = await queryProjectGraph(options.rootDir, {
     kind,
     file,
     symbol: options.symbol,
     limit: options.limit,
   });
-  if (options.format === "json") return JSON.stringify(result, null, 2);
+  if (options.format === "json") return JSON.stringify({ ...result, fuzzyNote }, null, 2);
   if (kind === "summary" && !options.file && !options.symbol) {
     return formatGraphReport(await buildProjectGraph(options.rootDir));
   }
+  const prefix = fuzzyNote ? `[${fuzzyNote}]\n\n` : "";
   if (kind === "file" || kind === "impact") {
     if (result.nodes.length === 0) {
       const fullGraph = await buildProjectGraph(options.rootDir);
@@ -109,9 +133,9 @@ export async function queryProjectGraphTool(options: GraphQueryOptions): Promise
         return `No graph node found for file "${file}". The file may not be indexed yet — run reindex, or check the path is correct (project-relative).`;
       }
       if (kind === "impact") {
-        return `File "${file}" is indexed but has no incoming dependencies (no other files import it, call its symbols, or test it). This usually means it's a leaf module, types-only file, or entry point.`;
+        return prefix + `File "${file}" is indexed but has no incoming dependencies (no other files import it, call its symbols, or test it). This usually means it's a leaf module, types-only file, or entry point.`;
       }
-      return `File "${file}" is indexed but has no graph edges. The file may have no imports, calls, or test relationships.`;
+      return prefix + `File "${file}" is indexed but has no graph edges. The file may have no imports, calls, or test relationships.`;
     }
     if (kind === "impact") {
       // For impact, check if any node OTHER than the start file or its own symbols is in the result.

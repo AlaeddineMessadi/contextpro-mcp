@@ -263,6 +263,26 @@ export async function grepProject(options: GrepOptions): Promise<string> {
     return `Error: ${message}`;
   }
 
+  // Helpful warning: if a glob was provided and matched nothing, suggest src-layout alternatives.
+  if (options.glob && candidates.length === 0) {
+    const suggestions: string[] = [];
+    const trimmedGlob = options.glob.trim();
+    for (const prefix of ["src", "app", "lib", "packages"]) {
+      const candidate = trimmedGlob.startsWith(prefix + "/") ? null : `${prefix}/${trimmedGlob}`;
+      if (!candidate) continue;
+      try {
+        const wouldMatch = entries.some((e) => !e.isDirectory && matchesGlob(e.relativePath, candidate));
+        if (wouldMatch) suggestions.push(candidate);
+      } catch {
+        // Skip suggestions that fail to parse — the user is on their own for that input.
+      }
+    }
+    const suggestionHint = suggestions.length > 0
+      ? ` Did you mean: ${suggestions.map((s) => `"${s}"`).join(", ")}?`
+      : "";
+    return `grep: 0 matches — glob "${options.glob}" matched 0 files in the indexed set.${suggestionHint} Tip: drop the glob to scan all files, or use **/ for recursive matches.`;
+  }
+
   const result: GrepResult = {
     matches: [],
     filesScanned: 0,

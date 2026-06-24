@@ -104,6 +104,34 @@ export async function discoverHubs(rootDir: string): Promise<string[]> {
   return hubs.sort();
 }
 
+const ORPHAN_EXCLUSION_PATTERNS: RegExp[] = [
+  // Infra / build / package files — not feature code.
+  /^(pyproject\.toml|uv\.lock|poetry\.lock|package\.json|package-lock\.json|bun\.lock|yarn\.lock|tsconfig\.json|tsconfig\.[^/]+\.json|Dockerfile|docker-compose\.[^/]+|\.dockerignore|Makefile|justfile|\.gitignore|\.gitattributes|\.editorconfig|README\.md|LICENSE|CHANGELOG\.md|STATUS\.md|AUDIT\.md|INSTRUCTIONS\.md|agent-instructions\.md|TODO\.md|VERSION|CODE_OF_CONDUCT\.md|CONTRIBUTING\.md|SECURITY\.md|\.env|\.env\.[^/]+)$/i,
+  // Test/spec/demo files — not orphans by design.
+  /(^|\/)(tests?|spec|specs|__tests__)\//i,
+  /\.(test|spec|demo)\.[^/]+$/i,
+  /(^|\/)test_[^/]+\.py$/,
+  /_test\.go$/,
+  // Scripts / config / docs trees — agents don't expect these in hubs.
+  /^scripts?\//i,
+  /^config\//i,
+  /^docs?\//i,
+  /^examples?\//i,
+  /^\.contextpro\//,
+  /^\.github\//i,
+  /^\.vscode\//i,
+  /^\.idea\//i,
+  // Asset / generated / vendored files.
+  /\.(svg|png|jpe?g|gif|webp|ico|woff2?|ttf|eot|wasm|map|min\.[^/]+)$/i,
+  /^build\//i,
+  /^dist\//i,
+  /^node_modules\//i,
+];
+
+function isOrphanCandidate(filePath: string): boolean {
+  return !ORPHAN_EXCLUSION_PATTERNS.some((re) => re.test(filePath));
+}
+
 export async function findOrphanedFiles(
   rootDir: string,
   allFilePaths: string[],
@@ -121,6 +149,7 @@ export async function findOrphanedFiles(
 
   return allFilePaths
     .filter((f) => !f.endsWith(".md"))
+    .filter((f) => isOrphanCandidate(f.replace(/\\/g, "/")))
     .filter((f) => !linkedFiles.has(f.replace(/\\/g, "/")));
 }
 

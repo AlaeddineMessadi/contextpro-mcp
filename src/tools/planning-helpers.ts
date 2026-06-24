@@ -118,6 +118,20 @@ interface PlanningCandidateReasoning {
   reasons: string[];
 }
 
+function termMatches(term: string, queryTerms: Set<string>, lemmatizedQueryTerms: Set<string>): boolean {
+  if (queryTerms.has(term)) return true;
+  const lemma = lemmatize(term);
+  if (queryTerms.has(lemma) || lemmatizedQueryTerms.has(lemma)) return true;
+  // Bidirectional prefix check: "fee" matches "fees" and vice-versa. Handles cases where the
+  // lemmatizer's heuristic strips slightly differently than the user's spelling.
+  if (term.length >= 4) {
+    for (const q of queryTerms) {
+      if (q.length >= 4 && (term.startsWith(q) || q.startsWith(term))) return true;
+    }
+  }
+  return false;
+}
+
 function scorePlanningCandidate(
   candidate: PlanningFileCandidate,
   query: string,
@@ -130,16 +144,19 @@ function scorePlanningCandidate(
   const lemmatizedQueryTerms = new Set([...queryTerms].map(lemmatize));
 
   const basenameTerms = splitQueryTerms(basename(candidate.path).replace(/\.\w+$/, "")).filter((term) => !STOPWORD_VERBS.has(term));
-  const basenameOverlap = basenameTerms.filter((term) => queryTerms.has(term) || queryTerms.has(lemmatize(term))).length;
-  if (basenameOverlap > 0) reasons.push(`basename matches "${basenameTerms.filter((term) => queryTerms.has(term) || queryTerms.has(lemmatize(term))).join(",")}"`);
+  const basenameMatches = basenameTerms.filter((term) => termMatches(term, queryTerms, lemmatizedQueryTerms));
+  const basenameOverlap = basenameMatches.length;
+  if (basenameOverlap > 0) reasons.push(`basename matches "${basenameMatches.join(",")}"`);
 
   const dirTerms = pathSegments(candidate.path.replace(/[^/]+$/, "")).filter((term) => !STOPWORD_VERBS.has(term));
-  const dirOverlap = dirTerms.filter((term) => queryTerms.has(term) || lemmatizedQueryTerms.has(lemmatize(term))).length;
-  if (dirOverlap > 0) reasons.push(`directory matches "${dirTerms.filter((term) => queryTerms.has(term) || lemmatizedQueryTerms.has(lemmatize(term))).join(",")}"`);
+  const dirMatches = dirTerms.filter((term) => termMatches(term, queryTerms, lemmatizedQueryTerms));
+  const dirOverlap = dirMatches.length;
+  if (dirOverlap > 0) reasons.push(`directory matches "${dirMatches.join(",")}"`);
 
   const symbolTerms = splitQueryTerms(candidate.symbols.join(" ")).filter((term) => !STOPWORD_VERBS.has(term));
-  const symbolOverlap = symbolTerms.filter((term) => queryTerms.has(term) || queryTerms.has(lemmatize(term))).length;
-  if (symbolOverlap > 0) reasons.push(`symbols match "${symbolTerms.filter((term) => queryTerms.has(term) || queryTerms.has(lemmatize(term))).slice(0, 3).join(",")}"`);
+  const symbolMatches = symbolTerms.filter((term) => termMatches(term, queryTerms, lemmatizedQueryTerms));
+  const symbolOverlap = symbolMatches.length;
+  if (symbolOverlap > 0) reasons.push(`symbols match "${symbolMatches.slice(0, 3).join(",")}"`);
 
   if (codeChangeIntent) {
     if (isSourcePath(candidate.path)) adjusted += 0.18;
@@ -148,11 +165,15 @@ function scorePlanningCandidate(
     if (isDocumentationPath(candidate.path)) adjusted -= 0.42;
     if (isHubPath(candidate.path)) adjusted -= 0.3;
     if (candidate.symbols.length > 0) adjusted += 0.03;
-    adjusted += Math.min(0.12, basenameOverlap * 0.08);
-    adjusted += Math.min(0.14, symbolOverlap * 0.07);
-    adjusted += Math.min(0.16, dirOverlap * 0.10);
-    if (basenameOverlap > 0 && symbolOverlap > 0) adjusted += 0.04;
-    if (dirOverlap > 0 && symbolOverlap > 0) adjusted += 0.03;
+    adjusted += Math.min(0.16, basenameOverlap * 0.10);
+    adjusted += Math.min(0.18, symbolOverlap * 0.09);
+    // Directory-name match is the strongest signal that a file belongs to a feature folder
+    // (e.g., src/fees/* for a "fee model" task). Bump weight so it outranks pure semantic hits
+    // on unrelated files.
+    adjusted += Math.min(0.24, dirOverlap * 0.14);
+    if (basenameOverlap > 0 && symbolOverlap > 0) adjusted += 0.05;
+    if (dirOverlap > 0 && symbolOverlap > 0) adjusted += 0.05;
+    if (dirOverlap > 0 && basenameOverlap > 0) adjusted += 0.04;
   }
   if (exactIdentifierPaths.has(candidate.path)) {
     adjusted += 0.12;

@@ -135,8 +135,10 @@ export async function getBlastRadius(options: BlastRadiusOptions): Promise<strin
     for (const u of fileUsages) lines.push(`    L${u.line}: ${u.context}`);
   }
 
-  if (usages.length <= 1) {
-    lines.push(`\n⚠ LOW USAGE: This symbol is used only ${usages.length} time(s). Consider inlining if it's under 20 lines.`);
+  if (usages.length <= 2) {
+    lines.push(`\n⚠ LOW USAGE: This symbol is used only ${usages.length} time(s). If it's a short helper (under 20 lines), consider inlining at the call site.`);
+  } else if (usages.length <= 5) {
+    lines.push(`\n• Modest usage: ${usages.length} call sites. Safe to refactor; review each before signature changes.`);
   }
 
   return lines.join("\n");

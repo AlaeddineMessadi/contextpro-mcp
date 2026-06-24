@@ -274,10 +274,25 @@ export async function registerWorkspace(entry: ProjectConfig): Promise<void> {
   await writeFile(path, JSON.stringify(filtered, null, 2) + "\n", "utf-8");
 }
 
+const KNOWN_CLI_SUBCOMMANDS = new Set([
+  "init", "skeleton", "tree", "doctor", "reindex", "status", "search", "help",
+  "version", "--help", "-h", "--version", "-v", "list", "ls",
+]);
+
+function looksLikeCliFlag(projectId: string): boolean {
+  if (!projectId) return true;
+  if (projectId.startsWith("-")) return true;
+  if (KNOWN_CLI_SUBCOMMANDS.has(projectId.toLowerCase())) return true;
+  return false;
+}
+
 export async function listRegisteredWorkspaces(clientId?: string): Promise<WorkspaceRegistryEntry[]> {
   const items = await readRegistryFile<WorkspaceRegistryEntry[]>(REGISTRY_FILE, []);
-  if (!clientId) return items;
-  return items.filter((item) => item.clientId === clientId);
+  // Filter out phantom projects created by accidental CLI invocations like
+  // `npx contextpro --help` or `npx contextpro reindex` outside any project.
+  const filtered = items.filter((item) => !looksLikeCliFlag(item.projectId ?? ""));
+  if (!clientId) return filtered;
+  return filtered.filter((item) => item.clientId === clientId);
 }
 
 export async function createPromotedPattern(input: {

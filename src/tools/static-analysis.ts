@@ -203,6 +203,7 @@ async function checkFileSkill(filePath: string, rootDir: string): Promise<SkillS
     const content = await readFile(filePath, "utf-8");
     const lines = content.split("\n");
     const ext = extname(filePath);
+    const isPython = ext === ".py";
 
     if (lines.length > 1000) {
       issues.push(`File too long: ${lines.length} lines (max 1000)`);
@@ -213,7 +214,8 @@ async function checkFileSkill(filePath: string, rootDir: string): Promise<SkillS
     }
 
     const commentPatterns = COMMENT_PATTERNS[ext];
-    if (commentPatterns && lines.length > 2) {
+    if (commentPatterns && lines.length > 2 && !isPython) {
+      // JS/TS/Rust/Go style inline-comment scan. Python uses # everywhere by design — skip.
       let inBlockComment = false;
       for (let i = 2; i < lines.length; i++) {
         const line = lines[i];
@@ -227,7 +229,7 @@ async function checkFileSkill(filePath: string, rootDir: string): Promise<SkillS
           score -= 2;
           continue;
         }
-        if (/\S.*\/\/\s*\S/.test(line) && !/https?:\/\//.test(line) && !/^\s*\/\//.test(line)) {
+        if (/\S.*\/\/\s*\S/.test(line) && !/https?:\/\//.test(line) && !/^\s*\/\//.test(line) && !/eslint-disable|@ts-/.test(line)) {
           issues.push(`L${i + 1}: trailing inline comment`);
           score -= 2;
         }
@@ -252,9 +254,13 @@ async function checkFileSkill(filePath: string, rootDir: string): Promise<SkillS
     }
 
     if (commentPatterns && lines.length >= 2) {
-      const hasHeader = /^\s*(\/\/|#|--)/.test(lines[0]);
+      const hasHeader = headerLooksValid(lines, isPython);
       if (!hasHeader) {
-        issues.push("Missing 2-line header comment");
+        if (isPython) {
+          issues.push("Missing module-level docstring (PEP 257) or 2-line # header comment");
+        } else {
+          issues.push("Missing 2-line header comment");
+        }
         score -= 15;
       }
     }
@@ -264,6 +270,29 @@ async function checkFileSkill(filePath: string, rootDir: string): Promise<SkillS
   }
 
   return { file: relPath, score: Math.max(0, score), issues };
+}
+
+function headerLooksValid(lines: string[], isPython: boolean): boolean {
+  if (isPython) {
+    // Skip shebang and encoding cookie lines (PEP 263).
+    let i = 0;
+    if (i < lines.length && /^#!/.test(lines[i])) i++;
+    if (i < lines.length && /coding[:=]\s*[-\w.]+/.test(lines[i])) i++;
+    // Skip blank lines and comments.
+    while (i < lines.length && (lines[i].trim().length === 0 || /^\s*#/.test(lines[i]))) i++;
+    if (i >= lines.length) return false;
+    const stripped = lines[i].trim();
+    // PEP 257 module docstring: """..."""  or  '''...'''  (single- or triple-quoted, any quote style).
+    if (/^("""|''')/.test(stripped)) return true;
+    if (/^(r|u|b|rb|br)?"/.test(stripped) || /^(r|u|b|rb|br)?'/.test(stripped)) {
+      // single-line string literal at top of file is a valid (if unusual) module docstring.
+      return true;
+    }
+    // Fall back to allowing 2-line # header.
+    return /^\s*#/.test(lines[0]);
+  }
+  // JS/TS/Rust/Go/etc.: require a leading // or # or -- on line 1.
+  return /^\s*(\/\/|#|--)/.test(lines[0]);
 }
 
 export async function runStaticAnalysis(options: StaticAnalysisOptions): Promise<string> {

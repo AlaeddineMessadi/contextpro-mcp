@@ -308,12 +308,43 @@ function qualityLabel(topScore: number): string {
 }
 
 function buildQualityBanner(data: UnifiedSearchData): string {
-  const topFileScore = data.files?.results[0]?.score ?? 0;
-  const topIdScore = data.identifiers?.results[0]?.score ?? 0;
-  const topScore = Math.max(topFileScore, topIdScore);
+  const topFile = data.files?.results[0];
+  const topId = data.identifiers?.results[0];
+  // Pick the better hit overall and reason from BOTH its components when computing the label.
+  // If either component is essentially zero, dampen the rolled-up label so "Confidence: high (100%)"
+  // can't appear on a pure-keyword zero-semantic match.
+  let topScore = 0;
+  let topSemantic = 0;
+  let topKeyword = 0;
+  if (topFile && (topFile.score ?? 0) >= (topId?.score ?? 0)) {
+    topScore = topFile.score;
+    topSemantic = topFile.semanticScore;
+    topKeyword = topFile.keywordScore;
+  } else if (topId) {
+    topScore = topId.score;
+    topSemantic = topId.semanticScore;
+    topKeyword = topId.keywordScore;
+  } else if (topFile) {
+    topScore = topFile.score;
+    topSemantic = topFile.semanticScore;
+    topKeyword = topFile.keywordScore;
+  }
   if (topScore === 0) return "";
-  const label = qualityLabel(topScore);
-  return `Confidence: ${label} (top score: ${Math.round(topScore)}%)\n\n`;
+
+  // When one component is essentially zero, the rolled-up score is misleading. Cap to "medium"
+  // and append a hint that the user should look at component scores.
+  const onlyKeyword = topSemantic < 5 && topKeyword >= 5;
+  const onlySemantic = topKeyword < 5 && topSemantic >= 5;
+  let label = qualityLabel(topScore);
+  let suffix = "";
+  if (onlyKeyword) {
+    label = label === "high" ? "medium" : label;
+    suffix = ` — keyword-only (semantic=0); check matchedSymbols`;
+  } else if (onlySemantic) {
+    label = label === "high" ? "medium" : label;
+    suffix = ` — semantic-only (keyword=0); query may be too abstract`;
+  }
+  return `Confidence: ${label} (top score: ${Math.round(topScore)}%, semantic=${Math.round(topSemantic)}%, keyword=${Math.round(topKeyword)}%)${suffix}\n\n`;
 }
 
 export async function unifiedSearch(options: UnifiedSearchOptions): Promise<string> {
