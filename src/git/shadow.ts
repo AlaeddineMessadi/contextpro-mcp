@@ -1,8 +1,9 @@
 // Shadow restore-point manager for safe AI change tracking
 // Backups files via JSON manifest before edits; no real git history pollution
 
-import { readFile, writeFile, mkdir } from "fs/promises";
+import { readFile, writeFile, mkdir, rename, unlink } from "fs/promises";
 import { join, dirname } from "path";
+import { createHash } from "crypto";
 import { resolveProjectPath, toProjectRelativePath } from "../core/path-guard.js";
 
 const DATA_DIR = ".contextpro/backups";
@@ -12,6 +13,7 @@ export interface RestorePoint {
   timestamp: number;
   files: string[];
   message: string;
+  fileHashes?: Record<string, string>;
 }
 
 async function ensureDataDir(rootDir: string): Promise<string> {
@@ -20,22 +22,62 @@ async function ensureDataDir(rootDir: string): Promise<string> {
   return dataPath;
 }
 
+function hashPath(relPath: string): string {
+  return createHash("sha256").update(relPath).digest("hex").slice(0, 32);
+}
+
+const manifestMutex = new Map<string, Promise<void>>();
+
+async function withManifestLock<T>(rootDir: string, fn: () => Promise<T>): Promise<T> {
+  const key = resolveProjectPath(rootDir, ".", "rootDir");
+  const previous = manifestMutex.get(key) ?? Promise.resolve();
+  let release: () => void = () => undefined;
+  const next = new Promise<void>((resolve) => { release = resolve; });
+  manifestMutex.set(key, previous.then(() => next));
+  await previous;
+  try {
+    return await fn();
+  } finally {
+    release();
+    if (manifestMutex.get(key) === previous.then(() => next)) {
+      manifestMutex.delete(key);
+    }
+  }
+}
+
 async function loadManifest(rootDir: string): Promise<RestorePoint[]> {
   const manifestPath = join(rootDir, DATA_DIR, "restore-points.json");
   try {
-    return JSON.parse(await readFile(manifestPath, "utf-8"));
+    const raw = await readFile(manifestPath, "utf-8");
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) {
+      process.stderr.write(`[contextpro/shadow] manifest is not an array; treating as empty\n`);
+      return [];
+    }
+    return parsed.filter((entry) => entry && typeof entry === "object" && typeof entry.id === "string");
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
       const message = error instanceof Error ? error.message : String(error);
-      process.stderr.write(`[contextpro/shadow] manifest read failed: ${message}\n`);
+      process.stderr.write(`[contextpro/shadow] manifest read failed (will treat as empty): ${message}\n`);
     }
     return [];
   }
 }
 
-async function saveManifest(rootDir: string, points: RestorePoint[]): Promise<void> {
+async function saveManifestAtomic(rootDir: string, points: RestorePoint[]): Promise<void> {
   const dataPath = await ensureDataDir(rootDir);
-  await writeFile(join(dataPath, "restore-points.json"), JSON.stringify(points, null, 2));
+  const target = join(dataPath, "restore-points.json");
+  const tmp = `${target}.${process.pid}.${Date.now()}.tmp`;
+  await writeFile(tmp, JSON.stringify(points, null, 2));
+  await rename(tmp, target).catch(async (err) => {
+    // On Windows rename can fail when the target exists in some FS scenarios; fall back to unlink+rename.
+    if ((err as NodeJS.ErrnoException).code === "EEXIST" || (err as NodeJS.ErrnoException).code === "EPERM") {
+      await unlink(target).catch(() => undefined);
+      await rename(tmp, target);
+    } else {
+      throw err;
+    }
+  });
 }
 
 export async function createRestorePoint(rootDir: string, files: string[], message: string): Promise<RestorePoint> {
@@ -44,13 +86,19 @@ export async function createRestorePoint(rootDir: string, files: string[], messa
   const backupDir = join(dataPath, "backups", id);
   await mkdir(backupDir, { recursive: true });
   const safeFiles = files.map((file) => toProjectRelativePath(rootDir, file, "restore file"));
+  const fileHashes: Record<string, string> = {};
 
   for (const file of safeFiles) {
     const fullPath = resolveProjectPath(rootDir, file, "restore file");
     try {
       const content = await readFile(fullPath, "utf-8");
-      const backupPath = join(backupDir, file.replace(/[\\/]/g, "__"));
+      // Hash-based backup filename guarantees uniqueness regardless of how the original relative
+      // path looks (slashes, dots, very long path segments). Maps stored in fileHashes for
+      // restoreFromPoint to resolve.
+      const slug = hashPath(file);
+      const backupPath = join(backupDir, `${slug}.bak`);
       await writeFile(backupPath, content);
+      fileHashes[file] = slug;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
         const message = error instanceof Error ? error.message : String(error);
@@ -59,11 +107,13 @@ export async function createRestorePoint(rootDir: string, files: string[], messa
     }
   }
 
-  const point: RestorePoint = { id, timestamp: Date.now(), files: safeFiles, message };
-  const manifest = await loadManifest(rootDir);
-  manifest.push(point);
-  if (manifest.length > 100) manifest.splice(0, manifest.length - 100);
-  await saveManifest(rootDir, manifest);
+  const point: RestorePoint = { id, timestamp: Date.now(), files: safeFiles, message, fileHashes };
+  await withManifestLock(rootDir, async () => {
+    const manifest = await loadManifest(rootDir);
+    manifest.push(point);
+    if (manifest.length > 100) manifest.splice(0, manifest.length - 100);
+    await saveManifestAtomic(rootDir, manifest);
+  });
 
   return point;
 }
@@ -78,15 +128,30 @@ export async function restorePoint(rootDir: string, pointId: string): Promise<st
 
   for (const file of point.files) {
     const targetPath = resolveProjectPath(rootDir, file, "restore file");
-    const backupPath = join(backupDir, file.replace(/[\\/]/g, "__"));
-    try {
-      const content = await readFile(backupPath, "utf-8");
-      await mkdir(dirname(targetPath), { recursive: true });
-      await writeFile(targetPath, content);
-      restoredFiles.push(file);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      process.stderr.write(`[contextpro/shadow] restore failed for ${file}: ${message}\n`);
+    // Prefer the hash-based backup filename when the manifest entry carries one. Fall back to
+    // the legacy `path.replace(/[\\/]/g, "__")` slug for restore points predating the hash scheme.
+    const newSlug = point.fileHashes?.[file];
+    const candidates = newSlug
+      ? [join(backupDir, `${newSlug}.bak`), join(backupDir, file.replace(/[\\/]/g, "__"))]
+      : [join(backupDir, file.replace(/[\\/]/g, "__")), join(backupDir, `${hashPath(file)}.bak`)];
+    let restored = false;
+    for (const backupPath of candidates) {
+      try {
+        const content = await readFile(backupPath, "utf-8");
+        await mkdir(dirname(targetPath), { recursive: true });
+        await writeFile(targetPath, content);
+        restoredFiles.push(file);
+        restored = true;
+        break;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+          const message = error instanceof Error ? error.message : String(error);
+          process.stderr.write(`[contextpro/shadow] restore failed for ${file}: ${message}\n`);
+        }
+      }
+    }
+    if (!restored) {
+      process.stderr.write(`[contextpro/shadow] restore failed for ${file}: backup not found in any expected location\n`);
     }
   }
 

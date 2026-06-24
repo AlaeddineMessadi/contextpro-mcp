@@ -64,8 +64,15 @@ function shouldSkipExtension(path: string): boolean {
 
 function compilePattern(options: GrepOptions): RegExp {
   const flags = options.caseSensitive ? "g" : "gi";
-  const source = options.regex ? options.pattern : escapeRegex(options.pattern);
-  return new RegExp(source, flags);
+  if (options.regex) {
+    // Reject control characters in user-supplied regex sources. They can produce confusing
+    // behavior or trip ReDoS in some V8 versions; legitimate code searches never need them.
+    if (/[\x00-\x08\x0E-\x1F]/.test(options.pattern)) {
+      throw new Error("regex pattern contains control characters (NULL or similar); reject for safety");
+    }
+    return new RegExp(options.pattern, flags);
+  }
+  return new RegExp(escapeRegex(options.pattern), flags);
 }
 
 const MAX_GLOB_EXPANSION = 1024;

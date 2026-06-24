@@ -156,6 +156,14 @@ function formatMaybeJson(format: OutputFormat | undefined, value: unknown, textR
   return textRenderer();
 }
 
+function weightForFileRole(path: string): number {
+  if (isTestFile(path)) return 0.85;
+  if (/\.(json|toml|yaml|yml|ini|cfg)$/i.test(path)) return 0.65;
+  if (/(^|\/)(README|TODO|CHANGELOG|CONTRIBUTING)(\.md)?$/i.test(path)) return 0.6;
+  if (/(^|\/)(src|app|lib|packages)\//.test(path)) return 0.95;
+  return 0.75;
+}
+
 async function readPackageScripts(rootDir: string): Promise<Record<string, string>> {
   try {
     const raw = await readFile(join(rootDir, "package.json"), "utf-8");
@@ -1049,7 +1057,7 @@ export async function recordTaskMemory(options: MemoryRecordTaskOptions): Promis
       source: taskMemoryId,
       target: fileNodeId,
       relation: "references",
-      weight: 0.9,
+      weight: weightForFileRole(file),
     });
     linkedNodes.push(fileNodeId);
   }

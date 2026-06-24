@@ -5,7 +5,7 @@ import { semanticCodeSearch, semanticCodeSearchResults, invalidateSearchCache, t
 import { semanticIdentifierSearch, semanticIdentifierSearchResults, invalidateIdentifierSearchCache, type SemanticIdentifierSearchOptions, type SemanticIdentifierSearchData } from "./semantic-identifiers.js";
 import { quickRefresh } from "./reindex.js";
 import { loadProjectConfig } from "../core/project-config.js";
-import { persistArtifact } from "../core/artifacts.js";
+import { persistArtifact, canonicalArtifactKey } from "../core/artifacts.js";
 import { buildFreshnessMetadata, buildTrustMetadata, getIndexState, type FreshnessMetadata, type TrustMetadata } from "../core/context-metadata.js";
 import { getDB } from "../core/db.js";
 import type { SearchResult } from "../core/embeddings.js";
@@ -219,6 +219,11 @@ export async function unifiedSearchData(options: UnifiedSearchOptions): Promise<
       includeKinds: options.includeKinds,
       semanticWeight: options.semanticWeight,
       keywordWeight: options.keywordWeight,
+      minSemanticScore: options.minSemanticScore,
+      minKeywordScore: options.minKeywordScore,
+      minCombinedScore: options.minCombinedScore,
+      requireKeywordMatch: options.requireKeywordMatch,
+      requireSemanticMatch: options.requireSemanticMatch,
     });
   } else {
     [files, identifiers] = await Promise.all([
@@ -243,6 +248,11 @@ export async function unifiedSearchData(options: UnifiedSearchOptions): Promise<
         includeKinds: options.includeKinds,
         semanticWeight: options.semanticWeight,
         keywordWeight: options.keywordWeight,
+        minSemanticScore: options.minSemanticScore,
+        minKeywordScore: options.minKeywordScore,
+        minCombinedScore: options.minCombinedScore,
+        requireKeywordMatch: options.requireKeywordMatch,
+        requireSemanticMatch: options.requireSemanticMatch,
       }),
     ]);
   }
@@ -272,7 +282,7 @@ export async function unifiedSearchData(options: UnifiedSearchOptions): Promise<
     artifact = await persistArtifact({
       rootDir: options.rootDir,
       kind: "search",
-      key: JSON.stringify({
+      key: canonicalArtifactKey({
         query: options.query,
         mode,
         topK: options.topK ?? null,

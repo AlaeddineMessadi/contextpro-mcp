@@ -136,7 +136,18 @@ export async function getBlastRadius(options: BlastRadiusOptions): Promise<strin
   }
 
   if (usages.length <= 2) {
-    lines.push(`\n⚠ LOW USAGE: This symbol is used only ${usages.length} time(s). If it's a short helper (under 20 lines), consider inlining at the call site.`);
+    // Look up the symbol's actual line span so we only suggest inlining for genuinely short helpers.
+    const symbols = db.searchSymbolsByName(options.symbolName).filter((s) => s.name === options.symbolName);
+    const lineSpan = symbols.length > 0
+      ? Math.max(0, (symbols[0].line_end ?? symbols[0].line_start) - symbols[0].line_start + 1)
+      : null;
+    if (lineSpan !== null && lineSpan <= 20) {
+      lines.push(`\n⚠ LOW USAGE: only ${usages.length} call site(s), and the definition is ${lineSpan} lines — a clear inline candidate.`);
+    } else if (lineSpan !== null) {
+      lines.push(`\n⚠ LOW USAGE: only ${usages.length} call site(s), but the definition is ${lineSpan} lines. Probably worth keeping as a function, but review the abstraction.`);
+    } else {
+      lines.push(`\n⚠ LOW USAGE: ${usages.length} call site(s). Definition size unknown; verify before deciding.`);
+    }
   } else if (usages.length <= 5) {
     lines.push(`\n• Modest usage: ${usages.length} call sites. Safe to refactor; review each before signature changes.`);
   }

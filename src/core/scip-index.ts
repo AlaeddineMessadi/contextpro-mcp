@@ -291,7 +291,15 @@ export function normalizeScipIndex(raw: unknown, sourcePath: string): Normalized
 export async function importScipIndex(rootDir: string, indexPath: string): Promise<ScipImportResult> {
   const sourceFullPath = resolveProjectPath(rootDir, indexPath, "index_path");
   const sourcePath = toProjectRelativePath(rootDir, sourceFullPath, "index_path");
-  const raw = JSON.parse(await readFile(sourceFullPath, "utf-8")) as unknown;
+  let raw: unknown;
+  try {
+    raw = JSON.parse(await readFile(sourceFullPath, "utf-8"));
+  } catch (error) {
+    if (error instanceof SyntaxError) {
+      throw new Error(`scip_import: failed to parse "${sourcePath}" as JSON: ${error.message}. Re-export the SCIP index and try again.`);
+    }
+    throw error;
+  }
   const index = normalizeScipIndex(raw, sourcePath);
   const cachePath = resolveProjectPath(rootDir, DEFAULT_SCIP_CACHE_PATH, "scip cache");
   await mkdir(dirname(cachePath), { recursive: true });
@@ -310,6 +318,10 @@ export async function loadScipIndex(rootDir: string, indexPath?: string): Promis
       const raw = JSON.parse(await readFile(fullPath, "utf-8")) as unknown;
       return normalizeScipIndex(raw, sourcePath);
     } catch (error) {
+      if (error instanceof SyntaxError) {
+        process.stderr.write(`[contextpro/scip] cache corrupt at "${candidate}": ${error.message}. Re-import via scip_import.\n`);
+        return null;
+      }
       const code = (error as NodeJS.ErrnoException).code;
       if (code && code !== "ENOENT") throw error;
     }

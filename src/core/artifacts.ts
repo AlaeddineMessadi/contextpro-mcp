@@ -146,6 +146,33 @@ async function loadManifestWithRepair(rootDir: string): Promise<ArtifactManifest
   };
 }
 
+/**
+ * Canonical JSON serializer used to build artifact keys. Sorts object keys, drops empty arrays
+ * and null/undefined values so that `includeKinds: []`, `includeKinds: undefined`, and missing
+ * fields all produce the same key (and therefore the same cached artifact).
+ */
+export function canonicalArtifactKey(value: unknown): string {
+  const normalize = (v: unknown): unknown => {
+    if (v === undefined || v === null) return undefined;
+    if (Array.isArray(v)) {
+      const arr = v.map(normalize).filter((item) => item !== undefined);
+      return arr.length === 0 ? undefined : arr;
+    }
+    if (typeof v === "object") {
+      const obj: Record<string, unknown> = {};
+      const keys = Object.keys(v as Record<string, unknown>).sort();
+      for (const k of keys) {
+        const nv = normalize((v as Record<string, unknown>)[k]);
+        if (nv !== undefined) obj[k] = nv;
+      }
+      return Object.keys(obj).length === 0 ? undefined : obj;
+    }
+    return v;
+  };
+  const normalized = normalize(value);
+  return JSON.stringify(normalized ?? {});
+}
+
 export async function persistArtifact<T>(options: PersistArtifactOptions<T>): Promise<ArtifactReference> {
   const baseDir = artifactBaseDir(options.rootDir);
   const kindDir = join(baseDir, options.kind);

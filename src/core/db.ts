@@ -866,6 +866,32 @@ export class ContextPlusDB {
     this.db.prepare("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)").run(key, value);
   }
 
+  /**
+   * Atomic compare-and-set on the meta table. Returns true if the previous value matched
+   * `expected` and `next` was written; false otherwise. Both reads and writes happen inside
+   * an IMMEDIATE transaction so concurrent callers cannot race past the guard.
+   */
+  compareAndSetMeta(key: string, expected: string | null, next: string | null, extra?: Array<[string, string]>): boolean {
+    const txn = this.db.transaction(() => {
+      const row = this.db.prepare("SELECT value FROM meta WHERE key = ?").get(key) as { value: string } | undefined;
+      const current = row?.value ?? null;
+      if (current !== expected) return false;
+      if (next === null) {
+        this.db.prepare("DELETE FROM meta WHERE key = ?").run(key);
+      } else {
+        this.db.prepare("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)").run(key, next);
+      }
+      if (extra) {
+        const insert = this.db.prepare("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)");
+        for (const [k, v] of extra) insert.run(k, v);
+      }
+      return true;
+    });
+    // BEGIN IMMEDIATE acquires the write lock up-front so the SELECT inside the transaction
+    // can't be raced by a concurrent SELECT-then-INSERT from another tool call.
+    return txn.immediate();
+  }
+
   setMetaBatch(entries: Array<[string, string]>): void {
     const insert = this.db.prepare("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)");
     const tx = this.db.transaction((rows: Array<[string, string]>) => {

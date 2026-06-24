@@ -277,7 +277,7 @@ export function registerTools(
     "Search the codebase by MEANING. Modes: 'file' searches file headers/symbols, 'identifier' searches function/class definitions with call chains, " +
     "'hybrid' (default) runs both and returns combined results. Uses embeddings for semantic matching plus keyword overlap scoring.",
     {
-      query: z.string().min(1).describe("Natural language description of what you're looking for."),
+      query: z.string().min(1).max(8000).describe("Natural language description of what you're looking for."),
       mode: z.enum(["file", "identifier", "hybrid"]).optional().describe("Search mode: 'file' for files, 'identifier' for functions/classes, 'hybrid' for both. Default: hybrid."),
       preset: z.enum(["fast", "balanced", "exhaustive", "semantic_only", "keyword_only"]).optional().describe("Ranking preset. fast favors cheap lexical recall, balanced is default, exhaustive returns a wider set, semantic_only ignores keyword overlap (pure embedding similarity), keyword_only ignores embedding similarity (pure lexical match)."),
       format: z.enum(["text", "json"]).optional().describe("Return plain text or structured JSON. Default: text."),
@@ -487,8 +487,8 @@ export function registerTools(
     "If a node with the same label and type exists, it updates content. Returns the node ID for use in memory_link.",
     {
       type: z.enum(["concept", "file", "symbol", "note"]).describe("Node type: concept (abstract ideas), file (source files), symbol (functions/classes), note (free-form)."),
-      label: z.string().min(1).describe("Short identifier for the node. Used for deduplication with type."),
-      content: z.string().min(1).describe("Detailed content for the node. Used for embedding generation."),
+      label: z.string().min(1).max(500).describe("Short identifier for the node. Used for deduplication with type."),
+      content: z.string().min(1).max(16000).describe("Detailed content for the node. Used for embedding generation."),
       metadata: z.record(z.string()).optional().describe("Optional key-value metadata pairs."),
       scope: z.enum(["session", "project", "client", "global"]).optional().describe("Memory scope. Defaults to project."),
     },
@@ -524,7 +524,7 @@ export function registerTools(
     "Search the memory graph by meaning with graph traversal. Finds direct matches via embedding similarity, " +
     "then traverses neighbors to discover linked context. Returns hits and graph-connected neighbors with relevance scores.",
     {
-      query: z.string().min(1).describe("Natural language query to search the memory graph."),
+      query: z.string().min(1).max(8000).describe("Natural language query to search the memory graph."),
       max_depth: z.number().optional().describe("How many hops to traverse from direct matches. Default: 1."),
       top_k: z.number().optional().describe("Number of direct matches to return. Default: 5."),
       scope: z.enum(["session", "project", "client", "global"]).optional().describe("Retrieval scope. Defaults to project."),
@@ -917,7 +917,7 @@ export function registerTools(
     "decision_brief",
     "Compress a subsystem or task into a short decision-oriented brief with ranked files, symbols, tests, hubs, and memory.",
     {
-      query: z.string().min(1).describe("Subsystem, area, or task query."),
+      query: z.string().min(1).max(8000).describe("Subsystem, area, or task query."),
       include_hubs: z.boolean().optional().describe("Include matching hubs. Default: true."),
       include_memory: z.boolean().optional().describe("Include project memory. Default: true."),
       include_tests: z.boolean().optional().describe("Include nearby tests. Default: true."),

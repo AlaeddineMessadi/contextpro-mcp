@@ -43,6 +43,11 @@ export interface SemanticIdentifierSearchOptions {
   includeKinds?: string[];
   semanticWeight?: number;
   keywordWeight?: number;
+  minSemanticScore?: number;
+  minKeywordScore?: number;
+  minCombinedScore?: number;
+  requireKeywordMatch?: boolean;
+  requireSemanticMatch?: boolean;
 }
 
 export interface IdentifierCallSiteResult {
@@ -489,6 +494,10 @@ export async function semanticIdentifierSearchResults(options: SemanticIdentifie
   const identifierHints = extractIdentifierHints(options.query);
 
   const scored: RankedIdentifier[] = [];
+  const minSem = options.minSemanticScore !== undefined ? (options.minSemanticScore > 1 ? options.minSemanticScore / 100 : options.minSemanticScore) : undefined;
+  const minKw = options.minKeywordScore !== undefined ? (options.minKeywordScore > 1 ? options.minKeywordScore / 100 : options.minKeywordScore) : undefined;
+  const minCombined = options.minCombinedScore !== undefined ? (options.minCombinedScore > 1 ? options.minCombinedScore / 100 : options.minCombinedScore) : undefined;
+
   for (let i = 0; i < index.docs.length; i++) {
     const doc = index.docs[i];
     if (includeKinds && !includeKinds.has(doc.kind.toLowerCase())) continue;
@@ -501,6 +510,13 @@ export async function semanticIdentifierSearchResults(options: SemanticIdentifie
       ? clamp01((semanticWeight * semanticScore + keywordWeight * keywordScore) / totalWeight)
       : semanticScore;
     const boostedScore = clamp01(score + exactIdentifierBoost);
+
+    // Apply hard filters consistent with the file-search side.
+    if (options.requireSemanticMatch && semanticScore <= 0) continue;
+    if (options.requireKeywordMatch && keywordScore <= 0) continue;
+    if (minSem !== undefined && semanticScore < minSem) continue;
+    if (minKw !== undefined && keywordScore < minKw) continue;
+    if (minCombined !== undefined && boostedScore < minCombined) continue;
 
     scored.push({
       doc,

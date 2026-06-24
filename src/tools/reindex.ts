@@ -224,21 +224,54 @@ export async function waitForIndexingCompletion(
 export async function reindex(options: ReindexOptions): Promise<string> {
   const start = Date.now();
   const db = await getDB(options.rootDir);
-  if (db.getMeta(INDEX_STATUS_KEY) === INDEXING_STATUS) {
-    const wait = await waitForIndexingCompletion(options.rootDir, { timeoutMs: 60_000 });
-    if (wait.timedOut) {
-      return "Reindex skipped: another reindex is already in progress and did not finish within 60s.";
+  // Atomic check-and-set so two parallel reindex calls don't race past the guard.
+  const acquired = db.compareAndSetMeta(INDEX_STATUS_KEY, IDLE_STATUS, INDEXING_STATUS, [
+    [INDEX_STARTED_AT_KEY, String(Date.now())],
+    [INDEX_TARGET_PATH_KEY, options.targetPath ?? ""],
+    [LAST_INDEX_ERROR_KEY, ""],
+  ]);
+  if (!acquired) {
+    const current = db.getMeta(INDEX_STATUS_KEY);
+    if (current === INDEXING_STATUS) {
+      const wait = await waitForIndexingCompletion(options.rootDir, { timeoutMs: 60_000 });
+      if (wait.timedOut) {
+        return "Reindex skipped: another reindex is already in progress and did not finish within 60s.";
+      }
+      // Retry the acquisition once the other reindex finishes.
+      const retried = db.compareAndSetMeta(INDEX_STATUS_KEY, IDLE_STATUS, INDEXING_STATUS, [
+        [INDEX_STARTED_AT_KEY, String(Date.now())],
+        [INDEX_TARGET_PATH_KEY, options.targetPath ?? ""],
+        [LAST_INDEX_ERROR_KEY, ""],
+      ]);
+      if (!retried) {
+        return "Reindex skipped: index lock could not be acquired after the prior reindex finished. Try again in a moment.";
+      }
+    } else {
+      // The index was in an unexpected state (e.g., "stale" from a prior crash). Force it
+      // forward — the existing setIndexStatus path will still log the error if anything goes wrong.
+      setIndexStatus(db, INDEXING_STATUS, { targetPath: options.targetPath });
     }
   }
-  setIndexStatus(db, INDEXING_STATUS, { targetPath: options.targetPath });
   try {
     const entries = await walkDirectory({ rootDir: options.rootDir, targetPath: options.targetPath, depthLimit: 0 });
     if (options.targetPath && entries.length === 0) {
       setIndexStatus(db, IDLE_STATUS, { targetPath: options.targetPath, error: null });
       return `Reindex: target_path "${options.targetPath}" matched no files (path may not exist, or is fully gitignored). No-op.`;
     }
+    // GUARD: if the unscoped reindex walks 0 source files but the DB already contains files,
+    // this almost certainly means the user reindexed from the wrong cwd or the project moved.
+    // Require force=true to delete previously indexed files in that case.
     const files = entries.filter((e) => !e.isDirectory);
     const sourceFiles = files.filter((file) => isSupportedFile(file.path));
+    const previouslyIndexed = db.getAllFiles().length;
+    if (!options.targetPath && sourceFiles.length === 0 && previouslyIndexed > 0 && !options.force) {
+      setIndexStatus(db, IDLE_STATUS, { targetPath: options.targetPath, error: null });
+      return (
+        `Reindex: walker found 0 source files but ${previouslyIndexed} files are already indexed. ` +
+        `Refusing to delete the existing index. If the project moved or files were truly removed, ` +
+        `pass force: true.`
+      );
+    }
     const currentPaths = new Set(sourceFiles.map((f) => f.relativePath));
     const currentHashes = new Map<string, string>();
     let totalSymbols = 0;
@@ -249,7 +282,36 @@ export async function reindex(options: ReindexOptions): Promise<string> {
 
     for (const file of sourceFiles) {
       try {
-        const content = await readFile(file.path, "utf-8");
+        // Hard size cap to defend against checked-in minified bundles and other megabyte-scale
+        // pseudo-source files. Default 5MB; env-var override for projects that genuinely need
+        // a higher cap.
+        const sizeCapEnv = parseInt(process.env.CONTEXTPRO_MAX_FILE_SIZE ?? "", 10);
+        const sizeCap = Number.isFinite(sizeCapEnv) && sizeCapEnv > 0 ? sizeCapEnv : 5 * 1024 * 1024;
+        const fileStats = await stat(file.path).catch(() => null);
+        if (fileStats && fileStats.size > sizeCap) {
+          process.stderr.write(`[contextpro/reindex] skipping oversized file (${(fileStats.size / 1024 / 1024).toFixed(2)} MB > ${(sizeCap / 1024 / 1024).toFixed(2)} MB cap): ${file.relativePath}\n`);
+          currentHashes.set(file.relativePath, hashContent(`oversize:${file.relativePath}:${fileStats.size}`));
+          skipped++;
+          continue;
+        }
+        // Sniff the first 8KB for null bytes before reading as UTF-8. Files like images or
+        // compiled binaries renamed with a supported extension would otherwise crash readFile
+        // and leave currentHashes without an entry — making the file look "removed" on next
+        // reindex even though it still exists on disk.
+        const buf = await readFile(file.path);
+        const sniff = buf.subarray(0, Math.min(buf.length, 8192));
+        let looksBinary = false;
+        for (let i = 0; i < sniff.length; i++) {
+          if (sniff[i] === 0) { looksBinary = true; break; }
+        }
+        if (looksBinary) {
+          process.stderr.write(`[contextpro/reindex] skipping binary file: ${file.relativePath}\n`);
+          // Still mark the path as "current" so it isn't deleted from the index next pass.
+          currentHashes.set(file.relativePath, hashContent(`binary:${file.relativePath}:${buf.length}`));
+          skipped++;
+          continue;
+        }
+        const content = buf.toString("utf-8");
         const hash = hashContent(content);
         currentHashes.set(file.relativePath, hash);
 
