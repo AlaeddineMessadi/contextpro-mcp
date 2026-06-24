@@ -56,14 +56,12 @@ Canonical prefix is `CONTEXTPRO_*` (since 1.2.0). Legacy `CONTEXTPLUS_*` names c
 
 | Variable                                | Recommended          | Description                                                      |
 | --------------------------------------- | -------------------- | ---------------------------------------------------------------- |
-| `CONTEXTPRO_EMBED_PROVIDER`             | `ollama`             | `ollama`, `openai`, or any OpenAI-compatible alias (`openrouter`, `groq`, `vllm`, …) |
-| `CONTEXTPRO_CHAT_PROVIDER`              | (= embed provider)   | Override the chat backend independently of embeddings            |
-| `OLLAMA_EMBED_MODEL`                    | `nomic-embed-text:latest` | Ollama embedding model name                                     |
-| `OLLAMA_CHAT_MODEL`                     | `gemma4:12b`         | Ollama chat model for cluster labeling and hub name derivation   |
-| `CONTEXTPRO_OPENAI_API_KEY`            | (none)               | API key for the OpenAI-compatible path                            |
-| `CONTEXTPRO_OPENAI_BASE_URL`           | `https://api.openai.com/v1` | Endpoint base URL — point at any OpenAI-compatible provider |
-| `CONTEXTPRO_OPENAI_EMBED_MODEL`        | `text-embedding-3-small` | Embedding model for the OpenAI path                         |
-| `CONTEXTPRO_OPENAI_CHAT_MODEL`         | `gpt-4o-mini`        | Chat model for the OpenAI path                                   |
+| `CONTEXTPRO_PROVIDER`                   | `ollama`             | `ollama`, `openai`, or any OpenAI-compatible alias (`openrouter`, `groq`, `vllm`, …) |
+| `CONTEXTPRO_API_KEY`                    | (none)               | API key for the hosted/`openai` path                             |
+| `CONTEXTPRO_BASE_URL`                   | `https://api.openai.com/v1` | Endpoint base URL — point at any OpenAI-compatible provider |
+| `CONTEXTPRO_EMBED_MODEL`                | provider default     | Embedding model (`nomic-embed-text:latest` / `text-embedding-3-small`) |
+| `CONTEXTPRO_CHAT_MODEL`                 | provider default     | Chat model — cluster/hub labels, rerank (`gemma4:12b` / `gpt-4o-mini`) |
+| `CONTEXTPRO_CHAT_PROVIDER`              | (= provider)         | Override the chat backend independently of embeddings            |
 | `CONTEXTPRO_EMBED_BATCH_SIZE`           | `8`                  | Embedding batch per GPU call (hard-capped to 5-10)               |
 | `CONTEXTPRO_EMBED_TRACKER`              | `lazy`               | Enable realtime embedding updates for changed files/functions    |
 | `CONTEXTPRO_EMBED_TRACKER_MAX_FILES`    | `8`                  | Max changed files per tracker tick (hard-capped to 5-10)         |
@@ -76,6 +74,8 @@ Canonical prefix is `CONTEXTPRO_*` (since 1.2.0). Legacy `CONTEXTPLUS_*` names c
 | `CONTEXTPRO_REINDEX_NO_EMBED`           | `false`              | Skip eager embedding population during reindex (keyword-only)    |
 | `CONTEXTPRO_INSTRUCTIONS_REMOTE`        | `false`              | Fetch instructions from remote URL instead of bundled file       |
 | `CONTEXTPRO_INSTRUCTIONS_REMOTE_URL`    | (defaults)           | Override remote instructions URL                                 |
+
+The five generic provider keys above take precedence over the older long names, which still work for backward compatibility: `CONTEXTPRO_EMBED_PROVIDER`, `CONTEXTPRO_OPENAI_API_KEY`, `CONTEXTPRO_OPENAI_BASE_URL`, `CONTEXTPRO_OPENAI_EMBED_MODEL`, `CONTEXTPRO_OPENAI_CHAT_MODEL`, `OLLAMA_EMBED_MODEL`, `OLLAMA_CHAT_MODEL`, plus provider-native `OPENAI_API_KEY` / `OPENAI_BASE_URL`. Legacy `CONTEXTPLUS_*` aliases also remain valid through 2.0.
 
 Runtime cache: `.contextpro/` is created at MCP startup and stores reusable embedding vectors for files, identifiers, call sites, and artifact payloads. A realtime tracker watches file updates and refreshes changed function/file embeddings incrementally.
 

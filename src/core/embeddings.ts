@@ -4,6 +4,7 @@
 
 import { mkdir } from "fs/promises";
 import { join } from "path";
+import { getProvider, getEmbedModelName, getApiKey, getBaseUrl } from "./provider-config.js";
 
 const EMBED_TIMEOUT_MS = 60_000;
 let embedAbortController = new AbortController();
@@ -74,20 +75,14 @@ export interface EmbeddingCache {
   [path: string]: { hash: string; vector: number[] };
 }
 
-// `openai` selects the OpenAI-compatible HTTP path. Friendly aliases map to the same path so
-// users don't have to know it's "the openai one" — any provider that speaks the OpenAI
-// /embeddings + /chat/completions API works by pointing CONTEXTPRO_OPENAI_BASE_URL at it
-// (OpenRouter, Groq, Together, DeepInfra, vLLM, LM Studio, etc.).
-const OPENAI_COMPATIBLE_ALIASES = new Set(["openai", "openai-compatible", "openrouter", "groq", "together", "deepinfra", "vllm", "lmstudio", "litellm", "anyscale"]);
-function normalizeProvider(raw: string): "ollama" | "openai" {
-  const p = raw.trim().toLowerCase();
-  return OPENAI_COMPATIBLE_ALIASES.has(p) ? "openai" : "ollama";
-}
-const EMBED_PROVIDER = normalizeProvider(process.env.CONTEXTPRO_EMBED_PROVIDER ?? process.env.CONTEXTPLUS_EMBED_PROVIDER ?? "ollama");
-const EMBED_MODEL = process.env.OLLAMA_EMBED_MODEL ?? "nomic-embed-text:latest";
-const OPENAI_EMBED_MODEL = process.env.CONTEXTPRO_OPENAI_EMBED_MODEL ?? process.env.CONTEXTPLUS_OPENAI_EMBED_MODEL ?? process.env.OPENAI_EMBED_MODEL ?? "text-embedding-3-small";
-const OPENAI_API_KEY = process.env.CONTEXTPRO_OPENAI_API_KEY ?? process.env.CONTEXTPLUS_OPENAI_API_KEY ?? process.env.OPENAI_API_KEY ?? "";
-const OPENAI_BASE_URL = process.env.CONTEXTPRO_OPENAI_BASE_URL ?? process.env.CONTEXTPLUS_OPENAI_BASE_URL ?? process.env.OPENAI_BASE_URL ?? "https://api.openai.com/v1";
+// Provider configuration is centralized in provider-config.ts. See that file for the full
+// env-var precedence (generic CONTEXTPRO_* → legacy → provider-native → default). Resolved once
+// at module load to preserve prior behavior; restart the server to pick up env changes.
+const EMBED_PROVIDER = getProvider();
+const EMBED_MODEL = getEmbedModelName("ollama");
+const OPENAI_EMBED_MODEL = getEmbedModelName("openai");
+const OPENAI_API_KEY = getApiKey();
+const OPENAI_BASE_URL = getBaseUrl();
 const CACHE_DIR = ".contextpro";
 const MIN_EMBED_BATCH_SIZE = 5;
 const MAX_EMBED_BATCH_SIZE = 10;

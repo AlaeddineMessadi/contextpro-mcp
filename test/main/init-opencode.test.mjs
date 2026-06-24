@@ -33,19 +33,19 @@ describe("init-opencode", () => {
       ]);
       assert.equal(cfg.mcp.contextpro.enabled, true);
       assert.equal(
-        cfg.mcp.contextpro.environment.CONTEXTPRO_EMBED_PROVIDER,
+        cfg.mcp.contextpro.environment.CONTEXTPRO_PROVIDER,
         "ollama",
       );
       assert.equal(
-        cfg.mcp.contextpro.environment.OLLAMA_EMBED_MODEL,
+        cfg.mcp.contextpro.environment.CONTEXTPRO_EMBED_MODEL,
         "nomic-embed-text:latest",
       );
       assert.equal(
-        cfg.mcp.contextpro.environment.OLLAMA_CHAT_MODEL,
+        cfg.mcp.contextpro.environment.CONTEXTPRO_CHAT_MODEL,
         "nemotron-3-ultra:cloud",
       );
       assert.equal(
-        Object.hasOwn(cfg.mcp.contextpro.environment, "OLLAMA_API_KEY"),
+        Object.hasOwn(cfg.mcp.contextpro.environment, "CONTEXTPRO_API_KEY"),
         false,
       );
       await access(join(cwd, ".contextpro", "config.json"));

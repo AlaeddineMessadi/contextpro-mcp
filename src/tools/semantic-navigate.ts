@@ -4,6 +4,7 @@
 import { walkDirectory } from "../core/walker.js";
 import { analyzeFile, flattenSymbols, isSupportedFile } from "../core/parser.js";
 import { fetchEmbedding } from "../core/embeddings.js";
+import { getProvider, getChatProvider, getApiKey, getBaseUrl, getChatModelName } from "../core/provider-config.js";
 import { readFile } from "fs/promises";
 import { spectralCluster, findPathPattern } from "../core/clustering.js";
 import { extname } from "path";
@@ -28,12 +29,6 @@ interface ClusterNode {
   children: ClusterNode[];
 }
 
-const EMBED_PROVIDER = (process.env.CONTEXTPLUS_EMBED_PROVIDER ?? "ollama").toLowerCase();
-const EMBED_MODEL = process.env.OLLAMA_EMBED_MODEL ?? "nomic-embed-text:latest";
-const CHAT_MODEL = process.env.OLLAMA_CHAT_MODEL ?? "gemma4:12b";
-const OPENAI_CHAT_MODEL = process.env.CONTEXTPLUS_OPENAI_CHAT_MODEL ?? process.env.OPENAI_CHAT_MODEL ?? "gpt-4o-mini";
-const OPENAI_API_KEY = process.env.CONTEXTPLUS_OPENAI_API_KEY ?? process.env.OPENAI_API_KEY ?? "";
-const OPENAI_BASE_URL = process.env.CONTEXTPLUS_OPENAI_BASE_URL ?? process.env.OPENAI_BASE_URL ?? "https://api.openai.com/v1";
 const MAX_FILES_PER_LEAF = 20;
 const NON_CODE_NAVIGATE_EXTENSIONS = new Set([
   ".json",
@@ -96,16 +91,16 @@ function isNavigableSourceCandidate(filePath: string): boolean {
 }
 
 async function chatCompletion(prompt: string): Promise<string> {
-  if (EMBED_PROVIDER === "openai") {
-    const url = `${OPENAI_BASE_URL.replace(/\/+$/, "")}/chat/completions`;
+  if (getChatProvider() === "openai") {
+    const url = `${getBaseUrl().replace(/\/+$/, "")}/chat/completions`;
     const response = await fetch(url, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "Authorization": `Bearer ${OPENAI_API_KEY}`,
+        "Authorization": `Bearer ${getApiKey()}`,
       },
       body: JSON.stringify({
-        model: OPENAI_CHAT_MODEL,
+        model: getChatModelName("openai"),
         messages: [{ role: "user", content: prompt }],
         stream: false,
       }),
@@ -120,16 +115,17 @@ async function chatCompletion(prompt: string): Promise<string> {
     return data.choices[0]?.message?.content ?? "";
   }
 
+  const chatModel = getChatModelName("ollama");
   const client = await getOllamaClient();
   try {
     const response = await client.chat({
-      model: CHAT_MODEL,
+      model: chatModel,
       messages: [{ role: "user", content: prompt }],
       stream: false,
     });
     return response.message.content;
   } catch (error) {
-    throw new Error(formatOllamaChatError(error, CHAT_MODEL));
+    throw new Error(formatOllamaChatError(error, chatModel));
   }
 }
 
@@ -426,10 +422,11 @@ export async function semanticNavigate(options: SemanticNavigateOptions): Promis
     vectors = embedded.vectors;
     skippedForEmbedding = embedded.skipped;
   } catch (err) {
-    const providerHint = EMBED_PROVIDER === "openai"
-      ? `Check CONTEXTPLUS_OPENAI_API_KEY and CONTEXTPLUS_OPENAI_BASE_URL.`
-      : `Make sure Ollama is running (check OLLAMA_HOST) and that the embedding model configured in OLLAMA_EMBED_MODEL is available.`;
-    return `Embedding provider (${EMBED_PROVIDER}) not available: ${err instanceof Error ? err.message : String(err)}\n${providerHint}`;
+    const provider = getProvider();
+    const providerHint = provider === "openai"
+      ? `Check CONTEXTPRO_API_KEY and CONTEXTPRO_BASE_URL.`
+      : `Make sure Ollama is running (check OLLAMA_HOST) and that the embedding model configured in CONTEXTPRO_EMBED_MODEL is available.`;
+    return `Embedding provider (${provider}) not available: ${err instanceof Error ? err.message : String(err)}\n${providerHint}`;
   }
 
   if (embeddableFiles.length === 0) return "No embeddable source files found in the project.";

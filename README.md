@@ -65,10 +65,9 @@ Add to your project's `.mcp.json`:
       "command": "npx",
       "args": ["-y", "contextpro-mcp", "--root", "/absolute/path/to/your/project"],
       "env": {
-        "CONTEXTPRO_EMBED_PROVIDER": "ollama",
-        "OLLAMA_EMBED_MODEL": "nomic-embed-text:latest",
-        "OLLAMA_CHAT_MODEL": "gemma4:12b",
-        "CONTEXTPRO_EMBED_TRACKER": "lazy"
+        "CONTEXTPRO_PROVIDER": "ollama",
+        "CONTEXTPRO_EMBED_MODEL": "nomic-embed-text:latest",
+        "CONTEXTPRO_CHAT_MODEL": "gemma4:12b"
       }
     }
   }
@@ -85,10 +84,9 @@ command = "npx"
 args = ["-y", "contextpro-mcp", "--root", "/absolute/path/to/your/project"]
 
 [mcp_servers.contextpro.env]
-CONTEXTPRO_EMBED_PROVIDER = "ollama"
-OLLAMA_EMBED_MODEL = "nomic-embed-text:latest"
-OLLAMA_CHAT_MODEL = "gemma4:12b"
-CONTEXTPRO_EMBED_TRACKER = "lazy"
+CONTEXTPRO_PROVIDER = "ollama"
+CONTEXTPRO_EMBED_MODEL = "nomic-embed-text:latest"
+CONTEXTPRO_CHAT_MODEL = "gemma4:12b"
 ```
 
 #### OpenCode
@@ -104,10 +102,9 @@ Add to `opencode.json`:
       "command": ["npx", "-y", "contextpro-mcp", "--root", "/absolute/path/to/your/project"],
       "enabled": true,
       "environment": {
-        "CONTEXTPRO_EMBED_PROVIDER": "ollama",
-        "OLLAMA_EMBED_MODEL": "nomic-embed-text:latest",
-        "OLLAMA_CHAT_MODEL": "gemma4:12b",
-        "CONTEXTPRO_EMBED_TRACKER": "lazy"
+        "CONTEXTPRO_PROVIDER": "ollama",
+        "CONTEXTPRO_EMBED_MODEL": "nomic-embed-text:latest",
+        "CONTEXTPRO_CHAT_MODEL": "gemma4:12b"
       }
     }
   }
@@ -141,44 +138,48 @@ Prefer a hosted API (OpenAI, OpenRouter, Groq, …) or a different local runtime
 
 ContextPro uses an LLM for two things only: **embeddings** (semantic `search`) and an optional **chat model** (cluster labels, hub names, planning rerank). Everything else is pure AST/graph work with no model.
 
-There are exactly two backends, but the second covers almost everything:
+You configure all of it with **five short keys** — same names for every provider:
 
-| Set `CONTEXTPRO_EMBED_PROVIDER` to | Uses | For |
+| Key | Default | What it does |
 | --- | --- | --- |
-| `ollama` (default) | local Ollama daemon | offline, no API key, free |
-| `openai` *(or any alias below)* | OpenAI-compatible HTTP API | any hosted or self-hosted endpoint |
+| `CONTEXTPRO_PROVIDER` | `ollama` | `ollama` (local) or `openai` (any OpenAI-compatible API) |
+| `CONTEXTPRO_API_KEY` | (none) | API key — only for the hosted/`openai` path |
+| `CONTEXTPRO_BASE_URL` | OpenAI's | Endpoint URL — point at any compatible provider |
+| `CONTEXTPRO_EMBED_MODEL` | provider default | Embedding model |
+| `CONTEXTPRO_CHAT_MODEL` | provider default | Chat model (optional — cluster/hub labels, rerank) |
 
-The `openai` path speaks the standard `/embeddings` + `/chat/completions` API, so **any provider that implements it works** — just point `CONTEXTPRO_OPENAI_BASE_URL` at the endpoint. These aliases all select that path (purely for readability — they behave identically): `openai-compatible`, `openrouter`, `groq`, `together`, `deepinfra`, `vllm`, `lmstudio`, `litellm`, `anyscale`.
+There are exactly two backends. `ollama` runs locally with no key. `openai` speaks the standard `/embeddings` + `/chat/completions` API, so **any provider that implements it works** — set `CONTEXTPRO_PROVIDER=openai` and point `CONTEXTPRO_BASE_URL` at the endpoint. You may also name the provider directly (`openrouter`, `groq`, `together`, `vllm`, `lmstudio`, `litellm`, …) — these are readable aliases that select the same `openai` path.
 
 **Examples** (drop into the `env` block of your MCP config):
 
 ```jsonc
 // OpenAI
-{ "CONTEXTPRO_EMBED_PROVIDER": "openai",
-  "CONTEXTPRO_OPENAI_API_KEY": "sk-...",
-  "CONTEXTPRO_OPENAI_EMBED_MODEL": "text-embedding-3-small",
-  "CONTEXTPRO_OPENAI_CHAT_MODEL": "gpt-4o-mini" }
+{ "CONTEXTPRO_PROVIDER": "openai",
+  "CONTEXTPRO_API_KEY": "sk-...",
+  "CONTEXTPRO_EMBED_MODEL": "text-embedding-3-small",
+  "CONTEXTPRO_CHAT_MODEL": "gpt-4o-mini" }
 
-// OpenRouter (chat-only providers — keep embeddings on Ollama)
-{ "CONTEXTPRO_EMBED_PROVIDER": "ollama",
-  "OLLAMA_EMBED_MODEL": "nomic-embed-text:latest",
+// OpenRouter — embed locally with Ollama, route chat to Claude
+{ "CONTEXTPRO_PROVIDER": "ollama",
+  "CONTEXTPRO_EMBED_MODEL": "nomic-embed-text:latest",
   "CONTEXTPRO_CHAT_PROVIDER": "openrouter",
-  "CONTEXTPRO_OPENAI_BASE_URL": "https://openrouter.ai/api/v1",
-  "CONTEXTPRO_OPENAI_API_KEY": "sk-or-...",
-  "CONTEXTPRO_OPENAI_CHAT_MODEL": "anthropic/claude-3.5-haiku" }
+  "CONTEXTPRO_BASE_URL": "https://openrouter.ai/api/v1",
+  "CONTEXTPRO_API_KEY": "sk-or-...",
+  "CONTEXTPRO_CHAT_MODEL": "anthropic/claude-3.5-haiku" }
 
 // Local OpenAI-compatible server (LM Studio / vLLM / llama.cpp)
-{ "CONTEXTPRO_EMBED_PROVIDER": "openai",
-  "CONTEXTPRO_OPENAI_BASE_URL": "http://localhost:1234/v1",
-  "CONTEXTPRO_OPENAI_API_KEY": "not-needed",
-  "CONTEXTPRO_OPENAI_EMBED_MODEL": "nomic-embed-text" }
+{ "CONTEXTPRO_PROVIDER": "openai",
+  "CONTEXTPRO_BASE_URL": "http://localhost:1234/v1",
+  "CONTEXTPRO_API_KEY": "not-needed",
+  "CONTEXTPRO_EMBED_MODEL": "nomic-embed-text" }
 ```
 
 Notes:
-- **Embeddings and chat are independent.** You can embed locally with Ollama and rerank/label with a hosted chat model (or skip chat entirely — it's optional). Set `CONTEXTPRO_CHAT_PROVIDER` to override the chat backend separately from `CONTEXTPRO_EMBED_PROVIDER`.
-- **Anthropic / Claude:** Claude has no native embeddings endpoint, so run embeddings on Ollama or OpenAI and route *chat* to Claude through an OpenAI-compatible proxy (OpenRouter, LiteLLM) via `CONTEXTPRO_OPENAI_BASE_URL`.
+- **Embeddings and chat are independent.** You can embed locally with Ollama and rerank/label with a hosted chat model (or skip chat entirely — it's optional). Set `CONTEXTPRO_CHAT_PROVIDER` to override the chat backend separately from `CONTEXTPRO_PROVIDER`.
+- **Anthropic / Claude:** Claude has no native embeddings endpoint, so run embeddings on Ollama or OpenAI and route *chat* to Claude through an OpenAI-compatible proxy (OpenRouter, LiteLLM) via `CONTEXTPRO_BASE_URL`.
 - **Switching embedding models changes the vector dimension.** ContextPro detects the drift, clears the stale cache, and `status` flags it — just run `reindex` once after switching.
 - **Verify what's active:** `status` shows `Provider: <name> | Model: <model>`.
+- **Backward-compatible:** the older long names (`CONTEXTPRO_EMBED_PROVIDER`, `CONTEXTPRO_OPENAI_API_KEY`, `OLLAMA_EMBED_MODEL`, plain `OPENAI_API_KEY`, …) still work — the short keys above just take precedence.
 
 ---
 
@@ -377,19 +378,19 @@ which node && node --version
 
 Canonical prefix is `CONTEXTPRO_*` (since 1.2.0). Legacy `CONTEXTPLUS_*` names work as aliases through 2.0.
 
-**Providers** (see [LLM providers](#llm-providers)):
+**Providers** — the five generic keys (see [LLM providers](#llm-providers)):
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `CONTEXTPRO_EMBED_PROVIDER` | `ollama` | `ollama`, `openai`, or an OpenAI-compatible alias (`openrouter`, `groq`, `vllm`, …) |
-| `CONTEXTPRO_CHAT_PROVIDER` | (= embed) | Override the chat backend independently of embeddings |
-| `OLLAMA_EMBED_MODEL` | `nomic-embed-text:latest` | Ollama embedding model |
-| `OLLAMA_CHAT_MODEL` | `gemma4:12b` | Ollama chat model (cluster labels, hub names, rerank) |
+| `CONTEXTPRO_PROVIDER` | `ollama` | `ollama`, `openai`, or an OpenAI-compatible alias (`openrouter`, `groq`, `vllm`, …) |
+| `CONTEXTPRO_API_KEY` | (none) | API key for the hosted/`openai` path |
+| `CONTEXTPRO_BASE_URL` | `https://api.openai.com/v1` | Endpoint base URL — point at any compatible provider |
+| `CONTEXTPRO_EMBED_MODEL` | provider default | Embedding model (`nomic-embed-text:latest` / `text-embedding-3-small`) |
+| `CONTEXTPRO_CHAT_MODEL` | provider default | Chat model — cluster/hub labels, rerank (`gemma4:12b` / `gpt-4o-mini`) |
+| `CONTEXTPRO_CHAT_PROVIDER` | (= provider) | Override the chat backend independently of embeddings |
 | `OLLAMA_HOST` | `http://127.0.0.1:11434` | Non-default Ollama endpoint |
-| `CONTEXTPRO_OPENAI_API_KEY` | (none) | API key for the OpenAI-compatible path |
-| `CONTEXTPRO_OPENAI_BASE_URL` | `https://api.openai.com/v1` | Endpoint base URL — point at any compatible provider |
-| `CONTEXTPRO_OPENAI_EMBED_MODEL` | `text-embedding-3-small` | Embedding model for the OpenAI path |
-| `CONTEXTPRO_OPENAI_CHAT_MODEL` | `gpt-4o-mini` | Chat model for the OpenAI path |
+
+> **Legacy names still work** (the generic keys above take precedence): `CONTEXTPRO_EMBED_PROVIDER`, `CONTEXTPRO_OPENAI_API_KEY`, `CONTEXTPRO_OPENAI_BASE_URL`, `CONTEXTPRO_OPENAI_EMBED_MODEL`, `CONTEXTPRO_OPENAI_CHAT_MODEL`, `OLLAMA_EMBED_MODEL`, `OLLAMA_CHAT_MODEL`, and provider-native `OPENAI_API_KEY` / `OPENAI_BASE_URL`.
 
 **Indexing & runtime:**
 
