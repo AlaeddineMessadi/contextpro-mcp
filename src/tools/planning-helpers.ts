@@ -122,13 +122,10 @@ function termMatches(term: string, queryTerms: Set<string>, lemmatizedQueryTerms
   if (queryTerms.has(term)) return true;
   const lemma = lemmatize(term);
   if (queryTerms.has(lemma) || lemmatizedQueryTerms.has(lemma)) return true;
-  // Bidirectional prefix check: "fee" matches "fees" and vice-versa. Handles cases where the
-  // lemmatizer's heuristic strips slightly differently than the user's spelling.
-  if (term.length >= 4) {
-    for (const q of queryTerms) {
-      if (q.length >= 4 && (term.startsWith(q) || q.startsWith(term))) return true;
-    }
-  }
+  // Deliberately NO prefix/substring fallback. A startsWith() check let "fee" match "feeds" (and
+  // "auth" match "author"), flooding a "fee model" task_pack with feeds/ websocket files — the
+  // Round-4 audit's headline scope-quality bug. Lemmatization already handles fees↔fee, feeds↔feed,
+  // models↔model; anything it can't normalize is a genuinely different word and must not match.
   return false;
 }
 

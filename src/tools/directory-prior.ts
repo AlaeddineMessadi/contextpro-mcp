@@ -91,14 +91,16 @@ export async function findDirectoryPriorMatches(rootDir: string, query: string):
     const dirName = basename(dir).toLowerCase();
     const dirSingular = singularize(dirName);
 
-    // Does the directory name match a query noun (singular or plural)?
-    const nounMatch = nouns.find((noun) =>
-      dirName === noun.singular ||
-      dirName === pluralize(noun.singular) ||
-      dirSingular === noun.singular ||
-      dirName.includes(noun.singular) ||
-      noun.singular.includes(dirSingular)
-    );
+    // Does the directory name match a query noun? EXACT singular/plural equality only — NO substring
+    // matching. `dirName.includes(noun.singular)` let "feeds" match the noun "fee" (and "feed" via
+    // the reverse include), so a "fee model" task boosted every feeds/ websocket file and crowded out
+    // the real fees/ implementations (Round-4 audit). Singularizing both sides handles fees↔fee.
+    const nounMatch = nouns.find((noun) => {
+      const nounSingular = singularize(noun.singular);
+      return dirName === noun.singular
+        || dirName === pluralize(noun.singular)
+        || dirSingular === nounSingular;
+    });
     if (!nounMatch) continue;
 
     // The directory is a feature folder matching the task noun. Gather its source files and look
@@ -118,8 +120,8 @@ export async function findDirectoryPriorMatches(rootDir: string, query: string):
       matches.push({
         path: file.path,
         reason: isBase
-          ? `defines the base/Protocol in the "${basename(dir)}/" implementation directory matching task noun "${nounMatch.raw}"`
-          : `sibling implementation in the "${basename(dir)}/" directory matching task noun "${nounMatch.raw}"`,
+          ? `defines the base/Protocol in the "${basename(dir)}/" implementation directory matching task noun "${nounMatch.raw}" — implement this interface`
+          : `existing implementation in "${basename(dir)}/" — copy this as a template for the new "${nounMatch.raw}"`,
         boost: isBase ? 0.45 : 0.32,
         symbols,
       });

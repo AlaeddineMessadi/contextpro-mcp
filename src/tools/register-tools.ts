@@ -9,7 +9,7 @@ import { unifiedSearch, invalidateSearchCache, invalidateIdentifierSearchCache }
 import { getBlastRadius } from "./blast-radius.js";
 import { runStaticAnalysis } from "./static-analysis.js";
 import { proposeCommit } from "./propose-commit.js";
-import { listRestorePoints, restorePoint, currentSessionId } from "../git/shadow.js";
+import { listRestorePoints, restorePoint, currentSessionId, garbageCollectRestorePoints } from "../git/shadow.js";
 import { semanticNavigate } from "./semantic-navigate.js";
 import { getFeatureHub } from "./feature-hub.js";
 import { toolUpsertMemoryNode, toolCreateRelation, toolSearchMemoryGraph, toolAddInterlinkedContext, toolRetrieveWithTraversal, toolDeleteMemoryNode, toolListMemoryNodes } from "./memory-tools.js";
@@ -28,7 +28,7 @@ import { exactReferencesTool } from "./exact-references.js";
 import { scipImportTool, scipStatusTool } from "./scip-index.js";
 import { buildTaskPack, buildChangeImpact, buildEditScope, buildDecisionBrief, buildValidateScope, recordTaskMemory, getWorkspaceContext, promotePattern } from "./agentic-context.js";
 import { findSymbol, replaceSymbolBody, insertAroundSymbol, renameSymbol } from "./symbolic-edit.js";
-import { listArtifacts, readArtifact } from "../core/artifacts.js";
+import { listArtifacts, readArtifact, garbageCollectArtifacts } from "../core/artifacts.js";
 import { formatStartupHealthReport, runStartupHealthCheck } from "../core/startup-health.js";
 import { recordToolTiming } from "../core/tool-metrics.js";
 
@@ -87,7 +87,7 @@ export function registerTools(
 
   server.tool(
     "artifact_list",
-    "List recent reusable context artifacts generated for this project. Use it to discover cached repo maps, task packs, and impact summaries.",
+    "List recent reusable context artifacts generated for this project. Use it to discover cached repo maps, task packs, and impact summaries. Each entry reports its on-disk size (sizeBytes).",
     {
       kind: z.string().optional().describe("Optional artifact kind filter, e.g. repo_map, search, task_pack."),
       limit: z.number().optional().describe("Maximum artifacts to return. Default: 20."),
@@ -98,6 +98,31 @@ export function registerTools(
         text: JSON.stringify(await listArtifacts(rootDir, kind, limit), null, 2),
       }],
     }), { toolName: "artifact_list", waitForIndexing: false }),
+  );
+
+  server.tool(
+    "gc",
+    "Garbage-collect orphaned on-disk data: artifact .json payloads and restore-point backup folders " +
+    "that have been evicted from their manifests (by the LRU caps) but never deleted from disk. Safe — " +
+    "only removes files no longer referenced by any manifest. Reports files removed and bytes reclaimed.",
+    {},
+    withRequestActivity(async () => {
+      const [artifacts, restorePoints] = await Promise.all([
+        garbageCollectArtifacts(rootDir),
+        garbageCollectRestorePoints(rootDir),
+      ]);
+      const freed = artifacts.freedBytes + restorePoints.freedBytes;
+      const kb = (freed / 1024).toFixed(1);
+      return {
+        content: [{
+          type: "text" as const,
+          text: `Garbage collection complete.\n`
+            + `  Artifacts: removed ${artifacts.deletedFiles} orphaned file(s), freed ${(artifacts.freedBytes / 1024).toFixed(1)} KB\n`
+            + `  Restore points: removed ${restorePoints.deletedPoints} orphaned backup(s), freed ${(restorePoints.freedBytes / 1024).toFixed(1)} KB\n`
+            + `  Total reclaimed: ${kb} KB`,
+        }],
+      };
+    }, { toolName: "gc", waitForIndexing: false }),
   );
 
   server.tool(

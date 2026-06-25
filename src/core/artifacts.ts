@@ -2,7 +2,7 @@
 // FEATURE: Artifact cache — stable IDs for low-token reuse across MCP turns
 
 import { createHash } from "crypto";
-import { mkdir, open, readFile, readdir, rename, unlink, writeFile } from "fs/promises";
+import { mkdir, open, readFile, readdir, rename, stat, unlink, writeFile } from "fs/promises";
 import { join, resolve } from "path";
 
 /**
@@ -33,6 +33,9 @@ export interface ArtifactReference {
   createdAt: string;
   updatedAt: string;
   indexGeneration?: number;
+  // On-disk size of the artifact's .json payload, populated by listArtifacts. Lets an agent see
+  // which cached packs are large before deciding to read or GC them.
+  sizeBytes?: number;
 }
 
 export interface StoredArtifact<T = unknown> extends ArtifactReference {
@@ -279,6 +282,23 @@ export async function readArtifactIfFresh<T = unknown>(
   return record;
 }
 
+/**
+ * Resolve a cached artifact by its logical identity (kind + key + repo fingerprint), returning it
+ * only when still fresh for `currentGeneration`. This is the read side of the read-through cache:
+ * a tool computes its canonical key, calls this first, and only recomputes on a miss. Centralizes
+ * the artifact-ID derivation so callers never reconstruct it themselves.
+ */
+export async function lookupFreshArtifact<T = unknown>(
+  rootDir: string,
+  kind: string,
+  key: string,
+  repoFingerprint: string | null | undefined,
+  currentGeneration: number,
+): Promise<StoredArtifact<T> | null> {
+  const id = buildArtifactId(kind, key, repoFingerprint);
+  return readArtifactIfFresh<T>(rootDir, id, currentGeneration);
+}
+
 function migrateLegacyArtifactPath(path: string): string {
   // .contextplus was renamed to .contextpro in 1.2.0; manifest entries written before the rename
   // still carry the old path string. Rewrite on read so the user never sees the stale path.
@@ -310,8 +330,75 @@ export async function readArtifact<T = unknown>(rootDir: string, artifactId: str
 
 export async function listArtifacts(rootDir: string, kind?: string, limit: number = 20): Promise<ArtifactReference[]> {
   const manifest = await loadManifestWithRepair(rootDir);
-  return manifest.artifacts
+  const selected = manifest.artifacts
     .map(migrateReference)
     .filter((artifact) => !kind || artifact.kind === kind)
     .slice(0, Math.max(1, limit));
+  // Stat each selected artifact's payload for its on-disk size (best-effort; missing files report 0).
+  return Promise.all(selected.map(async (artifact) => {
+    const sizeBytes = await stat(artifact.path).then((s) => s.size).catch(() => 0);
+    return { ...artifact, sizeBytes };
+  }));
+}
+
+/**
+ * Delete orphaned artifact files — `.json` payloads on disk whose id is no longer in the manifest
+ * (evicted by the LRU trim). The manifest is the source of truth; anything not referenced by it is
+ * dead weight. Returns how many files were removed and how many bytes were reclaimed.
+ */
+// Files younger than this are never reclaimed by GC, closing the persist/GC race: persistArtifact
+// writes the .json BEFORE recording it in the manifest, so a just-written file can momentarily look
+// "unreferenced." A grace window guarantees we never delete a file that another caller is mid-persist.
+const GC_MIN_AGE_MS = 60_000;
+
+export async function garbageCollectArtifacts(rootDir: string): Promise<{ deletedFiles: number; freedBytes: number }> {
+  const baseDir = artifactBaseDir(rootDir);
+  let deletedFiles = 0;
+  let freedBytes = 0;
+
+  // The ENTIRE reconcile-and-delete runs under the manifest lock so a concurrent persist (which also
+  // takes the lock to update the manifest) cannot interleave with our delete decisions.
+  await withManifestLock(rootDir, async () => {
+    // Liveness = the REPAIRED manifest (raw manifest ∪ every valid on-disk artifact). This is the set
+    // readArtifact/listArtifacts actually serve, so anything in it is reachable and must NOT be deleted
+    // — including the 201st+ artifacts the raw 200-entry manifest dropped. GC only reclaims files that
+    // are NOT a reachable artifact: corrupt/unparseable .json or tmp leftovers.
+    const repaired = await loadManifestWithRepair(rootDir);
+    const liveIds = new Set(repaired.artifacts.filter((a) => a?.id).map((a) => a.id));
+    const now = Date.now();
+
+    let entries;
+    try {
+      entries = await readdir(baseDir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      const kindDir = join(baseDir, entry.name);
+      const files = await readdir(kindDir, { withFileTypes: true }).catch(() => []);
+      for (const file of files) {
+        if (!file.isFile()) continue;
+        const fullPath = join(kindDir, file.name);
+        const fileStat = await stat(fullPath).catch(() => null);
+        if (!fileStat) continue;
+        // Grace period: never touch a freshly written file (closes the persist/GC TOCTOU).
+        if (now - fileStat.mtimeMs < GC_MIN_AGE_MS) continue;
+
+        // A leftover atomic-write temp file: orphaned by a crashed write. Always reclaimable.
+        const isTmp = file.name.includes(".tmp");
+        // A .json that does NOT parse as a reachable artifact id is dead weight.
+        const id = file.name.replace(/\.json$/, "");
+        const isOrphanArtifact = file.name.endsWith(".json") && !liveIds.has(id);
+        if (!isTmp && !isOrphanArtifact) continue;
+
+        const removed = await unlink(fullPath).then(() => true).catch(() => false);
+        if (removed) {
+          deletedFiles += 1;
+          freedBytes += fileStat.size;
+        }
+      }
+    }
+  });
+  return { deletedFiles, freedBytes };
 }

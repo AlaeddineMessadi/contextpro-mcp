@@ -1,7 +1,7 @@
 // Shadow restore-point manager for safe AI change tracking
 // Backups files via JSON manifest before edits; no real git history pollution
 
-import { readFile, writeFile, mkdir, rename, unlink } from "fs/promises";
+import { readFile, writeFile, mkdir, rename, unlink, readdir, stat, rm } from "fs/promises";
 import { join, dirname } from "path";
 import { createHash } from "crypto";
 import { resolveProjectPath, toProjectRelativePath } from "../core/path-guard.js";
@@ -190,14 +190,11 @@ async function fileExists(path: string): Promise<boolean> {
   }
 }
 
-// Compute, without writing, exactly what restoring `pointId` would do to each file. Used both for the
-// `preview` dry-run and internally so the live restore can report a destructive-action count.
-export async function planRestore(rootDir: string, pointId: string): Promise<RestorePlan> {
-  const manifest = await loadManifest(rootDir);
-  const point = manifest.find((p) => p.id === pointId);
-  if (!point) throw new Error(`Restore point ${pointId} not found`);
-
-  const backupDir = join(rootDir, DATA_DIR, "backups", pointId);
+// Build the plan from an already-resolved point. Separated so restorePoint can resolve the target
+// point ONCE up front and reuse it — never re-loading the manifest after the safety snapshot (whose
+// LRU trim could otherwise evict the target's manifest entry and spuriously fail the restore).
+async function planRestoreForPoint(rootDir: string, point: RestorePoint): Promise<RestorePlan> {
+  const backupDir = join(rootDir, DATA_DIR, "backups", point.id);
   const tombstones = new Set(point.tombstoneFiles ?? []);
   const plans: RestoreFilePlan[] = [];
 
@@ -221,7 +218,20 @@ export async function planRestore(rootDir: string, pointId: string): Promise<Res
     });
   }
 
-  return { pointId, message: point.message, timestamp: point.timestamp, plans };
+  return { pointId: point.id, message: point.message, timestamp: point.timestamp, plans };
+}
+
+async function resolvePoint(rootDir: string, pointId: string): Promise<RestorePoint> {
+  const manifest = await loadManifest(rootDir);
+  const point = manifest.find((p) => p.id === pointId);
+  if (!point) throw new Error(`Restore point ${pointId} not found`);
+  return point;
+}
+
+// Compute, without writing, exactly what restoring `pointId` would do to each file. Used both for the
+// `preview` dry-run and internally so the live restore can report a destructive-action count.
+export async function planRestore(rootDir: string, pointId: string): Promise<RestorePlan> {
+  return planRestoreForPoint(rootDir, await resolvePoint(rootDir, pointId));
 }
 
 export interface RestoreOptions {
@@ -244,7 +254,11 @@ export async function restorePoint(
   pointId: string,
   options: RestoreOptions = {},
 ): Promise<RestoreResult> {
-  const plan = await planRestore(rootDir, pointId);
+  // Resolve the target point ONCE, before anything mutates the manifest. We reuse this captured
+  // reference for the actual restore so the safety snapshot's LRU trim can never evict it out from
+  // under us. The backup files on disk for this point are not touched by the trim either.
+  const point = await resolvePoint(rootDir, pointId);
+  const plan = await planRestoreForPoint(rootDir, point);
 
   if (options.preview) {
     return { preview: true, plan, restoredFiles: [], safetyPointId: null };
@@ -260,9 +274,6 @@ export async function restorePoint(
     safetyPointId = safety.id;
   }
 
-  const manifest = await loadManifest(rootDir);
-  const point = manifest.find((p) => p.id === pointId);
-  if (!point) throw new Error(`Restore point ${pointId} not found`);
   const backupDir = join(rootDir, DATA_DIR, "backups", pointId);
   const tombstones = new Set(point.tombstoneFiles ?? []);
   const restoredFiles: string[] = [];
@@ -293,4 +304,54 @@ export function currentSessionId(): string {
 
 export async function listRestorePoints(rootDir: string): Promise<RestorePoint[]> {
   return loadManifest(rootDir);
+}
+
+async function dirSizeBytes(dir: string): Promise<number> {
+  let total = 0;
+  const entries = await readdir(dir, { withFileTypes: true }).catch(() => []);
+  for (const entry of entries) {
+    const full = join(dir, entry.name);
+    if (entry.isDirectory()) total += await dirSizeBytes(full);
+    else total += await stat(full).then((s) => s.size).catch(() => 0);
+  }
+  return total;
+}
+
+/**
+ * Delete orphaned backup directories — point folders under .contextpro/backups/backups/ whose id is
+ * no longer in the restore-points manifest (trimmed by the 100-entry cap in createRestorePoint).
+ * The on-disk backups were never cleaned when their manifest entry was evicted, so they leak.
+ * Returns how many point directories were removed and how many bytes were reclaimed.
+ */
+// A backup dir younger than this is never reclaimed, closing the createRestorePoint/GC race:
+// createRestorePoint materializes the backup dir+files BEFORE pushing the manifest entry, so a
+// just-created point's dir can momentarily look unreferenced. A grace window prevents deleting it.
+const RESTORE_GC_MIN_AGE_MS = 60_000;
+
+export async function garbageCollectRestorePoints(rootDir: string): Promise<{ deletedPoints: number; freedBytes: number }> {
+  let deletedPoints = 0;
+  let freedBytes = 0;
+  // Run the whole reconcile-and-delete under the lock so a concurrent createRestorePoint (which takes
+  // the lock to push its manifest entry) can't interleave with our delete decisions.
+  await withManifestLock(rootDir, async () => {
+    const manifest = await loadManifest(rootDir);
+    const liveIds = new Set(manifest.map((p) => p.id));
+    const now = Date.now();
+    const backupsRoot = join(rootDir, DATA_DIR, "backups");
+    const entries = await readdir(backupsRoot, { withFileTypes: true }).catch(() => []);
+    for (const entry of entries) {
+      if (!entry.isDirectory() || liveIds.has(entry.name)) continue;
+      const pointDir = join(backupsRoot, entry.name);
+      const dirStat = await stat(pointDir).catch(() => null);
+      // Grace period: skip a freshly-created backup dir whose manifest push may still be in flight.
+      if (!dirStat || now - dirStat.mtimeMs < RESTORE_GC_MIN_AGE_MS) continue;
+      const size = await dirSizeBytes(pointDir);
+      const removed = await rm(pointDir, { recursive: true, force: true }).then(() => true).catch(() => false);
+      if (removed) {
+        deletedPoints += 1;
+        freedBytes += size;
+      }
+    }
+  });
+  return { deletedPoints, freedBytes };
 }

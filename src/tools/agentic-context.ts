@@ -7,7 +7,7 @@ import { getDB, type MemoryNodeInput, type MemoryNodeRow } from "../core/db.js";
 import { createPromotedPattern, listPromotedPatterns, listRegisteredWorkspaces, loadProjectConfig } from "../core/project-config.js";
 import { unifiedSearchData } from "./search.js";
 import { join } from "path";
-import { persistArtifact } from "../core/artifacts.js";
+import { persistArtifact, lookupFreshArtifact } from "../core/artifacts.js";
 import { buildFreshnessMetadata, buildTrustMetadata, getIndexState } from "../core/context-metadata.js";
 import { resolveSymbolData } from "./resolve-symbol.js";
 import {
@@ -42,6 +42,34 @@ export interface TaskPackOptions {
   includeRecentDiffs?: boolean;
   includeMemory?: boolean;
   format?: OutputFormat;
+}
+
+// The persisted task-pack payload, exactly what renderTaskPack consumes. Stored as the artifact so a
+// fresh cache hit can re-render without recomputing search/rerank/tests/diffs/memory.
+interface TaskPackFileEntry { path: string; reason: string; score: number; symbols: string[] }
+interface TaskPackPayload {
+  summary: string;
+  files: TaskPackFileEntry[];
+  tests: Array<{ path: string; reason: string; score: number }>;
+  recentDiffs: Array<{ path: string; commit: string; summary: string } | null>;
+  memory: Array<{ id: string; kind: string; summary: string }>;
+  risks: string[];
+  [key: string]: unknown;
+}
+
+// The cache identity for a task pack: same task + same option flags → same artifact. The repo
+// fingerprint and index generation gate freshness separately (handled by lookupFreshArtifact).
+function taskPackArtifactKey(task: string, maxFiles: number, opts: TaskPackOptions): string {
+  return JSON.stringify({
+    task,
+    maxFiles,
+    includeTests: opts.includeTests !== false,
+    includeRecentDiffs: opts.includeRecentDiffs !== false,
+    includeMemory: opts.includeMemory !== false,
+    // maxMemory changes how many memory hits the pack carries, so it MUST be part of the cache
+    // identity — otherwise two calls differing only in maxMemory would collide on one cached pack.
+    maxMemory: opts.includeMemory === false ? 0 : Math.min(opts.maxMemory ?? 3, 10),
+  });
 }
 
 export interface ChangeImpactOptions {
@@ -291,6 +319,42 @@ function pythonRunCommand(profile: PythonProjectProfile, tool: string, rootDir: 
 
 export async function buildTaskPack(options: TaskPackOptions): Promise<string> {
   const maxFiles = Math.max(1, Math.floor(options.maxFiles ?? 8));
+  const artifactKey = taskPackArtifactKey(options.task, maxFiles, options);
+
+  // READ-THROUGH CACHE: if a task pack for this exact task+flags was already computed and the index
+  // hasn't advanced since, re-render the stored payload instead of recomputing the whole pipeline
+  // (search + directory-prior + rerank + tests + diffs + memory). This makes a repeated task_pack
+  // call genuinely cheap — the artifact is the source of truth, not just a side-effect record.
+  // Best-effort: any failure resolving identity falls through to a normal (re)compute.
+  try {
+    const config = await loadProjectConfig(options.rootDir).catch(() => null);
+    const indexState = await getIndexState(options.rootDir);
+    // Only serve from cache when the index is genuinely FRESH. The generation number alone is not
+    // enough: adding/removing/editing a source file without reindexing leaves the generation
+    // unchanged but flips state to "stale" — serving the pre-change pack would be wrong. A non-fresh
+    // index always recomputes (and the recompute reflects the current on-disk reality).
+    const cached = indexState.state !== "fresh" ? null : await lookupFreshArtifact<TaskPackPayload>(
+      options.rootDir,
+      "task_pack",
+      artifactKey,
+      config?.repoFingerprint ?? null,
+      indexState.generation,
+    );
+    if (cached?.payload?.files) {
+      const trust = buildTrustMetadata({
+        baseConfidence: cached.payload.files.length > 0 ? 0.79 : 0.34,
+        freshness: buildFreshnessMetadata(indexState, { staleCount: 0, refreshed: false, warning: null }),
+        evidence: [...(((cached.payload.trust as { evidence?: string[] })?.evidence) ?? []), "served from artifact cache (no recompute)"],
+        ambiguities: ((cached.payload.trust as { ambiguities?: string[] })?.ambiguities) ?? [],
+        artifact: { id: cached.id, kind: cached.kind, key: cached.key, path: cached.path, createdAt: cached.createdAt, updatedAt: cached.updatedAt, indexGeneration: cached.indexGeneration },
+      });
+      const cachedPayload: TaskPackPayload = { ...cached.payload, trust };
+      return renderTaskPack(options.task, options.format, cachedPayload, cached.projectId ?? "unknown", cached.repoRoot, cached.id);
+    }
+  } catch {
+    // Cache lookup failed (e.g. corrupt manifest, DB not ready) — fall through to recompute.
+  }
+
   const search = await unifiedSearchData({
     rootDir: options.rootDir,
     query: options.task,
@@ -370,13 +434,7 @@ export async function buildTaskPack(options: TaskPackOptions): Promise<string> {
   const artifact = await persistAgentArtifact({
     rootDir: options.rootDir,
     kind: "task_pack",
-    key: JSON.stringify({
-      task: options.task,
-      maxFiles,
-      includeTests: options.includeTests !== false,
-      includeRecentDiffs: options.includeRecentDiffs !== false,
-      includeMemory: options.includeMemory !== false,
-    }),
+    key: artifactKey,
     repo,
     payload: partial,
     metadata: {
@@ -393,11 +451,24 @@ export async function buildTaskPack(options: TaskPackOptions): Promise<string> {
       artifact,
     }),
   };
-  return formatMaybeJson(options.format, payload, () => {
+  return renderTaskPack(options.task, options.format, payload, search.repo.projectId ?? "unknown", search.repo.root, artifact?.id ?? null);
+}
+
+// Render a task pack payload to text/JSON. Pulled out of buildTaskPack so a cache HIT can re-render
+// the stored payload without recomputing search/rerank/tests/diffs/memory.
+function renderTaskPack(
+  task: string,
+  format: OutputFormat | undefined,
+  payload: TaskPackPayload,
+  projectId: string,
+  root: string,
+  artifactId: string | null,
+): string {
+  return formatMaybeJson(format, payload, () => {
     const lines = [
-      `Task Pack: ${options.task}`,
-      `Repo: ${search.repo.projectId ?? "unknown"} | Root: ${search.repo.root}`,
-      artifact ? `Artifact: ${artifact.id}` : "",
+      `Task Pack: ${task}`,
+      `Repo: ${projectId} | Root: ${root}`,
+      artifactId ? `Artifact: ${artifactId}` : "",
       `Summary: ${payload.summary}`,
       "",
       "Files:",
@@ -406,25 +477,25 @@ export async function buildTaskPack(options: TaskPackOptions): Promise<string> {
       lines.push(`  ${file.path} (${Math.round(file.score * 100)}%) - ${file.reason}`);
       if (file.symbols.length > 0) lines.push(`    Symbols: ${file.symbols.join(", ")}`);
     }
-    if (tests.length > 0) {
+    if (payload.tests.length > 0) {
       lines.push("");
       lines.push("Tests:");
-      for (const test of tests.slice(0, 6)) lines.push(`  ${test.path} (${Math.round(test.score * 100)}%) - ${test.reason}`);
+      for (const test of payload.tests.slice(0, 6)) lines.push(`  ${test.path} (${Math.round(test.score * 100)}%) - ${test.reason}`);
     }
-    if (recentDiffs.length > 0) {
+    if (payload.recentDiffs.length > 0) {
       lines.push("");
       lines.push("Recent Diffs:");
-      for (const diff of recentDiffs.slice(0, 5)) lines.push(`  ${diff?.path} @ ${diff?.commit} - ${diff?.summary}`);
+      for (const diff of payload.recentDiffs.slice(0, 5)) lines.push(`  ${diff?.path} @ ${diff?.commit} - ${diff?.summary}`);
     }
-    if (memory.length > 0) {
+    if (payload.memory.length > 0) {
       lines.push("");
       lines.push("Memory:");
-      for (const item of memory) lines.push(`  ${item.id} [${item.kind}] ${item.summary}`);
+      for (const item of payload.memory) lines.push(`  ${item.id} [${item.kind}] ${item.summary}`);
     }
-    if (risks.length > 0) {
+    if (payload.risks.length > 0) {
       lines.push("");
       lines.push("Risks:");
-      for (const risk of risks) lines.push(`  - ${risk}`);
+      for (const risk of payload.risks) lines.push(`  - ${risk}`);
     }
     return lines.join("\n");
   });
