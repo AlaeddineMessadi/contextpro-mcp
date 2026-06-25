@@ -7,7 +7,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![MCP](https://img.shields.io/badge/MCP-1.x-blue.svg)](https://modelcontextprotocol.io)
 
-ContextPro is a Model Context Protocol server that gives Claude Code, Codex, Antigravity, OpenCode, Cursor, and any other MCP-aware agent a compact, structural map of a real codebase — without reading every file. It combines semantic search, AST-based symbol indexing, exact TypeScript/JavaScript references, impact analysis, validation guidance, project memory, and safe restore points behind one stdio server.
+ContextPro is a Model Context Protocol server that gives Claude Code, Codex, Antigravity, OpenCode, Cursor, and any other MCP-aware agent a compact, structural map of a real codebase — without reading every file. It combines semantic search, AST-based symbol indexing, exact TypeScript/JavaScript references, impact analysis, validation guidance, project memory, safe restore points with preview + undo, and artifact caching behind one stdio server.
 
 A private fork and evolution of [Context+](https://github.com/ForLoopCodes/contextplus), hardened with multi-project trust boundaries, agentic workflow tools, persistent SQLite + sqlite-vec storage, and a 25-issue audit pass landing in 1.2.x.
 
@@ -25,6 +25,9 @@ Coding agents waste most of their context window reading whole files when they o
 | Read three files to plan an edit | `task_pack` returns ranked files + tests + memory in one call |
 | Hope the edit doesn't break tests | `change_impact` lists affected importers and known-relevant tests |
 | Save and pray | `checkpoint` writes with a pre-write restore point — `restore` rolls back |
+| Restore blindly and lose the fix | `restore --preview` shows what changes before touching anything; every restore auto-saves an undo point |
+| "feeds" ranking buried under "fee" matches | Exact lemmatized term matching — substring collisions eliminated |
+| Recompute heavy context on every call | `task_pack` read-through cache — identical tasks served instantly from artifacts |
 
 For orientation-and-discovery work — the half of agent tasks where most tokens go — ContextPro typically reduces context usage by **~75%**.
 
@@ -205,7 +208,7 @@ Run independent reads in parallel. Trust the confidence/freshness envelope every
 
 ## Tool surface
 
-ContextPro exposes **48 MCP tools** organized into seven categories.
+ContextPro exposes **49 MCP tools** organized into seven categories.
 
 ### Orientation
 | Tool | What it does |
@@ -248,8 +251,9 @@ ContextPro exposes **48 MCP tools** organized into seven categories.
 | --- | --- |
 | `lint` | Auto-detected linters (tsc, eslint, ruff, cargo check, go vet) + skill-score |
 | `checkpoint` | Save with a pre-write restore point. `strict: true` enforces style rules |
-| `checkpoints` | List restore points |
-| `restore` | Roll back to a restore point |
+| `checkpoints` | List restore points — tombstone files that didn't exist at snapshot time are clearly flagged |
+| `restore` | Roll back to a restore point. `preview: true` shows the plan before touching anything; every live restore auto-saves a safety undo point |
+| `gc` | Garbage-collect orphaned artifacts and stale restore points, frees disk space |
 
 ### Memory
 | Tool | What it does |
@@ -266,7 +270,7 @@ ContextPro exposes **48 MCP tools** organized into seven categories.
 | --- | --- |
 | `workspace_context` | Active projects and recent sessions across clients |
 | `promote_pattern` | Promote project memory to client/global pattern |
-| `artifact_list` / `artifact_read` | Reuse cached task packs, repo maps, search results |
+| `artifact_list` / `artifact_read` | Reuse cached task packs, repo maps, search results — lists include file sizes |
 | `reindex` | Re-walk and re-parse files. Eagerly populates embeddings (1.2.1+) |
 | `diff` | Structured working-tree, branch, or per-file diff |
 | `health`, `doctor` | Startup health, native binding repair |
@@ -299,7 +303,7 @@ Pass `no_embed: true` (or set `CONTEXTPRO_REINDEX_NO_EMBED=true`) to skip step 2
 ┌─────────────────────────────────────────────────────────────────┐
 │                       ContextPro MCP server                     │
 │  ┌─────────────────────────────────────────────────────────┐    │
-│  │  54 tools  ·  registered via Zod schemas                │    │
+│  │  49 tools  ·  registered via Zod schemas                │    │
 │  └──────┬──────────────────────────────────────────────────┘    │
 │         │                                                       │
 │  ┌──────▼─────────┐  ┌──────────────┐  ┌──────────────────┐     │
@@ -418,6 +422,8 @@ Three docs work together so the project's history stays auditable:
 
 ### Recent releases
 
+- **1.3.1** — Round-4 audit fixes: cluster labels no longer emit import-vocab leakage or raw path globs; feature directories recovered via directory anchor; `restore` takes a pre-restore safety snapshot with optional `preview` dry-run; `gc` tool cleans orphaned artifacts and stale restore points; `task_pack` read-through artifact cache; `artifact_list` includes file sizes; fee/feeds ranking collision fixed; generic 5-key provider config scheme.
+- **1.3.0** — Production hardening: atomic writes for artifacts/graph/SCIP; JSON.parse guards; manifest-mutex leak fix; bounded LRU caches; numeric schema-version compare; `health` reports version + build stamp.
 - **1.2.2** — `grep` tool for literal/regex search; closes 8 dev-lifecycle audit findings (input validation, output disambiguation, `cluster` heuristic fallback).
 - **1.2.1** — Eager embedding population in reindex; disambiguated `status` warning; Node ABI documentation.
 - **1.2.0** — Comprehensive 25-issue audit; tracking docs added; legacy env-var aliases.
@@ -432,7 +438,7 @@ See [CHANGELOG.md](./CHANGELOG.md) for the full history.
 ```bash
 npm install
 npm run build       # tsc
-npm test            # 295 tests across core, tools, and integration
+npm test            # 366 tests across core, tools, and integration
 npm run test:demo   # 33 demo tests
 npm run dev         # tsc --watch
 ```
