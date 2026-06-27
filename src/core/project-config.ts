@@ -133,6 +133,55 @@ async function detectGitRoot(rootDir: string): Promise<string> {
   }
 }
 
+export interface WorktreeInfo {
+  /** The toplevel of the working tree the request came from. */
+  worktreeRoot: string;
+  /** The main checkout that owns the shared object store; equals worktreeRoot when not a worktree. */
+  baseRoot: string;
+  /** Absolute path to the shared .git directory (git-common-dir). */
+  gitCommonDir: string;
+  /** True when worktreeRoot is a linked worktree, not the main checkout. */
+  isWorktree: boolean;
+}
+
+async function gitRevParse(rootDir: string, flag: string): Promise<string | null> {
+  try {
+    const { stdout } = await execFileAsync("git", ["rev-parse", flag], {
+      cwd: rootDir,
+      timeout: 4000,
+    });
+    const value = stdout.trim();
+    return value.length > 0 ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Resolve the worktree the request belongs to and the shared base checkout.
+ *
+ * Git worktrees share one object store: `git rev-parse --git-common-dir` resolves
+ * to the MAIN repo's `.git` for every linked worktree, while `--git-dir` resolves
+ * to that worktree's private `.git/worktrees/<name>` directory. When the two differ
+ * the caller is inside a linked worktree, and the parent of the common dir is the
+ * base checkout that should own the shared index.
+ */
+export async function detectWorktreeInfo(rootDir: string): Promise<WorktreeInfo> {
+  const worktreeRoot = await detectGitRoot(rootDir);
+  const commonRaw = await gitRevParse(worktreeRoot, "--git-common-dir");
+  const gitDirRaw = await gitRevParse(worktreeRoot, "--git-dir");
+  if (!commonRaw) {
+    // Not a git repo (or git unavailable): the directory is its own base.
+    return { worktreeRoot, baseRoot: worktreeRoot, gitCommonDir: resolve(worktreeRoot, ".git"), isWorktree: false };
+  }
+  const gitCommonDir = resolve(worktreeRoot, commonRaw);
+  const gitDir = gitDirRaw ? resolve(worktreeRoot, gitDirRaw) : gitCommonDir;
+  const isWorktree = gitDir !== gitCommonDir;
+  // The base checkout is the parent of the shared .git directory.
+  const baseRoot = isWorktree ? resolve(gitCommonDir, "..") : worktreeRoot;
+  return { worktreeRoot, baseRoot, gitCommonDir, isWorktree };
+}
+
 async function detectGitRemote(rootDir: string): Promise<string> {
   try {
     const { stdout } = await execFileAsync("git", ["remote", "get-url", "origin"], {

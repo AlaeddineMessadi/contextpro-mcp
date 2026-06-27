@@ -909,6 +909,26 @@ export class ContextPlusDB {
   vacuum(): void {
     this.db.exec("VACUUM");
   }
+
+  /**
+   * Flush the WAL into the main index.db so an on-disk copy of the file is fully
+   * current. Used before seeding a worktree from this base index. TRUNCATE resets
+   * the WAL after checkpointing. Best-effort: a busy checkpoint is non-fatal.
+   */
+  checkpoint(): void {
+    try {
+      this.db.pragma("wal_checkpoint(TRUNCATE)");
+    } catch {
+      // A concurrent writer can block a full checkpoint; the seed tolerates a
+      // slightly stale copy because the worktree's incremental reindex reconciles.
+    }
+  }
+}
+
+/** Checkpoint the base DB (if open) so a file copy captures all committed rows. */
+export function checkpointDB(rootDir: string): void {
+  const db = dbInstances.get(resolve(rootDir));
+  if (db) db.checkpoint();
 }
 
 const dbInstances = new Map<string, ContextPlusDB>();

@@ -32,6 +32,35 @@ You MUST use ContextPro tools instead of native equivalents. Only fall back to n
 
 Run independent reads/searches in parallel, never sequentially.
 
+## Git Worktrees (multi-root routing)
+
+One ContextPro server can serve several git worktrees at once. Each worktree has
+its **own index** keyed off its own root — so a tool call must target the worktree
+the files actually live in, or you will get results from the wrong checkout.
+
+**Resolution order for every tool call:** explicit `root` argument → the workspace
+roots your MCP client advertises (auto-detected) → the server's boot root. So if
+your client exposes the worktree as its workspace root, routing is automatic and
+you do not need to pass `root`. Pass it explicitly when auto-detection can't apply.
+
+- **When to pass `root` explicitly:** the client advertises several roots and the
+  request can't be attributed to one, the client doesn't support the `roots`
+  capability, or you're driving a worktree other than your own workspace. Then pass
+  the worktree's absolute path as `root` on each call (every tool accepts it).
+  Omitting it with no usable client roots falls back to the boot root — usually the
+  main checkout, which is **not** your worktree.
+- **How to know your root:** run `git rev-parse --show-toplevel`. If that differs
+  from the server's boot root (see `health`/`status` `repo.root`), you are in a
+  worktree and must pass `root`.
+- **First touch is cheap:** a fresh worktree clones the base checkout's index, so
+  its first `reindex` only processes files that differ from the base — not the
+  whole tree. Run `reindex` with your `root` once after creating the worktree.
+- **Parallel subagents:** when several agents run in different worktrees against
+  the same server, each must pass its own `root`. Requests are isolated; a missing
+  `root` is the usual cause of an agent "seeing the wrong code."
+- **Cleanup:** `gc` removes indexes for worktrees git no longer lists. Run it
+  (with the base root) after tearing down worktrees.
+
 ## Companion server (optional)
 
 A separate [`pmll-memory-mcp`](https://www.npmjs.com/package/pmll-memory-mcp) server adds short-term KV memory (`peek`/`set`/`resolve`/`flush`/`init`) for caching expensive tool outputs across subtasks. **It is not part of ContextPro.** If you need it, install it explicitly. Do not call those tool names against ContextPro.
@@ -139,3 +168,4 @@ A separate [`pmll-memory-mcp`](https://www.npmjs.com/package/pmll-memory-mcp) se
 5. Ignoring `embeddings_stale` or `index_stale` warnings — they mean semantic results are unreliable until you reindex.
 6. Calling deprecated alias tools when the canonical name is documented.
 7. Pretending the optional `pmll-memory-mcp` companion server is part of ContextPro — those tools are only available if the user installed and connected it separately.
+8. Working inside a git worktree without passing `root` — your calls hit the main checkout's index instead of the worktree's, so you see the wrong code. Check `git rev-parse --show-toplevel` and pass it as `root`.
