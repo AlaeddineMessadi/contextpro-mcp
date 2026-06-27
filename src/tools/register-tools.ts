@@ -31,18 +31,49 @@ import { findSymbol, replaceSymbolBody, insertAroundSymbol, renameSymbol } from 
 import { listArtifacts, readArtifact, garbageCollectArtifacts } from "../core/artifacts.js";
 import { formatStartupHealthReport, runStartupHealthCheck } from "../core/startup-health.js";
 import { recordToolTiming } from "../core/tool-metrics.js";
+import { currentRoot } from "../core/request-context.js";
+import { garbageCollectDeadWorktrees } from "../core/worktree-gc.js";
 
 type ActivityWrapper = <TArgs, TResult>(
   handler: (args: TArgs) => Promise<TResult>,
   options?: { useEmbeddingTracker?: boolean; toolName?: string; waitForIndexing?: boolean },
 ) => (args: TArgs) => Promise<TResult>;
 
+/** Optional per-request root override, injected into every tool schema. */
+const rootArg = z
+  .string()
+  .optional()
+  .describe(
+    "Absolute path of the git worktree to target. Omit to use the server's project root. " +
+    "Set this to route a request to a specific worktree when one MCP server serves several.",
+  );
+
 export function registerTools(
-  server: McpServer,
-  rootDir: string,
+  serverInput: McpServer,
+  bootRoot: string,
   withRequestActivity: ActivityWrapper,
   noteServerActivity: () => void,
 ): void {
+  // Per-request effective root, evaluated at handler execution time.
+  // withRequestActivity establishes the resolved worktree root via
+  // AsyncLocalStorage for the duration of each handler; outside a request
+  // (CLI/direct callers) this falls back to the server's boot root.
+  const rootDir = (): string => currentRoot(bootRoot);
+
+  // Wrap server.tool so every registered tool automatically accepts the optional
+  // `root` argument without repeating it across 50+ schemas. The wrapper merges
+  // `root: rootArg` into each tool's Zod shape; withRequestActivity reads and
+  // strips it before the handler runs.
+  const server = {
+    tool: (name: string, description: string, shape: Record<string, unknown>, handler: unknown) =>
+      (serverInput.tool as unknown as (...a: unknown[]) => unknown)(
+        name,
+        description,
+        { ...shape, root: rootArg },
+        handler,
+      ),
+  } as unknown as McpServer;
+
   server.tool(
     "health",
     "Report ContextPro startup health, including active root, project identity, Node ABI, native storage status, and database readiness.",
@@ -53,8 +84,8 @@ export function registerTools(
       const started = Date.now();
       noteServerActivity();
       try {
-        const report = await runStartupHealthCheck(rootDir);
-        recordToolTiming(rootDir, "health", Date.now() - started, "ok");
+        const report = await runStartupHealthCheck(rootDir());
+        recordToolTiming(rootDir(), "health", Date.now() - started, "ok");
         return {
           content: [{
             type: "text" as const,
@@ -62,7 +93,7 @@ export function registerTools(
           }],
         };
       } catch (error) {
-        recordToolTiming(rootDir, "health", Date.now() - started, "error");
+        recordToolTiming(rootDir(), "health", Date.now() - started, "error");
         throw error;
       }
     },
@@ -75,7 +106,7 @@ export function registerTools(
       artifact_id: z.string().min(1).describe("Artifact ID returned by repo_map, search, task_pack, change_impact, edit_scope, or decision_brief."),
     },
     withRequestActivity(async ({ artifact_id }) => {
-      const artifact = await readArtifact(rootDir, artifact_id);
+      const artifact = await readArtifact(rootDir(), artifact_id);
       return {
         content: [{
           type: "text" as const,
@@ -95,7 +126,7 @@ export function registerTools(
     withRequestActivity(async ({ kind, limit }) => ({
       content: [{
         type: "text" as const,
-        text: JSON.stringify(await listArtifacts(rootDir, kind, limit), null, 2),
+        text: JSON.stringify(await listArtifacts(rootDir(), kind, limit), null, 2),
       }],
     }), { toolName: "artifact_list", waitForIndexing: false }),
   );
@@ -103,13 +134,15 @@ export function registerTools(
   server.tool(
     "gc",
     "Garbage-collect orphaned on-disk data: artifact .json payloads and restore-point backup folders " +
-    "that have been evicted from their manifests (by the LRU caps) but never deleted from disk. Safe — " +
-    "only removes files no longer referenced by any manifest. Reports files removed and bytes reclaimed.",
+    "that have been evicted from their manifests (by the LRU caps) but never deleted from disk, plus " +
+    "indexes of git worktrees that no longer exist. Safe — only removes files no longer referenced by " +
+    "any manifest or live worktree. Reports files removed and bytes reclaimed.",
     {},
     withRequestActivity(async () => {
-      const [artifacts, restorePoints] = await Promise.all([
-        garbageCollectArtifacts(rootDir),
-        garbageCollectRestorePoints(rootDir),
+      const [artifacts, restorePoints, deadWorktrees] = await Promise.all([
+        garbageCollectArtifacts(rootDir()),
+        garbageCollectRestorePoints(rootDir()),
+        garbageCollectDeadWorktrees(rootDir()),
       ]);
       const freed = artifacts.freedBytes + restorePoints.freedBytes;
       const kb = (freed / 1024).toFixed(1);
@@ -119,6 +152,7 @@ export function registerTools(
           text: `Garbage collection complete.\n`
             + `  Artifacts: removed ${artifacts.deletedFiles} orphaned file(s), freed ${(artifacts.freedBytes / 1024).toFixed(1)} KB\n`
             + `  Restore points: removed ${restorePoints.deletedPoints} orphaned backup(s), freed ${(restorePoints.freedBytes / 1024).toFixed(1)} KB\n`
+            + `  Dead worktrees: removed ${deadWorktrees.removedWorkspaces} stale index(es)\n`
             + `  Total reclaimed: ${kb} KB`,
         }],
       };
@@ -140,7 +174,7 @@ export function registerTools(
       content: [{
         type: "text" as const,
         text: await getRepoMap({
-          rootDir,
+          rootDir: rootDir(),
           targetPath: target_path,
           includeSignatures: include_signatures,
           maxFiles: max_files,
@@ -162,7 +196,7 @@ export function registerTools(
     withRequestActivity(async ({ format }) => ({
       content: [{
         type: "text" as const,
-        text: await exportProjectGraphTool({ rootDir, format }),
+        text: await exportProjectGraphTool({ rootDir: rootDir(), format }),
       }],
     }), { toolName: "graph_export" }),
   );
@@ -180,7 +214,7 @@ export function registerTools(
     withRequestActivity(async ({ kind, file, symbol, limit, format }) => ({
       content: [{
         type: "text" as const,
-        text: await queryProjectGraphTool({ rootDir, kind, file, symbol, limit, format }),
+        text: await queryProjectGraphTool({ rootDir: rootDir(), kind, file, symbol, limit, format }),
       }],
     }), { toolName: "graph_query" }),
   );
@@ -199,7 +233,7 @@ export function registerTools(
       content: [{
         type: "text" as const,
         text: await resolveSymbol({
-          rootDir,
+          rootDir: rootDir(),
           symbolName: symbol_name,
           fileContext: file_context,
           kind,
@@ -223,7 +257,7 @@ export function registerTools(
     withRequestActivity(async ({ symbol_name, file, line, limit, format }) => ({
       content: [{
         type: "text" as const,
-        text: await exactReferencesTool({ rootDir, symbolName: symbol_name, file, line, limit, format }),
+        text: await exactReferencesTool({ rootDir: rootDir(), symbolName: symbol_name, file, line, limit, format }),
       }],
     }), { toolName: "exact_references" }),
   );
@@ -238,7 +272,7 @@ export function registerTools(
     withRequestActivity(async ({ index_path, format }) => ({
       content: [{
         type: "text" as const,
-        text: await scipImportTool({ rootDir, indexPath: index_path, format }),
+        text: await scipImportTool({ rootDir: rootDir(), indexPath: index_path, format }),
       }],
     }), { toolName: "scip_import", waitForIndexing: false }),
   );
@@ -252,7 +286,7 @@ export function registerTools(
     withRequestActivity(async ({ format }) => ({
       content: [{
         type: "text" as const,
-        text: await scipStatusTool({ rootDir, format }),
+        text: await scipStatusTool({ rootDir: rootDir(), format }),
       }],
     }), { toolName: "scip_status", waitForIndexing: false }),
   );
@@ -272,7 +306,7 @@ export function registerTools(
       content: [{
         type: "text" as const,
         text: await getContextTree({
-          rootDir,
+          rootDir: rootDir(),
           targetPath: target_path,
           depthLimit: depth_limit,
           includeSymbols: include_symbols,
@@ -292,7 +326,7 @@ export function registerTools(
     withRequestActivity(async ({ file_path }) => ({
       content: [{
         type: "text" as const,
-        text: await getFileSkeleton({ rootDir, filePath: file_path }),
+        text: await getFileSkeleton({ rootDir: rootDir(), filePath: file_path }),
       }],
     }), { toolName: "skeleton" }),
   );
@@ -321,7 +355,7 @@ export function registerTools(
       content: [{
         type: "text" as const,
         text: await unifiedSearch({
-          rootDir,
+          rootDir: rootDir(),
           query: args.query,
           mode: args.mode,
           preset: args.preset,
@@ -359,7 +393,7 @@ export function registerTools(
       content: [{
         type: "text" as const,
         text: await grepProject({
-          rootDir,
+          rootDir: rootDir(),
           pattern: args.pattern,
           regex: args.regex,
           caseSensitive: args.case_sensitive,
@@ -385,7 +419,7 @@ export function registerTools(
     withRequestActivity(async ({ symbol_name, file_context }) => ({
       content: [{
         type: "text" as const,
-        text: await getBlastRadius({ rootDir, symbolName: symbol_name, fileContext: file_context }),
+        text: await getBlastRadius({ rootDir: rootDir(), symbolName: symbol_name, fileContext: file_context }),
       }],
     }), { toolName: "blast_radius" }),
   );
@@ -402,7 +436,7 @@ export function registerTools(
     withRequestActivity(async ({ target_path, verbose }) => ({
       content: [{
         type: "text" as const,
-        text: await runStaticAnalysis({ rootDir, targetPath: target_path, verbose }),
+        text: await runStaticAnalysis({ rootDir: rootDir(), targetPath: target_path, verbose }),
       }],
     }), { toolName: "lint" }),
   );
@@ -422,7 +456,7 @@ export function registerTools(
       return {
         content: [{
           type: "text" as const,
-          text: await proposeCommit({ rootDir, filePath: file_path, newContent: new_content, strict }),
+          text: await proposeCommit({ rootDir: rootDir(), filePath: file_path, newContent: new_content, strict }),
         }],
       };
     }, { toolName: "checkpoint" }),
@@ -434,7 +468,7 @@ export function registerTools(
     "Use this to find a restore point ID for undoing a bad change.",
     {},
     withRequestActivity(async () => {
-      const points = await listRestorePoints(rootDir);
+      const points = await listRestorePoints(rootDir());
       if (points.length === 0) return { content: [{ type: "text" as const, text: "No restore points found." }] };
 
       const session = currentSessionId();
@@ -463,7 +497,7 @@ export function registerTools(
       preview: z.boolean().optional().describe("Dry run: show what would change (overwrite/create/delete) without writing. Recommended before a real restore."),
     },
     withRequestActivity(async ({ point_id, preview }) => {
-      const result = await restorePoint(rootDir, point_id, { preview: preview === true });
+      const result = await restorePoint(rootDir(), point_id, { preview: preview === true });
 
       const renderPlan = (): string => {
         const icon = { overwrite: "✏ overwrite", create: "+ create", delete: "⚠ DELETE", "missing-backup": "? skip (backup missing)" };
@@ -514,7 +548,7 @@ export function registerTools(
     withRequestActivity(async ({ max_depth, max_clusters }) => ({
       content: [{
         type: "text" as const,
-        text: await semanticNavigate({ rootDir, maxDepth: max_depth, maxClusters: max_clusters }),
+        text: await semanticNavigate({ rootDir: rootDir(), maxDepth: max_depth, maxClusters: max_clusters }),
       }],
     }), { toolName: "cluster" }),
   );
@@ -533,7 +567,7 @@ export function registerTools(
       content: [{
         type: "text" as const,
         text: await getFeatureHub({
-          rootDir,
+          rootDir: rootDir(),
           hubPath: hub_path,
           featureName: feature_name,
           showOrphans: show_orphans,
@@ -557,7 +591,7 @@ export function registerTools(
     withRequestActivity(async ({ type, label, content, metadata, scope }) => ({
       content: [{
         type: "text" as const,
-        text: await toolUpsertMemoryNode({ rootDir, type, label, content, metadata, scope }),
+        text: await toolUpsertMemoryNode({ rootDir: rootDir(), type, label, content, metadata, scope }),
       }],
     })),
   );
@@ -576,7 +610,7 @@ export function registerTools(
     withRequestActivity(async ({ source_id, target_id, relation, weight, metadata }) => ({
       content: [{
         type: "text" as const,
-        text: await toolCreateRelation({ rootDir, sourceId: source_id, targetId: target_id, relation, weight, metadata }),
+        text: await toolCreateRelation({ rootDir: rootDir(), sourceId: source_id, targetId: target_id, relation, weight, metadata }),
       }],
     })),
   );
@@ -596,7 +630,7 @@ export function registerTools(
     withRequestActivity(async ({ query, max_depth, top_k, edge_filter, scope }) => ({
       content: [{
         type: "text" as const,
-        text: await toolSearchMemoryGraph({ rootDir, query, maxDepth: max_depth, topK: top_k, edgeFilter: edge_filter, scope }),
+        text: await toolSearchMemoryGraph({ rootDir: rootDir(), query, maxDepth: max_depth, topK: top_k, edgeFilter: edge_filter, scope }),
       }],
     })),
   );
@@ -618,7 +652,7 @@ export function registerTools(
     withRequestActivity(async ({ items, auto_link, scope }) => ({
       content: [{
         type: "text" as const,
-        text: await toolAddInterlinkedContext({ rootDir, items, autoLink: auto_link, scope }),
+        text: await toolAddInterlinkedContext({ rootDir: rootDir(), items, autoLink: auto_link, scope }),
       }],
     })),
   );
@@ -636,7 +670,7 @@ export function registerTools(
     withRequestActivity(async ({ start_node_id, max_depth, edge_filter }) => ({
       content: [{
         type: "text" as const,
-        text: await toolRetrieveWithTraversal({ rootDir, startNodeId: start_node_id, maxDepth: max_depth, edgeFilter: edge_filter }),
+        text: await toolRetrieveWithTraversal({ rootDir: rootDir(), startNodeId: start_node_id, maxDepth: max_depth, edgeFilter: edge_filter }),
       }],
     })),
   );
@@ -651,7 +685,7 @@ export function registerTools(
     withRequestActivity(async ({ node_id }) => ({
       content: [{
         type: "text" as const,
-        text: await toolDeleteMemoryNode({ rootDir, nodeId: node_id }),
+        text: await toolDeleteMemoryNode({ rootDir: rootDir(), nodeId: node_id }),
       }],
     })),
   );
@@ -670,7 +704,7 @@ export function registerTools(
     withRequestActivity(async ({ scope, kind, limit }) => ({
       content: [{
         type: "text" as const,
-        text: await toolListMemoryNodes({ rootDir, scope, kind, limit }),
+        text: await toolListMemoryNodes({ rootDir: rootDir(), scope, kind, limit }),
       }],
     })),
   );
@@ -688,7 +722,7 @@ export function registerTools(
     withRequestActivity(async ({ target_path, force, no_embed }) => ({
       content: [{
         type: "text" as const,
-        text: await reindex({ rootDir, targetPath: target_path, force, noEmbed: no_embed }),
+        text: await reindex({ rootDir: rootDir(), targetPath: target_path, force, noEmbed: no_embed }),
       }],
     }), { toolName: "reindex", waitForIndexing: false }),
   );
@@ -703,7 +737,7 @@ export function registerTools(
     withRequestActivity(async ({ format }) => ({
       content: [{
         type: "text" as const,
-        text: await getStatus({ rootDir, format }),
+        text: await getStatus({ rootDir: rootDir(), format }),
       }],
     }), { toolName: "status" }),
   );
@@ -721,7 +755,7 @@ export function registerTools(
     withRequestActivity(async ({ since, branch, file, scope }) => ({
       content: [{
         type: "text" as const,
-        text: await getDiff({ rootDir, since, branch, file, scope }),
+        text: await getDiff({ rootDir: rootDir(), since, branch, file, scope }),
       }],
     })),
   );
@@ -736,7 +770,7 @@ export function registerTools(
     withRequestActivity(async ({ file }) => ({
       content: [{
         type: "text" as const,
-        text: await getRelated({ rootDir, file }),
+        text: await getRelated({ rootDir: rootDir(), file }),
       }],
     }), { toolName: "related" }),
   );
@@ -753,7 +787,7 @@ export function registerTools(
     withRequestActivity(async ({ file, symbol, changed }) => ({
       content: [{
         type: "text" as const,
-        text: await getTestMap({ rootDir, file, symbol, changed }),
+        text: await getTestMap({ rootDir: rootDir(), file, symbol, changed }),
       }],
     }), { toolName: "test_map" }),
   );
@@ -770,7 +804,7 @@ export function registerTools(
     withRequestActivity(async ({ symbol, file, depth }) => ({
       content: [{
         type: "text" as const,
-        text: await explain({ rootDir, symbol, file, depth }),
+        text: await explain({ rootDir: rootDir(), symbol, file, depth }),
       }],
     }), { toolName: "explain" }),
   );
@@ -791,7 +825,7 @@ export function registerTools(
       content: [{
         type: "text" as const,
         text: await buildTaskPack({
-          rootDir,
+          rootDir: rootDir(),
           task,
           maxFiles: max_files,
           maxMemory: max_memory,
@@ -816,7 +850,7 @@ export function registerTools(
       content: [{
         type: "text" as const,
         text: await buildTaskPack({
-          rootDir,
+          rootDir: rootDir(),
           task,
           maxFiles: max_files,
           format,
@@ -839,7 +873,7 @@ export function registerTools(
       content: [{
         type: "text" as const,
         text: await buildChangeImpact({
-          rootDir,
+          rootDir: rootDir(),
           files,
           symbols,
           includeTests: include_tests,
@@ -863,7 +897,7 @@ export function registerTools(
       content: [{
         type: "text" as const,
         text: await buildChangeImpact({
-          rootDir,
+          rootDir: rootDir(),
           files,
           symbols,
           includeTests: include_tests,
@@ -883,7 +917,7 @@ export function registerTools(
     withRequestActivity(async ({ baseline_path, format }) => ({
       content: [{
         type: "text" as const,
-        text: await impactDeltaTool({ rootDir, baselinePath: baseline_path, format }),
+        text: await impactDeltaTool({ rootDir: rootDir(), baselinePath: baseline_path, format }),
       }],
     }), { toolName: "impact_delta" }),
   );
@@ -901,7 +935,7 @@ export function registerTools(
       content: [{
         type: "text" as const,
         text: await buildEditScope({
-          rootDir,
+          rootDir: rootDir(),
           task,
           maxFiles: max_files,
           preferSmallestScope: prefer_smallest_scope,
@@ -923,7 +957,7 @@ export function registerTools(
       content: [{
         type: "text" as const,
         text: await buildEditScope({
-          rootDir,
+          rootDir: rootDir(),
           task,
           maxFiles: max_files,
           preferSmallestScope: true,
@@ -945,7 +979,7 @@ export function registerTools(
       content: [{
         type: "text" as const,
         text: await buildValidateScope({
-          rootDir,
+          rootDir: rootDir(),
           task,
           maxFiles: max_files,
           format,
@@ -966,7 +1000,7 @@ export function registerTools(
       content: [{
         type: "text" as const,
         text: await buildValidateScope({
-          rootDir,
+          rootDir: rootDir(),
           task,
           maxFiles: max_files,
           format,
@@ -990,7 +1024,7 @@ export function registerTools(
       content: [{
         type: "text" as const,
         text: await buildDecisionBrief({
-          rootDir,
+          rootDir: rootDir(),
           query,
           includeHubs: include_hubs,
           includeMemory: include_memory,
@@ -1018,7 +1052,7 @@ export function registerTools(
       content: [{
         type: "text" as const,
         text: await recordTaskMemory({
-          rootDir,
+          rootDir: rootDir(),
           task,
           summary,
           files,
@@ -1047,7 +1081,7 @@ export function registerTools(
       content: [{
         type: "text" as const,
         text: await recordTaskMemory({
-          rootDir,
+          rootDir: rootDir(),
           task,
           summary,
           files,
@@ -1096,7 +1130,7 @@ export function registerTools(
       content: [{
         type: "text" as const,
         text: await promotePattern({
-          rootDir,
+          rootDir: rootDir(),
           sourceMemoryId: source_memory_id,
           targetScope: target_scope,
           sanitize,
@@ -1127,7 +1161,7 @@ export function registerTools(
       content: [{
         type: "text" as const,
         text: await findSymbol({
-          rootDir,
+          rootDir: rootDir(),
           namePathPattern: name_path_pattern,
           relativePath: relative_path,
           includeBody: include_body,
@@ -1156,7 +1190,7 @@ export function registerTools(
     withRequestActivity(async ({ relative_path, name_path, body, message }) => ({
       content: [{
         type: "text" as const,
-        text: await replaceSymbolBody({ rootDir, relativePath: relative_path, namePath: name_path, body, message }),
+        text: await replaceSymbolBody({ rootDir: rootDir(), relativePath: relative_path, namePath: name_path, body, message }),
       }],
     }), { toolName: "replace_symbol_body" }),
   );
@@ -1174,7 +1208,7 @@ export function registerTools(
     withRequestActivity(async ({ relative_path, name_path, body, message }) => ({
       content: [{
         type: "text" as const,
-        text: await insertAroundSymbol({ rootDir, relativePath: relative_path, namePath: name_path, body, position: "after", message }),
+        text: await insertAroundSymbol({ rootDir: rootDir(), relativePath: relative_path, namePath: name_path, body, position: "after", message }),
       }],
     }), { toolName: "insert_after_symbol" }),
   );
@@ -1192,7 +1226,7 @@ export function registerTools(
     withRequestActivity(async ({ relative_path, name_path, body, message }) => ({
       content: [{
         type: "text" as const,
-        text: await insertAroundSymbol({ rootDir, relativePath: relative_path, namePath: name_path, body, position: "before", message }),
+        text: await insertAroundSymbol({ rootDir: rootDir(), relativePath: relative_path, namePath: name_path, body, position: "before", message }),
       }],
     }), { toolName: "insert_before_symbol" }),
   );
@@ -1211,7 +1245,7 @@ export function registerTools(
     withRequestActivity(async ({ relative_path, name_path, new_name, message }) => ({
       content: [{
         type: "text" as const,
-        text: await renameSymbol({ rootDir, relativePath: relative_path, namePath: name_path, newName: new_name, message }),
+        text: await renameSymbol({ rootDir: rootDir(), relativePath: relative_path, namePath: name_path, newName: new_name, message }),
       }],
     }), { toolName: "rename_symbol" }),
   );

@@ -19,6 +19,8 @@ import { formatDoctorReport, runDoctor } from "./core/doctor.js";
 import { recordToolTiming } from "./core/tool-metrics.js";
 import { registerTools } from "./tools/register-tools.js";
 import { selectRootDir, validateSelectedRoot } from "./core/root-guard.js";
+import { resolveRequestRoot } from "./core/request-root.js";
+import { runWithRequestRoot } from "./core/request-context.js";
 import { CONTEXTPRO_DIR, ensureContextProDir } from "./core/data-dir.js";
 import { closeDB } from "./core/db.js";
 
@@ -159,6 +161,25 @@ function parseCliArgs(args: string[]): ParsedCliArgs {
 const parsedCliArgs = parseCliArgs(process.argv.slice(2));
 const ROOT_DIR = validateSelectedRoot({ rootDir: parsedCliArgs.rootDir, source: parsedCliArgs.rootSource }).rootDir;
 
+// Cache the client's advertised roots briefly so auto-detection doesn't round-trip
+// to the client on every single tool call. The TTL is short because a client can
+// add/remove workspace roots mid-session.
+const ROOTS_CACHE_TTL_MS = 5000;
+let rootsCache: { uris: string[]; at: number } | null = null;
+
+async function getClientRoots(): Promise<string[]> {
+  const now = Date.now();
+  if (rootsCache && now - rootsCache.at < ROOTS_CACHE_TTL_MS) return rootsCache.uris;
+  // Only the client advertising the roots capability can answer; otherwise this
+  // throws and resolveAutoRoot falls back to the boot root.
+  const caps = server.server.getClientCapabilities?.();
+  if (!caps?.roots) throw new Error("client does not support roots capability");
+  const result = await server.server.listRoots();
+  const uris = (result.roots ?? []).map((r) => r.uri).filter((u): u is string => typeof u === "string");
+  rootsCache = { uris, at: now };
+  return uris;
+}
+
 function withRequestActivity<TArgs, TResult>(
   handler: (args: TArgs) => Promise<TResult>,
   options?: { useEmbeddingTracker?: boolean; toolName?: string; waitForIndexing?: boolean },
@@ -167,21 +188,33 @@ function withRequestActivity<TArgs, TResult>(
     const started = Date.now();
     noteServerActivity();
     if (options?.useEmbeddingTracker) ensureTrackerRunning();
-    try {
-      await verifyProjectContext(ROOT_DIR);
-      if (options?.waitForIndexing !== false) {
-        const waitState = await waitForIndexingCompletion(ROOT_DIR);
-        if (waitState.timedOut) {
-          throw new Error("Indexing is still in progress and did not settle before timeout.");
+    // Resolve the workspace this request targets. Precedence: an explicit `root`
+    // arg → the MCP client's advertised roots (auto-detected) → the server's boot
+    // ROOT_DIR. The resolved root is made active for the handler via
+    // AsyncLocalStorage, and `root` is stripped so handlers see their normal args.
+    const resolution = await resolveRequestRoot(args as Record<string, unknown>, ROOT_DIR, {
+      rootsProvider: getClientRoots,
+      requestCwd: process.cwd(),
+    });
+    const effectiveRoot = resolution.rootDir;
+    const handlerArgs = resolution.handlerArgs as TArgs;
+    return runWithRequestRoot(effectiveRoot, async () => {
+      try {
+        await verifyProjectContext(effectiveRoot);
+        if (options?.waitForIndexing !== false) {
+          const waitState = await waitForIndexingCompletion(effectiveRoot);
+          if (waitState.timedOut) {
+            throw new Error("Indexing is still in progress and did not settle before timeout.");
+          }
         }
+        const result = await handler(handlerArgs);
+        recordToolTiming(effectiveRoot, options?.toolName ?? "unknown", Date.now() - started, "ok");
+        return result;
+      } catch (error) {
+        recordToolTiming(effectiveRoot, options?.toolName ?? "unknown", Date.now() - started, "error");
+        throw error;
       }
-      const result = await handler(args);
-      recordToolTiming(ROOT_DIR, options?.toolName ?? "unknown", Date.now() - started, "ok");
-      return result;
-    } catch (error) {
-      recordToolTiming(ROOT_DIR, options?.toolName ?? "unknown", Date.now() - started, "error");
-      throw error;
-    }
+    });
   };
 }
 
