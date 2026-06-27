@@ -1,9 +1,9 @@
-// File-system embedding tracker for realtime cache refresh on source changes
-// FEATURE: Incremental embedding updates for changed files and identifiers
+// File-system index tracker for realtime refresh on source changes
+// FEATURE: Incremental structural + embedding updates for changed files so the
+// symbol/import/call-site graph and semantic vectors stay current as agents edit.
 
 import { watch, type FSWatcher } from "fs";
-import { refreshFileSearchEmbeddings } from "../tools/semantic-search.js";
-import { refreshIdentifierEmbeddings } from "../tools/semantic-identifiers.js";
+import { refreshFilesStructural } from "../tools/reindex.js";
 
 export interface EmbeddingTrackerOptions {
   rootDir: string;
@@ -92,17 +92,19 @@ export function startEmbeddingTracker(options: EmbeddingTrackerOptions): () => v
     for (const file of batch) pendingFiles.delete(file);
 
     try {
-      const [fileEmbeds, identifierEmbeds] = await Promise.all([
-        refreshFileSearchEmbeddings({ rootDir: options.rootDir, relativePaths: batch }),
-        refreshIdentifierEmbeddings({ rootDir: options.rootDir, relativePaths: batch }),
-      ]);
-      if (fileEmbeds > 0 || identifierEmbeds > 0) {
+      // Structural refresh keeps the symbol/import/call-site graph current — not
+      // just embeddings — so related, blast_radius, and test_map reflect edits as
+      // they happen. It re-indexes only this batch of changed files (no directory
+      // walk) and refreshes their embeddings as part of the same pass.
+      const result = await refreshFilesStructural(options.rootDir, batch);
+      if (result.indexed > 0) {
         console.error(
-          `Embedding tracker refreshed ${batch.length} file(s) | file-vectors=${fileEmbeds}, identifier-vectors=${identifierEmbeds}`,
+          `Index tracker refreshed ${result.indexed} file(s) | symbols/imports/call-sites + embeddings`
+          + (result.changedSymbols.length > 0 ? ` | ${result.changedSymbols.length} symbol change(s)` : ""),
         );
       }
     } catch (error) {
-      console.error("Embedding tracker refresh failed:", error);
+      console.error("Index tracker refresh failed:", error);
     } finally {
       isProcessing = false;
       if (pendingFiles.size > 0) schedule(100);

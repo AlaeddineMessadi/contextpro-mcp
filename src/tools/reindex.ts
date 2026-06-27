@@ -576,3 +576,105 @@ export async function quickRefresh(rootDir: string): Promise<{
 
   return { staleCount: totalStale, refreshed: false, waitedForIndexing: waitState.waited, indexingTimedOut: false };
 }
+
+export interface StructuralRefreshResult {
+  /** Files whose symbols, imports, and call sites were re-indexed. */
+  indexed: number;
+  /** Files skipped because they are unsupported, missing, or unreadable. */
+  skipped: number;
+  /** `+path:name` / `-path:name` markers for symbols added/removed this pass. */
+  changedSymbols: string[];
+}
+
+/**
+ * Re-index the structural graph (symbols, imports, call sites) plus embeddings for
+ * an EXPLICIT list of changed files — no directory walk, no whole-tree hashing.
+ *
+ * This is the per-file core of quickRefresh, exposed so the embedding tracker can
+ * keep related/blast_radius/test_map current as agents edit, scaling with the size
+ * of the edit rather than the size of the repo. Missing/unsupported files are
+ * counted as skipped, never thrown.
+ */
+export async function refreshFilesStructural(
+  rootDir: string,
+  relativePaths: string[],
+): Promise<StructuralRefreshResult> {
+  const unique = [...new Set(relativePaths.map((p) => p.replace(/\\/g, "/")))].filter((p) => p.length > 0);
+  const targets = unique.filter((p) => isSupportedFile(p));
+  if (targets.length === 0) {
+    return { indexed: 0, skipped: unique.length, changedSymbols: [] };
+  }
+
+  const db = await getDB(rootDir);
+  const changedSymbols: string[] = [];
+  const pendingImports: PendingImportSet[] = [];
+  const indexedPaths: string[] = [];
+  let skipped = unique.length - targets.length;
+
+  for (const path of targets) {
+    try {
+      const fullPath = resolveProjectPath(rootDir, path, "indexed file");
+      const content = await readFile(fullPath, "utf-8");
+      const hash = hashContent(content);
+      const analysis = await analyzeFile(fullPath);
+      const flatSymbols = flattenSymbols(analysis.symbols);
+      const lang = detectLanguage(fullPath);
+      const fileSize = (await stat(fullPath)).size;
+
+      const existingFile = db.getFile(path);
+      const oldSymbolNames = existingFile ? new Set(db.getSymbolsByFile(existingFile.id).map((s) => s.name)) : new Set<string>();
+      const newSymbolNames = new Set(flatSymbols.map((s) => s.name));
+      for (const name of newSymbolNames) {
+        if (!oldSymbolNames.has(name)) changedSymbols.push(`+${path}:${name}`);
+      }
+      for (const name of oldSymbolNames) {
+        if (!newSymbolNames.has(name)) changedSymbols.push(`-${path}:${name}`);
+      }
+
+      const fileId = db.upsertFile(path, hash, analysis.header, lang, fileSize);
+      db.upsertSymbols(fileId, flatSymbols.map((s) => ({
+        name: s.name, kind: s.kind, lineStart: s.line, lineEnd: s.endLine, signature: s.signature,
+      })));
+      db.upsertFileSearchDocument({
+        path,
+        header: analysis.header,
+        language: lang,
+        symbols: flatSymbols.map((s) => ({ name: s.name, kind: s.kind, signature: s.signature })),
+        content: buildSearchBody(content),
+      });
+      pendingImports.push({ fileId, imports: extractImports(content, fullPath) });
+      db.upsertCallSites(fileId, extractCallSites(content));
+      indexedPaths.push(path);
+    } catch (error) {
+      skipped++;
+      const message = error instanceof Error ? error.message : String(error);
+      process.stderr.write(`[contextpro/structural-refresh] skipped ${path}: ${message}\n`);
+    }
+  }
+
+  // Rebuild import edges for the files we touched against the current file set.
+  const resolvablePaths = new Set(db.getAllFiles().map((file) => file.path));
+  for (const pending of pendingImports) {
+    const sourceFile = db.getFileById(pending.fileId);
+    if (!sourceFile) continue;
+    db.deleteImportsForFile(pending.fileId);
+    for (const imp of pending.imports) {
+      const targetRel = resolveImportPath(imp.source, sourceFile.path, resolvablePaths, rootDir, imp.specifiers);
+      const targetFile = targetRel ? db.getFile(targetRel) : null;
+      db.upsertImport(pending.fileId, imp.source, targetFile?.id ?? null, imp.type, imp.specifiers.length > 0 ? imp.specifiers : undefined);
+    }
+  }
+
+  if (indexedPaths.length > 0) {
+    db.bumpIndexGeneration();
+    db.setMeta("last_reindex_at", String(Date.now()));
+    invalidateSearchCache();
+    invalidateIdentifierSearchCache();
+    await Promise.all([
+      refreshFileSearchEmbeddings({ rootDir, relativePaths: indexedPaths }).catch(() => 0),
+      refreshIdentifierEmbeddings({ rootDir, relativePaths: indexedPaths }).catch(() => 0),
+    ]);
+  }
+
+  return { indexed: indexedPaths.length, skipped, changedSymbols };
+}
