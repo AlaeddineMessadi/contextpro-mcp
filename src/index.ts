@@ -16,13 +16,13 @@ import { quickRefresh, waitForIndexingCompletion } from "./tools/reindex.js";
 import { ensureProjectConfig, registerWorkspace, verifyProjectContext } from "./core/project-config.js";
 import { formatStartupHealthReport, runStartupHealthCheck } from "./core/startup-health.js";
 import { formatDoctorReport, runDoctor } from "./core/doctor.js";
-import { recordToolTiming } from "./core/tool-metrics.js";
+import { recordToolTiming, setToolCallSink } from "./core/tool-metrics.js";
 import { registerTools } from "./tools/register-tools.js";
 import { selectRootDir, validateSelectedRoot } from "./core/root-guard.js";
 import { resolveRequestRoot } from "./core/request-root.js";
 import { runWithRequestRoot } from "./core/request-context.js";
 import { CONTEXTPRO_DIR, ensureContextProDir } from "./core/data-dir.js";
-import { closeDB } from "./core/db.js";
+import { closeDB, getDB } from "./core/db.js";
 
 type AgentTarget = "claude" | "cursor" | "vscode" | "windsurf" | "opencode";
 
@@ -363,6 +363,23 @@ server.resource(
 );
 
 registerTools(server, ROOT_DIR, withRequestActivity, noteServerActivity);
+
+// Persist every tool call to the per-root DB so a separate dashboard process can
+// show real tool-call history across restarts. Best-effort and fire-and-forget:
+// getDB is async + cached, and a failure here must never disturb the tool itself.
+// Prune occasionally to keep the table bounded.
+let toolCallWrites = 0;
+setToolCallSink((event) => {
+  void (async () => {
+    try {
+      const db = await getDB(event.rootDir);
+      db.recordToolCall(event.tool, event.status, event.durationMs, event.calledAt);
+      if (++toolCallWrites % 200 === 0) db.pruneToolCalls(5000);
+    } catch {
+      // telemetry is non-critical
+    }
+  })();
+});
 
 async function main() {
   const args = process.argv.slice(2);

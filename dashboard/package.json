@@ -1,0 +1,24 @@
+{
+  "name": "contextpro-dashboard",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Live operational dashboard for the ContextPro MCP server — index health, tool-call history, code graph, and memory graph.",
+  "scripts": {
+    "dev": "next dev -p 6868",
+    "build": "next build",
+    "start": "next start -p 6868",
+    "lint": "next lint"
+  },
+  "dependencies": {
+    "contextpro-mcp": "file:..",
+    "next": "16.1.6",
+    "react": "19.2.3",
+    "react-dom": "19.2.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "typescript": "^5.9.3"
+  }
+}

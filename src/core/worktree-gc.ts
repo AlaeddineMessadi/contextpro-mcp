@@ -10,6 +10,7 @@ import { promisify } from "util";
 import { CONTEXTPRO_DIR } from "./data-dir.js";
 import { closeDB } from "./db.js";
 import { forgetWorkspace, listActiveWorkspaces } from "./workspace-router.js";
+import { forgetReconcileStatCache } from "./index-reconcile.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -59,6 +60,7 @@ export async function garbageCollectDeadWorktrees(baseRoot: string): Promise<Wor
     // Dead worktree: close its DB handle, forget it, and reclaim its overlay dir.
     closeDB(ws.rootDir);
     forgetWorkspace(ws.rootDir);
+    forgetReconcileStatCache(ws.rootDir);
     removedWorkspaces += 1;
     const overlayDir = join(ws.rootDir, CONTEXTPRO_DIR);
     try {
