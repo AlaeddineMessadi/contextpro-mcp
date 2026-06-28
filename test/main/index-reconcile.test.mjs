@@ -127,4 +127,26 @@ describe("reconcileIndex — self-healing drift recovery", () => {
     const final = await reconcileIndex(root, { maxFiles: 40 });
     assert.equal(final.drifted, 0, "all files should eventually be indexed");
   });
+
+  it("still detects a real edit after the mtime pre-filter has cached the file", async () => {
+    // Seed + index a file so it's in the stat cache after the first sweep.
+    await writeFile(join(root, "watched.ts"), "export const v = 1;\n");
+    await indexFiles(["watched.ts"]);
+    const { reconcileIndex, forgetReconcileStatCache } = await loadReconcile();
+    forgetReconcileStatCache(root); // start from a clean cache for determinism
+
+    // First sweep: seeds the stat cache, no drift (already indexed & matching).
+    const first = await reconcileIndex(root, { maxFiles: 40 });
+    assert.equal(first.drifted, 0, "freshly-indexed file should not drift");
+
+    // Second sweep with NO change: the pre-filter should skip it → still no drift.
+    const second = await reconcileIndex(root, { maxFiles: 40 });
+    assert.equal(second.drifted, 0, "unchanged file must stay no-drift (pre-filter skip)");
+
+    // Now actually edit it — mtime+size change, so the pre-filter must NOT skip it.
+    await new Promise((r) => setTimeout(r, 10)); // ensure mtime advances
+    await writeFile(join(root, "watched.ts"), "export const v = 2; // changed\n");
+    const third = await reconcileIndex(root, { maxFiles: 40 });
+    assert.equal(third.refreshed, 1, "a real edit must be detected despite the mtime cache");
+  });
 });
