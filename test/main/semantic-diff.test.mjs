@@ -196,6 +196,32 @@ describe("computeSemanticDiff", () => {
       "Python in-string whitespace change must not be collapsed away");
   });
 
+  it("detects a change inside a MULTILINE template literal", async () => {
+    await writeFile(join(root, "tpl.ts"), "export function t(): string {\n  return `a - b\nsecond`;\n}\n");
+    await commitAll("base");
+    await writeFile(join(root, "tpl.ts"), "export function t(): string {\n  return `a-b\nsecond`;\n}\n");
+
+    const { computeSemanticDiff } = await import("../../build/core/semantic-diff.js");
+    const result = await computeSemanticDiff(root, { since: "HEAD" });
+    const file = result.files.find((f) => f.path === "tpl.ts");
+    assert.ok(file && file.symbols.some((s) => s.name === "t" && s.change === "modified"),
+      "a change inside a multiline template literal must register");
+  });
+
+  it("distinguishes Python block levels (2-space vs 3-space indent)", async () => {
+    // Move the return from 2 spaces (after the if header) to 3 spaces — a real
+    // control-flow change that the old /2 bucketing collapsed.
+    await writeFile(join(root, "blk.py"), "def f(x):\n  if x:\n   pass\n  return x\n");
+    await commitAll("base");
+    await writeFile(join(root, "blk.py"), "def f(x):\n  if x:\n   pass\n   return x\n");
+
+    const { computeSemanticDiff } = await import("../../build/core/semantic-diff.js");
+    const result = await computeSemanticDiff(root, { since: "HEAD" });
+    const file = result.files.find((f) => f.path === "blk.py");
+    assert.ok(file && file.symbols.some((s) => s.name === "f" && s.change === "modified"),
+      "moving a line to a deeper indent level must register as a change");
+  });
+
   it("keeps the source file as text (no NUL bytes in fingerprint placeholders)", async () => {
     const { readFile } = await import("node:fs/promises");
     const src = await readFile(new URL("../../src/core/semantic-diff.ts", import.meta.url), "utf-8");

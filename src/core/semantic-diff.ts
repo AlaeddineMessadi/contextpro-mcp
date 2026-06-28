@@ -84,34 +84,40 @@ function bodyFingerprint(symbol: SymbolLocation, lines: string[], path: string):
   const span = lines.slice(start, end);
   const ext = path.slice(path.lastIndexOf(".")).toLowerCase();
 
-  // Pull literals out of each line first so formatting normalization can't touch
-  // their contents. `literals` preserves them verbatim and in order.
   const literals: string[] = [];
-  const masked = span.map((line) => maskStringLiterals(line, literals));
-  // An order-sensitive serialization of the literals, appended to the fingerprint
-  // so an edit INSIDE any literal changes it. The separator is a word char so it
-  // can never collide with placeholder/code text in a way that hides a change.
-  const literalTail = literals.length > 0 ? "_LITS_" + literals.join("_LITSEP_") : "";
+  // An order-sensitive serialization of captured literals, appended to the
+  // fingerprint so an edit INSIDE any literal changes it.
+  const tail = (): string => (literals.length > 0 ? "_LITS_" + literals.join("_LITSEP_") : "");
 
   if (INDENT_SIGNIFICANT_EXTS.has(ext)) {
-    const body = masked
+    // Indentation is semantic here, so we keep per-line structure. Mask single-line
+    // literals per line; multiline literals are rare in these languages and fall
+    // through to whitespace-collapse (acceptable, documented limitation). Use the
+    // EXACT indent width as the depth marker so e.g. 2-space vs 3-space — a real
+    // block-level change — produces different fingerprints (no /2 bucketing).
+    const body = span
+      .map((line) => maskStringLiterals(line, literals))
       .map((line) => {
         const indentRun = line.match(/^[ \t]*/);
         const indent = (indentRun ? indentRun[0] : "").replace(/\t/g, "  ").length;
-        const depth = Math.floor(indent / 2);
         const content = line.trim().replace(/[ \t]+/g, " ");
-        return content.length > 0 ? "I".repeat(depth) + ">" + content : "";
+        return content.length > 0 ? "I".repeat(indent) + ">" + content : "";
       })
       .filter((line) => line.length > 0)
       .join("\n");
-    return body + literalTail;
+    return body + tail();
   }
 
-  // Free-form languages: collapse layout (multi-line vs single-line, trailing ws)
-  // and strip whitespace adjacent to punctuation (`(){`, `() {`, `; }` all match).
-  // Literals are already masked, so this only touches code whitespace.
-  const joined = masked.map((line) => line.trim()).filter((line) => line.length > 0).join(" ");
-  return joined.replace(/[ \t]*([^\w\s])[ \t]*/g, "$1") + literalTail;
+  // Free-form languages: mask literals across the WHOLE span first (joined with
+  // newlines), so a MULTILINE template literal is captured as one literal and its
+  // contents can't be rewritten by normalization. Then collapse layout (multi-line
+  // vs single-line, trailing ws) and strip whitespace adjacent to punctuation
+  // (`(){`, `() {`, `; }` all match). Note: regexp literals are NOT masked — telling
+  // a `/…/` regex from a `/` division reliably needs full tokenization, so a
+  // whitespace-only edit inside a regex literal is a known, narrow blind spot.
+  const masked = maskStringLiterals(span.join("\n"), literals);
+  const joined = masked.split("\n").map((line) => line.trim()).filter((line) => line.length > 0).join(" ");
+  return joined.replace(/[ \t]*([^\w\s])[ \t]*/g, "$1") + tail();
 }
 
 // A placeholder made of word characters only, so neither whitespace-collapse nor
