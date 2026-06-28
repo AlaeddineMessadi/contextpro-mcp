@@ -82,4 +82,32 @@ describe("computeChangedSince", () => {
     assert.match(text, /TESTS TO RUN/, "TESTS section must not be dropped for a non-symbol change");
     assert.match(text, /RUN ALL/, "run-all fallback must be shown even with no symbol changes");
   });
+
+  it("renders the TESTS section for a non-symbol edit even with no mapped tests", async () => {
+    // Append a top-level comment to user.ts — no SYMBOL change, no mapped test.
+    await writeFile(
+      join(root, "src", "user.ts"),
+      "import { core } from './core';\nexport function user(): number { return core(); }\n// trailing comment only\n",
+    );
+
+    const { getChangedSince } = await import("../../build/tools/changed-since.js");
+    const text = await getChangedSince({ rootDir: root, since: "HEAD" });
+    assert.match(text, /TESTS TO RUN/, "a changed file with no mapped tests must still reach the TESTS section");
+    assert.doesNotMatch(text, /^No changes detected\.$/m, "must not falsely report an empty diff");
+  });
+
+  it("lists dependents for a file changed only outside parsed symbols", async () => {
+    // core.ts is imported by user.ts. Change core.ts outside its symbol body.
+    await writeFile(
+      join(root, "src", "core.ts"),
+      "// leading note\nexport function core(): number { return 1; }\n",
+    );
+
+    const { computeChangedSince } = await import("../../build/core/changed-since.js");
+    const result = await computeChangedSince(root, { since: "HEAD" });
+    assert.ok(
+      result.dependents.some((d) => d.path === "src/core.ts" && d.importers.includes("src/user.ts")),
+      `dependents must include core.ts←user.ts even for a non-symbol edit, got ${JSON.stringify(result.dependents)}`,
+    );
+  });
 });

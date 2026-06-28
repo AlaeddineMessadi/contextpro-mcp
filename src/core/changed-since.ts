@@ -42,19 +42,25 @@ export async function computeChangedSince(
   ]);
 
   // Dependents: for each changed file, the files that import it (file-level blast
-  // radius) from the indexed import graph. This is the "what else does my change
-  // touch" signal without a full per-symbol blast_radius sweep.
+  // radius) from the indexed import graph. Use the UNION of files with symbol
+  // changes AND all changed files reported by test_impact — a file edited only
+  // outside parsed symbols (an import-only or top-level side-effect change) won't
+  // appear in semantic_diff's files but still has importers worth surfacing.
+  const changedPaths = new Set<string>([
+    ...changes.files.map((f) => f.path),
+    ...tests.changedFiles,
+  ]);
   const db = await getDB(rootDir);
   const dependents: DependentEntry[] = [];
-  for (const file of changes.files) {
-    const row = db.getFile(file.path);
+  for (const path of [...changedPaths].sort()) {
+    const row = db.getFile(path);
     if (!row) continue;
     const importers = db.getImportersOf(row.id)
       .map((imp) => db.getFileById(imp.source_file_id)?.path)
       .filter((p): p is string => typeof p === "string")
       .sort();
     if (importers.length > 0) {
-      dependents.push({ path: file.path, importers });
+      dependents.push({ path, importers });
     }
   }
 

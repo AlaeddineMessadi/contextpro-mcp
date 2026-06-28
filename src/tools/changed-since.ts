@@ -29,13 +29,14 @@ function formatChangedSince(result: ChangedSinceResult): string {
   ];
 
   // Only bail entirely when there is genuinely nothing to report — no symbol
-  // changes AND no tests to run AND no run-all trigger. A non-symbol change (a
-  // package.json/lockfile edit, an invalid ref, or an import-only edit) can still
-  // require tests or a run-all fallback, and dropping that here would defeat the
-  // safety guarantee of the combined pack.
-  const hasTestSignal = tests.runAll || tests.tests.length > 0;
+  // changes AND no changed files at all (so no tests, no run-all, and no
+  // "changed but uncovered" files to warn about). A non-symbol change (a
+  // package.json/lockfile edit, an invalid ref, or an import-only edit) still
+  // shows up in test_impact's changedFiles and must reach the TESTS section,
+  // even when it maps to zero tests — otherwise the pack falsely looks empty.
+  const hasTestSignal = tests.runAll || tests.tests.length > 0 || tests.changedFiles.length > 0;
   if (changes.files.length === 0 && !hasTestSignal) {
-    lines.push("No symbol-level changes detected.");
+    lines.push("No changes detected.");
     return lines.join("\n");
   }
 
