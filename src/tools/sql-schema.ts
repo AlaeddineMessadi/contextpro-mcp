@@ -5,7 +5,7 @@
 import { readFile } from "fs/promises";
 import { walkDirectory } from "../core/walker.js";
 import { resolveProjectPath } from "../core/path-guard.js";
-import { extractSqlSchema, type SqlSchema, type SqlTable, type SqlPolicy, type SqlFunction } from "../core/sql-schema.js";
+import { extractSqlSchema, qualifiedName, type SqlSchema, type SqlTable, type SqlPolicy, type SqlFunction } from "../core/sql-schema.js";
 
 export interface SqlSchemaOptions {
   rootDir: string;
@@ -49,14 +49,18 @@ async function collectSchemas(options: SqlSchemaOptions): Promise<SqlSchema[]> {
  * is sticky (once enabled in any migration it stays enabled).
  */
 export function aggregateSchemas(schemas: SqlSchema[]): AggregatedSchema {
-  const tablesByName = new Map<string, SqlTable>();
+  // Key by SCHEMA-QUALIFIED name so the same table name in different schemas
+  // (Supabase's auth.users vs an app's public.users) stays distinct instead of
+  // one overwriting the other (and RLS being applied to the wrong table).
+  const tablesByKey = new Map<string, SqlTable>();
   const policies: SqlPolicy[] = [];
   const functions: SqlFunction[] = [];
 
   for (const schema of schemas) {
     for (const table of schema.tables) {
-      const existing = tablesByName.get(table.name);
-      tablesByName.set(table.name, {
+      const key = qualifiedName(table.schema, table.name);
+      const existing = tablesByKey.get(key);
+      tablesByKey.set(key, {
         ...table,
         rlsEnabled: table.rlsEnabled || (existing?.rlsEnabled ?? false),
       });
@@ -67,17 +71,16 @@ export function aggregateSchemas(schemas: SqlSchema[]): AggregatedSchema {
 
   // Apply every `ENABLE ROW LEVEL SECURITY` seen in ANY migration to the merged
   // table, even when the enable lives in a different file than the CREATE TABLE
-  // (the common Supabase layout). Without this, the table is wrongly reported
-  // `[RLS OFF]` because the per-file parse never saw both statements together.
+  // (the common Supabase layout). The rlsEnabledTables entries are schema-qualified.
   for (const schema of schemas) {
-    for (const tableName of schema.rlsEnabledTables) {
-      const merged = tablesByName.get(tableName);
+    for (const qualified of schema.rlsEnabledTables) {
+      const merged = tablesByKey.get(qualified);
       if (merged) merged.rlsEnabled = true;
     }
   }
 
   return {
-    tables: [...tablesByName.values()],
+    tables: [...tablesByKey.values()],
     policies,
     functions,
     filesScanned: schemas.length,

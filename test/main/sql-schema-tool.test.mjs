@@ -95,4 +95,27 @@ describe("sql_schema tool", () => {
     assert.match(text, /worker_id/);
     assert.doesNotMatch(text, /is_admin/, "function should be filtered out when querying a table");
   });
+
+  it("keeps same-named tables in different schemas distinct (auth.users vs public.users)", async () => {
+    await writeFile(
+      join(root, "supabase", "migrations", "0006_users.sql"),
+      [
+        "create table auth.users (id uuid primary key, encrypted_password text);",
+        "create table public.users (id uuid primary key, display_name text);",
+        "alter table public.users enable row level security;",
+      ].join("\n") + "\n",
+    );
+
+    const { getSqlSchema } = await import("../../build/tools/sql-schema.js");
+    const json = JSON.parse(await getSqlSchema({ rootDir: root, name: "users", format: "json" }));
+    const authUsers = json.tables.find((t) => t.schema === "auth" && t.name === "users");
+    const publicUsers = json.tables.find((t) => t.schema === "public" && t.name === "users");
+    assert.ok(authUsers, "auth.users must survive as its own entry");
+    assert.ok(publicUsers, "public.users must survive as its own entry");
+    assert.ok(authUsers.columns.some((c) => c.name === "encrypted_password"), "auth.users keeps its own columns");
+    assert.ok(publicUsers.columns.some((c) => c.name === "display_name"), "public.users keeps its own columns");
+    // RLS enabled only on public.users — must not leak to auth.users.
+    assert.equal(publicUsers.rlsEnabled, true);
+    assert.equal(authUsers.rlsEnabled, false, "RLS enable on public.users must not apply to auth.users");
+  });
 });

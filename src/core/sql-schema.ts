@@ -59,6 +59,11 @@ export interface SqlSchema {
   rlsEnabledTables: string[];
 }
 
+/** A schema-qualified table key, e.g. "public.users" — distinguishes auth.users. */
+export function qualifiedName(schema: string, name: string): string {
+  return `${schema}.${name}`;
+}
+
 function stripSchemaPrefix(qualified: string): { schema: string; name: string } {
   const cleaned = qualified.replace(/"/g, "").trim();
   const parts = cleaned.split(".");
@@ -148,11 +153,13 @@ function applyRlsFlags(source: string, tables: SqlTable[]): string[] {
   const re = /alter\s+table\s+(?:if\s+exists\s+)?([\w."]+)\s+enable\s+row\s+level\s+security/gi;
   let match: RegExpExecArray | null;
   while ((match = re.exec(source)) !== null) {
-    const { name } = stripSchemaPrefix(match[1]);
-    enabled.push(name);
+    const { schema, name } = stripSchemaPrefix(match[1]);
+    // Store SCHEMA-QUALIFIED so a later cross-file enable targets the right table
+    // (Supabase's auth.users must not be confused with an app's public.users).
+    enabled.push(qualifiedName(schema, name));
     // Set the flag in-file when the CREATE TABLE is in the same file; otherwise the
     // returned list lets the aggregator apply it across migration files.
-    const table = tables.find((t) => t.name === name);
+    const table = tables.find((t) => t.name === name && t.schema === schema);
     if (table) table.rlsEnabled = true;
   }
   return enabled;
@@ -202,6 +209,10 @@ function extractFunctions(source: string): SqlFunction[] {
     const afterParen = source.slice(match.index);
     const dollarTag = afterParen.match(/as\s+(\$[\w]*\$)/i);
     let body = "";
+    // Options like LANGUAGE / SECURITY DEFINER can appear BEFORE the dollar body
+    // (`LANGUAGE sql SECURITY DEFINER AS $$…$$`) OR AFTER it
+    // (`AS $$…$$ LANGUAGE plpgsql SECURITY DEFINER;`). Scan the whole statement
+    // with the body content REMOVED, so both forms are detected.
     let header = afterParen;
     if (dollarTag) {
       const tag = dollarTag[1];
@@ -209,7 +220,10 @@ function extractFunctions(source: string): SqlFunction[] {
       const closeIdx = afterParen.indexOf(tag, openIdx + tag.length);
       if (openIdx !== -1 && closeIdx !== -1) {
         body = afterParen.slice(openIdx + tag.length, closeIdx).trim();
-        header = afterParen.slice(0, openIdx);
+        // header = everything before the body + everything after it (to end of stmt).
+        const afterBody = afterParen.slice(closeIdx + tag.length);
+        const stmtEnd = afterBody.indexOf(";");
+        header = afterParen.slice(0, openIdx) + " " + (stmtEnd >= 0 ? afterBody.slice(0, stmtEnd) : afterBody);
       }
     }
     const securityDefiner = /\bsecurity\s+definer\b/i.test(header);

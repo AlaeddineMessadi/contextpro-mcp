@@ -98,4 +98,17 @@ describe("extractSqlSchema", () => {
     assert.deepEqual(schema.policies, []);
     assert.deepEqual(schema.functions, []);
   });
+
+  it("detects LANGUAGE / SECURITY DEFINER placed AFTER the dollar-quoted body", () => {
+    const sql = [
+      "create function public.after_opts(uid uuid) returns boolean as $$",
+      "  select true;",
+      "$$ language plpgsql security definer;",
+    ].join("\n");
+    const schema = extractSqlSchema("m.sql", sql);
+    const fn = schema.functions.find((f) => f.name === "after_opts");
+    assert.ok(fn, "function extracted");
+    assert.equal(fn.securityDefiner, true, "SECURITY DEFINER after body must be detected");
+    assert.equal(fn.language, "plpgsql", "LANGUAGE after body must be detected");
+  });
 });
