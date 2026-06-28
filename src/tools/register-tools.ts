@@ -18,6 +18,7 @@ import { getStatus } from "./status.js";
 import { getDiff } from "./diff.js";
 import { getSemanticDiff } from "./semantic-diff.js";
 import { getSqlSchema } from "./sql-schema.js";
+import { getTestImpact } from "./test-impact.js";
 import { getRelated } from "./related.js";
 import { getTestMap } from "./test-map.js";
 import { explain } from "./explain.js";
@@ -827,6 +828,24 @@ export function registerTools(
         text: await getTestMap({ rootDir: rootDir(), file, symbol, changed }),
       }],
     }), { toolName: "test_map" }),
+  );
+
+  server.tool(
+    "test_impact",
+    "Select only the tests affected by changes since a git ref (default HEAD; pass a branch like 'main'). " +
+    "Walks reverse import dependencies from changed source files to the tests that exercise them, plus any " +
+    "directly-changed test files. Forces a run-all fallback when build config / lockfiles change. " +
+    "The 'which tests must I run' half of the per-PR loop — O(diff), not O(repo).",
+    {
+      since: z.string().optional().describe("Git ref to compare the working tree against (e.g. main, HEAD~3). Default: HEAD."),
+      format: z.enum(["text", "json"]).optional().describe("Output format. Default: text."),
+    },
+    withRequestActivity(async ({ since, format }) => ({
+      content: [{
+        type: "text" as const,
+        text: await getTestImpact({ rootDir: rootDir(), since, format }),
+      }],
+    }), { toolName: "test_impact" }),
   );
 
   server.tool(

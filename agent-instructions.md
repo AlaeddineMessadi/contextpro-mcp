@@ -102,6 +102,8 @@ A separate [`pmll-memory-mcp`](https://www.npmjs.com/package/pmll-memory-mcp) se
 | `change_impact`     | Estimate breakage from changing files/symbols.             |
 | `related`           | What a file imports, what imports it, siblings, tests.     |
 | `test_map`          | Source-to-test file mapping.                               |
+| `test_impact`       | Tests affected by changes since a ref (run-all fallback on config changes). |
+| `semantic_diff`     | What SYMBOLS changed since a ref (added/removed/modified/moved), ignores reformatting. |
 | `exact_references`  | LSP-resolved references (TS/JS) or SCIP-resolved otherwise.|
 | `impact_delta`      | Compare a saved graph export to the current graph.         |
 
@@ -149,6 +151,11 @@ A separate [`pmll-memory-mcp`](https://www.npmjs.com/package/pmll-memory-mcp) se
 | `graph_query`    | Summary, file, symbol, or impact view.                       |
 | `scip_import`    | Import a SCIP JSON index for exact cross-language refs.      |
 | `scip_status`    | Check whether a SCIP index is available.                     |
+
+### SQL / Database (Postgres / Supabase)
+| Tool          | When to Use                                                     |
+|---------------|----------------------------------------------------------------|
+| `sql_schema`  | Table columns/types/CHECK, RLS enabled state, RLS policies (command/roles/predicate), and SECURITY DEFINER function bodies — from migration `.sql` files, without psql. Filter by table/policy/function name. Use this instead of shelling out to psql / `pg_get_functiondef` for schema & RLS questions. |
 
 ## Deprecated alias tools (still wired in 1.2.x, removed in 2.0)
 
