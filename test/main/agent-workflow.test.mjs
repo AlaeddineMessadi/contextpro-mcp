@@ -103,7 +103,9 @@ describe("agent workflow metadata", () => {
     });
 
     const reindexMod = await import("../../build/tools/reindex.js");
-    await reindexMod.reindex({ rootDir: fixtureRoot, force: true });
+    // Auto-hub generation is opt-in (it makes a chat-model call per hub); this test
+    // verifies the auto-hub capability, so enable it explicitly.
+    await reindexMod.reindex({ rootDir: fixtureRoot, force: true, autoHubs: true });
 
     const searchMod = await import("../../build/tools/search.js");
     const repoMapMod = await import("../../build/tools/repo-map.js");
