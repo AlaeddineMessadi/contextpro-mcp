@@ -16,6 +16,7 @@ import { toolUpsertMemoryNode, toolCreateRelation, toolSearchMemoryGraph, toolAd
 import { reindex } from "./reindex.js";
 import { getStatus } from "./status.js";
 import { getDiff } from "./diff.js";
+import { getSemanticDiff } from "./semantic-diff.js";
 import { getRelated } from "./related.js";
 import { getTestMap } from "./test-map.js";
 import { explain } from "./explain.js";
@@ -756,6 +757,23 @@ export function registerTools(
       content: [{
         type: "text" as const,
         text: await getDiff({ rootDir: rootDir(), since, branch, file, scope }),
+      }],
+    })),
+  );
+
+  server.tool(
+    "semantic_diff",
+    "AST-level change summary: which SYMBOLS were added/removed/modified/moved since a git ref " +
+    "(default HEAD; pass a branch like 'main'). Ignores pure reformatting and includes brand-new untracked files. " +
+    "Token-lean; pair with change_impact/blast_radius for the per-PR review loop ('what changed since main').",
+    {
+      since: z.string().optional().describe("Git ref to compare the working tree against (e.g. main, HEAD~3). Default: HEAD."),
+      format: z.enum(["text", "json"]).optional().describe("Output format. Default: text."),
+    },
+    withRequestActivity(async ({ since, format }) => ({
+      content: [{
+        type: "text" as const,
+        text: await getSemanticDiff({ rootDir: rootDir(), since, format }),
       }],
     })),
   );
