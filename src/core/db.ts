@@ -194,6 +194,19 @@ CREATE TABLE IF NOT EXISTS meta (
   value TEXT
 );
 
+-- Append-only telemetry of MCP tool invocations, so a separate dashboard process
+-- can show real history (which tools ran, when, latency, errors) across restarts.
+-- Created unconditionally (IF NOT EXISTS) so no schema-version bump is needed.
+CREATE TABLE IF NOT EXISTS tool_calls (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  tool TEXT NOT NULL,
+  status TEXT NOT NULL,        -- 'ok' | 'error'
+  duration_ms INTEGER NOT NULL,
+  called_at INTEGER NOT NULL   -- ms since epoch
+);
+CREATE INDEX IF NOT EXISTS idx_tool_calls_called_at ON tool_calls(called_at);
+CREATE INDEX IF NOT EXISTS idx_tool_calls_tool ON tool_calls(tool);
+
 CREATE TABLE IF NOT EXISTS call_sites (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   file_id INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
@@ -841,6 +854,52 @@ export class ContextPlusDB {
     const nodes = this.db.prepare("SELECT count(*) as n FROM memory_nodes").get() as { n: number };
     const edges = this.db.prepare("SELECT count(*) as n FROM memory_edges").get() as { n: number };
     return { totalNodes: nodes.n, totalEdges: edges.n };
+  }
+
+  /** Append one tool-call event. Best-effort telemetry — callers must not let a
+   * failure here break the tool itself. Prunes opportunistically to a bounded size. */
+  recordToolCall(tool: string, status: "ok" | "error", durationMs: number, calledAt: number): void {
+    this.db.prepare(
+      "INSERT INTO tool_calls (tool, status, duration_ms, called_at) VALUES (?, ?, ?, ?)",
+    ).run(tool, status, Math.max(0, Math.round(durationMs)), calledAt);
+  }
+
+  /** Most-recent tool calls, newest first. */
+  getToolCallHistory(limit: number = 200): Array<{ tool: string; status: string; durationMs: number; calledAt: number }> {
+    const rows = this.db.prepare(
+      "SELECT tool, status, duration_ms as durationMs, called_at as calledAt FROM tool_calls ORDER BY called_at DESC, id DESC LIMIT ?",
+    ).all(Math.max(1, Math.min(2000, limit))) as Array<{ tool: string; status: string; durationMs: number; calledAt: number }>;
+    return rows;
+  }
+
+  /** Per-tool aggregates over the whole history (or since a timestamp). */
+  getToolCallAggregates(sinceMs?: number): Array<{ tool: string; calls: number; errors: number; avgMs: number; maxMs: number; lastAt: number }> {
+    const where = sinceMs ? "WHERE called_at >= ?" : "";
+    const stmt = this.db.prepare(
+      `SELECT tool,
+              COUNT(*) as calls,
+              SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END) as errors,
+              AVG(duration_ms) as avgMs,
+              MAX(duration_ms) as maxMs,
+              MAX(called_at) as lastAt
+       FROM tool_calls ${where}
+       GROUP BY tool
+       ORDER BY calls DESC`,
+    );
+    const rows = (sinceMs ? stmt.all(sinceMs) : stmt.all()) as Array<{ tool: string; calls: number; errors: number; avgMs: number; maxMs: number; lastAt: number }>;
+    return rows.map((r) => ({ ...r, avgMs: Math.round(r.avgMs) }));
+  }
+
+  getToolCallTotal(): number {
+    return (this.db.prepare("SELECT COUNT(*) as n FROM tool_calls").get() as { n: number }).n;
+  }
+
+  /** Keep the table bounded: delete all but the newest `keep` rows. */
+  pruneToolCalls(keep: number = 5000): number {
+    const info = this.db.prepare(
+      "DELETE FROM tool_calls WHERE id NOT IN (SELECT id FROM tool_calls ORDER BY id DESC LIMIT ?)",
+    ).run(keep);
+    return info.changes;
   }
 
   getLatestIndexedAt(): number | null {
