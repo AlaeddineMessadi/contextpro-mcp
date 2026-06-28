@@ -17,6 +17,7 @@ import { reindex } from "./reindex.js";
 import { getStatus } from "./status.js";
 import { getDiff } from "./diff.js";
 import { getSemanticDiff } from "./semantic-diff.js";
+import { getSqlSchema } from "./sql-schema.js";
 import { getRelated } from "./related.js";
 import { getTestMap } from "./test-map.js";
 import { explain } from "./explain.js";
@@ -774,6 +775,24 @@ export function registerTools(
       content: [{
         type: "text" as const,
         text: await getSemanticDiff({ rootDir: rootDir(), since, format }),
+      }],
+    })),
+  );
+
+  server.tool(
+    "sql_schema",
+    "Postgres/Supabase schema + RLS navigator from migration .sql files. Answers schema/RLS questions " +
+    "without psql: table columns + types + CHECK constraints, whether RLS is enabled, RLS policies " +
+    "(command/roles/USING predicate), and SECURITY DEFINER function bodies. Filter by table/policy/function name.",
+    {
+      name: z.string().optional().describe("Filter to a single table, policy, or function name (case-insensitive)."),
+      targetPath: z.string().optional().describe("Restrict the .sql scan to a subtree (e.g. supabase/migrations)."),
+      format: z.enum(["text", "json"]).optional().describe("Output format. Default: text."),
+    },
+    withRequestActivity(async ({ name, targetPath, format }) => ({
+      content: [{
+        type: "text" as const,
+        text: await getSqlSchema({ rootDir: rootDir(), name, targetPath, format }),
       }],
     })),
   );
