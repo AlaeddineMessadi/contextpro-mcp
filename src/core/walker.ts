@@ -2,9 +2,10 @@
 // Returns filtered file paths respecting project and per-directory ignore patterns
 
 import { readdir, readFile, lstat } from "fs/promises";
-import { join, relative, resolve } from "path";
+import { basename, join, relative, resolve } from "path";
 import ignore, { type Ignore } from "ignore";
 import { resolveProjectPath } from "./path-guard.js";
+import { isAlwaysIgnoredDir } from "./ignore-dirs.js";
 
 export interface WalkOptions {
   targetPath?: string;
@@ -24,25 +25,8 @@ interface IgnoreLayer {
   dir: string;
 }
 
-const ALWAYS_IGNORE = new Set([
-  "node_modules",
-  ".git",
-  ".svn",
-  ".hg",
-  "__pycache__",
-  ".DS_Store",
-  "dist",
-  "build",
-  ".next",
-  ".nuxt",
-  "target",
-  ".contextpro",
-  ".contextplus",
-  "coverage",
-  ".cache",
-  ".turbo",
-  ".parcel-cache",
-]);
+// The comprehensive, framework-aware ignore set lives in ./ignore-dirs.ts so it can
+// be reused and tested independently. The walker also honors `.gitignore` layers.
 
 async function loadIgnoreFile(filePath: string): Promise<string | null> {
   try {
@@ -90,7 +74,9 @@ async function walkRecursive(
   const entries = await readdir(dir, { withFileTypes: true }).catch(() => []);
 
   for (const entry of entries) {
-    if (ALWAYS_IGNORE.has(entry.name) || entry.name.startsWith(".")) continue;
+    // Skip the framework-aware ignore set (deps/build/cache across languages) and
+    // hidden entries. `.gitignore` layers are applied below and compose with this.
+    if (isAlwaysIgnoredDir(entry.name) || entry.name.startsWith(".")) continue;
 
     const fullPath = join(dir, entry.name);
 
@@ -118,6 +104,16 @@ export async function walkDirectory(options: WalkOptions): Promise<FileEntry[]> 
   if (stats.isFile()) {
     const relPath = relative(rootDir, startDir).replace(/\\/g, "/");
     results.push({ path: startDir, relativePath: relPath, isDirectory: false, depth: 0 });
+    return results;
+  }
+
+  // If a caller scopes the walk INTO an always-ignored directory (e.g.
+  // targetPath="vendor" or ".venv"), honor the ignore policy for the start dir
+  // itself — walkRecursive only filters children, so without this a scoped
+  // reindex/grep would still traverse the heavy folder. The project root is
+  // exempt (never refuse to scan the project just because its folder name
+  // collides with an ignored name).
+  if (startDir !== rootDir && isAlwaysIgnoredDir(basename(startDir))) {
     return results;
   }
 
