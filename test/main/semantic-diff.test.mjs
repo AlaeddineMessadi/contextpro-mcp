@@ -130,6 +130,21 @@ describe("computeSemanticDiff", () => {
     assert.ok(names.some((n) => /oldMethod/.test(n)), `expected oldMethod removed, got ${JSON.stringify(names)}`);
     // The unchanged method must not appear.
     assert.ok(!file.symbols.some((s) => /\bkeep\b/.test(s.name)), "unchanged method should not appear");
+    // The enclosing class must NOT also be reported as a coarse "modified" change.
+    assert.ok(!file.symbols.some((s) => s.name === "Svc" && s.change === "modified"),
+      "parent class should not be reported as modified when only a method changed");
+  });
+
+  it("detects a change in whitespace adjacent to punctuation inside a string", async () => {
+    await writeFile(join(root, "punc.ts"), 'export function p(): string { return "a - b"; }\n');
+    await commitAll("base");
+    await writeFile(join(root, "punc.ts"), 'export function p(): string { return "a-b"; }\n');
+
+    const { computeSemanticDiff } = await import("../../build/core/semantic-diff.js");
+    const result = await computeSemanticDiff(root, { since: "HEAD" });
+    const file = result.files.find((f) => f.path === "punc.ts");
+    assert.ok(file && file.symbols.some((s) => s.name === "p" && s.change === "modified"),
+      '"a - b" → "a-b" must register as a modification (string punctuation whitespace)');
   });
 
   it("detects a change inside a string literal (meaningful whitespace not masked)", async () => {
