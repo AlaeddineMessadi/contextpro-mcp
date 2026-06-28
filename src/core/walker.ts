@@ -5,6 +5,7 @@ import { readdir, readFile, lstat } from "fs/promises";
 import { join, relative, resolve } from "path";
 import ignore, { type Ignore } from "ignore";
 import { resolveProjectPath } from "./path-guard.js";
+import { isAlwaysIgnoredDir } from "./ignore-dirs.js";
 
 export interface WalkOptions {
   targetPath?: string;
@@ -24,25 +25,8 @@ interface IgnoreLayer {
   dir: string;
 }
 
-const ALWAYS_IGNORE = new Set([
-  "node_modules",
-  ".git",
-  ".svn",
-  ".hg",
-  "__pycache__",
-  ".DS_Store",
-  "dist",
-  "build",
-  ".next",
-  ".nuxt",
-  "target",
-  ".contextpro",
-  ".contextplus",
-  "coverage",
-  ".cache",
-  ".turbo",
-  ".parcel-cache",
-]);
+// The comprehensive, framework-aware ignore set lives in ./ignore-dirs.ts so it can
+// be reused and tested independently. The walker also honors `.gitignore` layers.
 
 async function loadIgnoreFile(filePath: string): Promise<string | null> {
   try {
@@ -90,7 +74,9 @@ async function walkRecursive(
   const entries = await readdir(dir, { withFileTypes: true }).catch(() => []);
 
   for (const entry of entries) {
-    if (ALWAYS_IGNORE.has(entry.name) || entry.name.startsWith(".")) continue;
+    // Skip the framework-aware ignore set (deps/build/cache across languages) and
+    // hidden entries. `.gitignore` layers are applied below and compose with this.
+    if (isAlwaysIgnoredDir(entry.name) || entry.name.startsWith(".")) continue;
 
     const fullPath = join(dir, entry.name);
 
