@@ -145,6 +145,30 @@ describe("computeSemanticDiff", () => {
       "a string-content change must register as a modification");
   });
 
+  it("detects a whitespace change INSIDE a string literal (a  b → a b)", async () => {
+    await writeFile(join(root, "ws.ts"), 'export function g(): string { return "a  b"; }\n');
+    await commitAll("base");
+    await writeFile(join(root, "ws.ts"), 'export function g(): string { return "a b"; }\n');
+
+    const { computeSemanticDiff } = await import("../../build/core/semantic-diff.js");
+    const result = await computeSemanticDiff(root, { since: "HEAD" });
+    const file = result.files.find((f) => f.path === "ws.ts");
+    assert.ok(file && file.symbols.some((s) => s.name === "g" && s.change === "modified"),
+      "collapsing double-space inside a string literal must NOT mask the change");
+  });
+
+  it("throws a clear error for an invalid baseline ref instead of reporting no changes", async () => {
+    await writeFile(join(root, "x.ts"), "export const x = 1;\n");
+    await commitAll("base");
+
+    const { computeSemanticDiff } = await import("../../build/core/semantic-diff.js");
+    await assert.rejects(
+      () => computeSemanticDiff(root, { since: "no-such-ref-mian" }),
+      /could not diff against 'no-such-ref-mian'/,
+      "an unresolvable ref must surface an error, not silently report no changes",
+    );
+  });
+
   it("produces a summary count of changes", async () => {
     await writeFile(join(root, "c.ts"), "export function a(): void {}\n");
     await commitAll("base");

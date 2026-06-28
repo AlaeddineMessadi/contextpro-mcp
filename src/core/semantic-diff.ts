@@ -99,14 +99,18 @@ function bodyFingerprint(symbol: SymbolLocation, lines: string[], path: string):
       .join("\n");
   }
 
-  // Free-form languages: collapse the span to a single normalized token stream.
-  // Whitespace is removed only where it sits adjacent to punctuation (so `(){`,
-  // `() {`, and `; }` all normalize the same) but is PRESERVED between two word
-  // characters — so an identifier rename (`a b` vs `ab`) and a change inside a
-  // string literal (`"a b"` vs `"ab"`, where the spaces are flanked by quotes)
-  // still register as a modification rather than being silently masked.
-  const collapsed = span.join(" ").replace(/\s+/g, " ").trim();
-  return collapsed.replace(/\s*([^\w\s])\s*/g, "$1");
+  // Free-form languages: normalize FORMATTING whitespace without touching
+  // whitespace inside literals. We only:
+  //   - trim each line and drop blank lines (so multi-line vs single-line layout
+  //     and trailing whitespace don't matter), joining with a single space, then
+  //   - remove whitespace that sits ADJACENT TO PUNCTUATION (so `(){`, `() {`,
+  //     `; }` all match).
+  // Crucially we do NOT collapse interior whitespace RUNS between word characters,
+  // so a change inside a string literal — `"a  b"` → `"a b"`, or `"a b"` → `"ab"` —
+  // still alters the fingerprint instead of being silently masked. (This can't be
+  // perfect without full tokenization, but it no longer hides intra-literal edits.)
+  const joined = span.map((line) => line.trim()).filter((line) => line.length > 0).join(" ");
+  return joined.replace(/[ \t]*([^\w\s])[ \t]*/g, "$1");
 }
 
 interface DiffEntry {
@@ -140,8 +144,11 @@ async function gitDiffNameStatus(rootDir: string, ref: string): Promise<DiffEntr
         }
         return { status, path: parts.slice(1).join("\t").trim() };
       });
-  } catch {
-    return [];
+  } catch (error) {
+    // git exits 128 for an unresolvable ref (a typo'd baseline like `mian`). An
+    // EMPTY diff exits 0, so reaching here means the ref/command genuinely failed —
+    // surface it instead of silently reporting "no changes" and skipping review.
+    throw new Error(`semantic_diff: could not diff against '${ref}' — ${error instanceof Error ? error.message.split("\n")[0] : String(error)}`);
   }
 }
 
