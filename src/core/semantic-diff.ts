@@ -8,6 +8,16 @@
 // token-lean and pairs with change_impact/blast_radius (what changed → what it
 // affects). Reformatting that leaves symbol bodies semantically identical is
 // intentionally ignored.
+//
+// KNOWN LIMITATIONS (modified-vs-reformatted is a heuristic, not a tokenizer):
+//   - A whitespace-only edit INSIDE a regexp literal (`/a - b/` → `/a-b/`) is not
+//     detected — telling a regex from a `/` division reliably needs full
+//     tokenization; masking it heuristically risks corrupting real code comparison.
+//   - The fingerprint is regex-based, not an AST-node hash, so exotic formatting
+//     edge cases may slip through. The complete fix is per-node structural hashing
+//     via the tree-sitter parse (a larger follow-up); the current heuristic covers
+//     the common cases (string/template literals, indentation, punctuation spacing)
+//     and is validated by the test suite.
 
 import { execFile } from "child_process";
 import { promisify } from "util";
