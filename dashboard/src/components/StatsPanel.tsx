@@ -37,16 +37,14 @@ export function StatsPanel({ data, timing }: { data: StatsData | null; timing: T
 
   return (
     <div className="panel">
-      <h2>Index Stats</h2>
+      <h2>Languages &amp; Files</h2>
       <div className="stat-row" style={{ marginBottom: 14 }}>
-        <div className="stat"><span className="v">{data.totalFiles}</span><span className="l">files</span></div>
-        <div className="stat"><span className="v">{data.totalSymbols.toLocaleString()}</span><span className="l">symbols</span></div>
-        <div className="stat"><span className="v">{data.avgSymbolsPerFile}</span><span className="l">avg / file</span></div>
+        <div className="stat"><span className="v">{data.avgSymbolsPerFile}</span><span className="l">avg symbols / file</span></div>
         <div className="stat"><span className="v">{fmtDuration(timing?.lastReindexDurationMs)}</span><span className="l">last reindex</span></div>
         {throughput !== null && <div className="stat"><span className="v">{throughput}<span className="muted" style={{ fontSize: 12 }}> f/s</span></span><span className="l">throughput</span></div>}
       </div>
 
-      <h2>Languages</h2>
+      <h2>By language</h2>
       <table>
         <tbody>
           {data.languages.slice(0, 8).map((l) => (

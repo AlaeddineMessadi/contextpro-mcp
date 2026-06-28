@@ -204,24 +204,33 @@ export async function codeGraph(rootDir: string, maxNodes = 200): Promise<{
   const fileNodes = graph.nodes.filter((n: GraphNode) => n.type === "file" || n.type === "test");
   const fileIds = new Set(fileNodes.map((n: GraphNode) => n.id));
 
-  // Keep only import/contains edges among file nodes for a readable file-level map.
+  // File-level import edges only, for a readable map.
   const importEdges = graph.edges.filter(
-    (e: GraphEdge) => (e.type === "imports") && fileIds.has(e.source) && fileIds.has(e.target),
+    (e: GraphEdge) => e.type === "imports" && fileIds.has(e.source) && fileIds.has(e.target),
   );
 
-  // In-degree = how many files import this one → importance proxy.
+  // total degree (in+out) — connectivity, used both for importance and node selection.
   const inDegree = new Map<string, number>();
-  for (const e of importEdges) inDegree.set(e.target, (inDegree.get(e.target) ?? 0) + 1);
+  const degree = new Map<string, number>();
+  for (const e of importEdges) {
+    inDegree.set(e.target, (inDegree.get(e.target) ?? 0) + 1);
+    degree.set(e.source, (degree.get(e.source) ?? 0) + 1);
+    degree.set(e.target, (degree.get(e.target) ?? 0) + 1);
+  }
 
-  const ranked = fileNodes
-    .map((n: GraphNode) => ({ ...n, importance: inDegree.get(n.id) ?? 0 }))
-    .sort((a: { importance: number }, b: { importance: number }) => b.importance - a.importance)
-    .slice(0, maxNodes);
+  // Select the most CONNECTED nodes (by total degree), so edges survive the cap —
+  // ranking by in-degree alone orphaned most edges (leaves importing hubs got cut).
+  // Isolated files (degree 0) are only included to fill remaining slots.
+  const keep = fileNodes
+    .map((n: GraphNode) => ({ node: n, deg: degree.get(n.id) ?? 0 }))
+    .sort((a: { deg: number }, b: { deg: number }) => b.deg - a.deg)
+    .slice(0, maxNodes) as Array<{ node: GraphNode; deg: number }>;
+  const keepIds = new Set(keep.map((x) => x.node.id));
 
-  const keepIds = new Set(ranked.map((n: GraphNode) => n.id));
-  const keptEdges = importEdges.filter((e: GraphEdge) => keepIds.has(e.source) && keepIds.has(e.target));
+  const nodes = keep.map(({ node }) => ({ ...node, importance: inDegree.get(node.id) ?? 0 }));
+  const edges = importEdges.filter((e: GraphEdge) => keepIds.has(e.source) && keepIds.has(e.target));
 
-  return { nodes: ranked, edges: keptEdges, stats: graph.stats };
+  return { nodes, edges, stats: graph.stats };
 }
 
 export interface MemoryNode {

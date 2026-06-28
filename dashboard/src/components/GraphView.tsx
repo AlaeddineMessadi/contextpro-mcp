@@ -21,7 +21,10 @@ interface Pos { x: number; y: number; r: number; color: string }
  *   neighborhood stays bright, the rest dims, and a side label shows its degree.
  * - Node size = importance; color = group.
  */
-export function GraphView({ nodes, edges, height = 480 }: { nodes: GNode[]; edges: GEdge[]; height?: number }) {
+export function GraphView({ nodes, edges, height = 480, search = "", onSelect }: {
+  nodes: GNode[]; edges: GEdge[]; height?: number; search?: string;
+  onSelect?: (node: { id: string; label: string; group?: string; degree: number } | null) => void;
+}) {
   const [hover, setHover] = useState<string | null>(null);
   const [focus, setFocus] = useState<string | null>(null);
   const [view, setView] = useState({ x: 0, y: 0, k: 1 });
@@ -50,21 +53,26 @@ export function GraphView({ nodes, edges, height = 480 }: { nodes: GNode[]; edge
       .map((e) => [idx.get(e.source), idx.get(e.target)] as [number | undefined, number | undefined])
       .filter((l): l is [number, number] => l[0] !== undefined && l[1] !== undefined);
 
+    const cx = W / 2, cy = H / 2;
     const area = W * H;
-    const k = Math.sqrt(area / N) * 0.8; // ideal edge length
-    const iterations = Math.min(120, 40 + Math.floor(2000 / Math.max(1, N)));
+    // Ideal edge length, scaled so the graph fills the canvas without crowding.
+    const k = Math.sqrt(area / N) * 0.55;
+    // Big graphs need MORE iterations to settle, not fewer; cap for performance.
+    const iterations = Math.min(300, 80 + N);
 
     for (let it = 0; it < iterations; it++) {
       const dx = new Float64Array(N);
       const dy = new Float64Array(N);
-      // Repulsion (sampled for big graphs to stay cheap).
-      const step = N > 350 ? 2 : 1;
+      // Repulsion. Cap the force at close range so dense clusters don't explode
+      // to the walls, and sample pairs on very large graphs to stay cheap.
+      const step = N > 400 ? 2 : 1;
+      const repScale = step; // compensate magnitude when sampling
       for (let i = 0; i < N; i++) {
         for (let j = i + 1; j < N; j += step) {
           let ddx = px[i] - px[j];
           let ddy = py[i] - py[j];
-          let dist = Math.sqrt(ddx * ddx + ddy * ddy) || 0.01;
-          const rep = (k * k) / dist;
+          const dist = Math.sqrt(ddx * ddx + ddy * ddy) || 0.01;
+          const rep = Math.min((k * k) / dist, k * 2) * repScale; // capped
           ddx = (ddx / dist) * rep;
           ddy = (ddy / dist) * rep;
           dx[i] += ddx; dy[i] += ddy;
@@ -82,15 +90,36 @@ export function GraphView({ nodes, edges, height = 480 }: { nodes: GNode[]; edge
         dx[a] -= ddx; dy[a] -= ddy;
         dx[b] += ddx; dy[b] += ddy;
       }
+      // Gravity: a gentle pull toward center keeps the whole graph on-canvas and
+      // prevents disconnected nodes from drifting to the walls.
+      const gravity = 0.03;
+      for (let i = 0; i < N; i++) {
+        dx[i] += (cx - px[i]) * gravity;
+        dy[i] += (cy - py[i]) * gravity;
+      }
       // Apply with cooling.
-      const temp = (1 - it / iterations) * (Math.min(W, H) / 12);
+      const temp = (1 - it / iterations) * (Math.min(W, H) / 10);
       for (let i = 0; i < N; i++) {
         const d = Math.sqrt(dx[i] * dx[i] + dy[i] * dy[i]) || 0.01;
         px[i] += (dx[i] / d) * Math.min(d, temp);
         py[i] += (dy[i] / d) * Math.min(d, temp);
-        px[i] = Math.max(20, Math.min(W - 20, px[i]));
-        py[i] = Math.max(20, Math.min(H - 20, py[i]));
       }
+    }
+
+    // Fit the final layout into the viewport with padding (no hard clamping during
+    // simulation — we rescale once at the end so clusters keep their shape).
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (let i = 0; i < N; i++) {
+      minX = Math.min(minX, px[i]); maxX = Math.max(maxX, px[i]);
+      minY = Math.min(minY, py[i]); maxY = Math.max(maxY, py[i]);
+    }
+    const pad = 30;
+    const sx = (W - pad * 2) / Math.max(1, maxX - minX);
+    const sy = (H - pad * 2) / Math.max(1, maxY - minY);
+    const s = Math.min(sx, sy);
+    for (let i = 0; i < N; i++) {
+      px[i] = pad + (px[i] - minX) * s;
+      py[i] = pad + (py[i] - minY) * s;
     }
 
     const maxImp = Math.max(1, ...nodes.map((n) => n.importance ?? 0));
@@ -156,6 +185,21 @@ export function GraphView({ nodes, edges, height = 480 }: { nodes: GNode[]; edge
 
   useEffect(() => { setFocus(null); }, [nodes]);
 
+  // Report the focused node (id, label, degree) to the parent for the details panel.
+  useEffect(() => {
+    if (!onSelect) return;
+    if (!focus) { onSelect(null); return; }
+    const n = nodes.find((x) => x.id === focus);
+    if (n) onSelect({ id: n.id, label: n.label, group: n.group, degree: degree.get(n.id) ?? 0 });
+  }, [focus, nodes, degree, onSelect]);
+
+  // Search highlight: nodes whose label matches the query.
+  const searchMatch = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return null;
+    return new Set(nodes.filter((n) => n.label.toLowerCase().includes(q)).map((n) => n.id));
+  }, [search, nodes]);
+
   if (nodes.length === 0) return <p className="muted">No graph data — index this project first.</p>;
 
   return (
@@ -194,15 +238,18 @@ export function GraphView({ nodes, edges, height = 480 }: { nodes: GNode[]; edge
           {nodes.map((n) => {
             const p = positions.get(n.id);
             if (!p) return null;
-            const dim = neighborhood ? !neighborhood.has(n.id) : false;
-            const showLabel = p.r * view.k > 9 || n.id === active;
+            const searchHit = searchMatch ? searchMatch.has(n.id) : null;
+            const dim = searchMatch ? !searchHit : (neighborhood ? !neighborhood.has(n.id) : false);
+            const showLabel = p.r * view.k > 9 || n.id === active || searchHit === true;
+            const r = searchHit ? p.r * 1.4 : p.r;
             return (
-              <g key={n.id} opacity={dim ? 0.18 : 1}
+              <g key={n.id} opacity={dim ? 0.12 : 1}
                  onMouseEnter={() => setHover(n.id)} onMouseLeave={() => setHover(null)}
                  onClick={() => setFocus((f) => (f === n.id ? null : n.id))} style={{ cursor: "pointer" }}>
-                <circle cx={p.x} cy={p.y} r={p.r} fill={p.color} stroke={n.id === focus ? "#fff" : "#0a0b0f"} strokeWidth={(n.id === focus ? 2 : 1) / view.k} />
+                {searchHit && <circle cx={p.x} cy={p.y} r={r + 3 / view.k} fill="none" stroke="#d29922" strokeWidth={1.5 / view.k} />}
+                <circle cx={p.x} cy={p.y} r={r} fill={p.color} stroke={n.id === focus ? "#fff" : "#0a0b0f"} strokeWidth={(n.id === focus ? 2 : 1) / view.k} />
                 {showLabel && (
-                  <text x={p.x + p.r + 2 / view.k} y={p.y + 3 / view.k} fontSize={9 / view.k} fill="#cfd3dd" style={{ pointerEvents: "none" }}>
+                  <text x={p.x + r + 2 / view.k} y={p.y + 3 / view.k} fontSize={9 / view.k} fill="#cfd3dd" style={{ pointerEvents: "none" }}>
                     {(n.label || "").split("/").pop()}
                   </text>
                 )}

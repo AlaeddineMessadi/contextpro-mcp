@@ -1,11 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { MetricStrip } from "@/components/MetricStrip";
 import { StatusPanel } from "@/components/StatusPanel";
 import { StatsPanel } from "@/components/StatsPanel";
 import { ToolsPanel } from "@/components/ToolsPanel";
-import { CodeGraphPanel } from "@/components/CodeGraphPanel";
-import { MemoryPanel } from "@/components/MemoryPanel";
+import { GraphHero } from "@/components/GraphHero";
 
 interface Project { projectId: string | null; root: string; hasIndex: boolean }
 
@@ -125,16 +125,19 @@ export default function Dashboard() {
 
       <div className="wrap">
         {error && <div className="panel" style={{ borderColor: "var(--red)", marginBottom: 16 }}><span className="err">⚠ {error}</span></div>}
+
+        <MetricStrip status={status as never} stats={stats as never} tools={tools as never} />
+
+        <GraphHero code={graph as never} memory={memory as never} />
+
         <div className="grid">
-          <StatusPanel data={status as never} />
-          <StatsPanel data={stats as never} timing={(status as { index?: never })?.index ?? null} />
           <ToolsPanel data={tools as never} />
-          <MemoryPanel data={memory as never} />
-          <CodeGraphPanel data={graph as never} />
+          <StatsPanel data={stats as never} timing={(status as { index?: never })?.index ?? null} />
+          <StatusPanel data={status as never} />
         </div>
-        <p className="muted" style={{ marginTop: 24, fontSize: 11 }}>
-          {root && <>Reading <code>{root}/.contextpro/index.db</code> (WAL — safe alongside a live MCP). </>}
-          Drag to pan the graph, scroll to zoom, click a node to focus its connections. Click a tool row to filter history.
+
+        <p className="muted" style={{ marginTop: 20, fontSize: 11 }}>
+          {root && <>Reading <code>{root}/.contextpro/index.db</code> (WAL — safe alongside a live MCP).</>}
         </p>
       </div>
     </>

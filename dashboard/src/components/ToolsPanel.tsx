@@ -51,7 +51,6 @@ export function ToolsPanel({ data }: { data: ToolsData | null }) {
     (!toolFilter || c.tool === toolFilter) &&
     (statusFilter === "all" || c.status === statusFilter),
   );
-  const totalErrors = data.aggregates.reduce((s, a) => s + a.errors, 0);
   const maxCalls = Math.max(1, ...data.aggregates.map((a) => a.calls));
 
   return (
@@ -62,13 +61,6 @@ export function ToolsPanel({ data }: { data: ToolsData | null }) {
       ) : (
         <>
           <Sparkline history={data.history} />
-          <div className="stat-row" style={{ marginBottom: 12 }}>
-            <div className="stat"><span className="v">{data.total}</span><span className="l">total calls</span></div>
-            <div className="stat"><span className="v">{data.aggregates.length}</span><span className="l">tools</span></div>
-            <div className="stat"><span className={`v ${totalErrors > 0 ? "red" : "green"}`}>{totalErrors}</span><span className="l">errors</span></div>
-            <div className="stat"><span className="v">{Math.round((1 - totalErrors / Math.max(1, data.total)) * 100)}%</span><span className="l">success</span></div>
-          </div>
-
           <table>
             <thead><tr><th>Tool</th><th className="num">Calls</th><th className="num">Err</th><th className="num">Avg</th><th className="num">Max</th><th></th></tr></thead>
             <tbody>

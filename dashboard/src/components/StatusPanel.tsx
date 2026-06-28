@@ -1,62 +1,56 @@
 "use client";
 
 interface StatusData {
-  index?: { state?: string; generation?: number; missingIndexedFiles?: number; removedIndexedFiles?: number; lastReindexAt?: string | null };
-  files?: { total?: number; source?: number; indexed?: number };
-  embeddings?: { provider?: string | null; model?: string | null; dimension?: number | null; total?: number; stale?: boolean; vectorTablesReady?: boolean };
-  memory?: { nodes?: number; edges?: number };
-  git?: { branch?: string; uncommitted?: number };
+  index?: { state?: string; lastReindexAt?: string | null; lastIndexedAt?: string | null };
+  embeddings?: { provider?: string | null; model?: string | null; dimension?: number | null; stale?: boolean; staleReason?: string | null; vectorTablesReady?: boolean };
+  git?: { branch?: string; uncommitted?: number; recentCommits?: string[] };
   warnings?: string[];
 }
 
-function stateClass(state?: string): string {
-  if (state === "fresh") return "green";
-  if (state === "stale" || state === "indexing") return "yellow";
-  return "red";
-}
-
+/**
+ * Health DETAIL only — headline counts live in the top MetricStrip, so this panel
+ * adds the things the strip can't: embedding readiness, warnings, recent commits.
+ */
 export function StatusPanel({ data }: { data: StatusData | null }) {
-  if (!data) return <div className="panel"><h2>Index &amp; Health</h2><p className="muted">No data.</p></div>;
-  const i = data.index ?? {};
-  const f = data.files ?? {};
+  if (!data) return <div className="panel"><h2>Health</h2><p className="muted">No data.</p></div>;
   const e = data.embeddings ?? {};
 
   return (
     <div className="panel">
-      <h2>Index &amp; Health</h2>
-      <div className="stat-row">
-        <div className="stat">
-          <span className={`v ${stateClass(i.state)}`}>{i.state ?? "?"}</span>
-          <span className="l">index state</span>
-        </div>
-        <div className="stat"><span className="v">{f.indexed ?? 0}</span><span className="l">indexed files</span></div>
-        <div className="stat"><span className={`v ${(i.missingIndexedFiles ?? 0) > 0 ? "yellow" : ""}`}>{i.missingIndexedFiles ?? 0}</span><span className="l">missing</span></div>
-        <div className="stat"><span className={`v ${(i.removedIndexedFiles ?? 0) > 0 ? "yellow" : ""}`}>{i.removedIndexedFiles ?? 0}</span><span className="l">removed</span></div>
-        <div className="stat"><span className="v">{i.generation ?? 0}</span><span className="l">generation</span></div>
-      </div>
+      <h2>Health</h2>
 
-      <div className="stat-row" style={{ marginTop: 16 }}>
-        <div className="stat"><span className="v">{e.total ?? 0}</span><span className="l">embeddings</span></div>
-        <div className="stat"><span className="v" style={{ fontSize: 14 }}>{e.provider ?? "—"}</span><span className="l">provider</span></div>
-        <div className="stat"><span className="v" style={{ fontSize: 14 }}>{e.model ?? "—"}</span><span className="l">model</span></div>
-        <div className="stat"><span className="v">{e.dimension ?? "—"}</span><span className="l">dim</span></div>
-        <div className="stat">
-          <span className="v">{data.memory?.nodes ?? 0}<span className="muted" style={{ fontSize: 13 }}> / {data.memory?.edges ?? 0}</span></span>
-          <span className="l">memory nodes / edges</span>
-        </div>
-      </div>
-
-      <div style={{ marginTop: 14, display: "flex", gap: 8, flexWrap: "wrap" }}>
-        {data.git?.branch && <span className="badge">⎇ {data.git.branch}</span>}
-        {(data.git?.uncommitted ?? 0) > 0 && <span className="badge yellow">{data.git!.uncommitted} uncommitted</span>}
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
+        <span className={`badge ${e.vectorTablesReady ? "green" : "red"}`}>{e.vectorTablesReady ? "vectors ready" : "vectors not ready"}</span>
         <span className={`badge ${e.stale ? "yellow" : "green"}`}>{e.stale ? "embeddings stale" : "embeddings fresh"}</span>
-        {i.lastReindexAt && <span className="badge muted">reindexed {new Date(i.lastReindexAt).toLocaleString()}</span>}
+        {e.provider && <span className="badge muted">{e.provider} · {e.model}</span>}
+        {(data.git?.uncommitted ?? 0) > 0 && <span className="badge yellow">{data.git!.uncommitted} uncommitted</span>}
       </div>
 
-      {data.warnings && data.warnings.length > 0 && (
-        <div style={{ marginTop: 12 }}>
-          {data.warnings.map((w, idx) => <div key={idx} className="err" style={{ fontSize: 11 }}>⚠ {w}</div>)}
+      {e.stale && e.staleReason && <div className="muted" style={{ fontSize: 11, marginBottom: 10 }}>↳ {e.staleReason}</div>}
+
+      {data.warnings && data.warnings.length > 0 ? (
+        <div style={{ marginBottom: 12 }}>
+          <h2>Warnings</h2>
+          {data.warnings.map((w, i) => <div key={i} className="err" style={{ fontSize: 11 }}>⚠ {w}</div>)}
         </div>
+      ) : (
+        <div className="muted" style={{ fontSize: 11, marginBottom: 12 }}>✓ No warnings — index is healthy.</div>
+      )}
+
+      {data.git?.recentCommits && data.git.recentCommits.length > 0 && (
+        <>
+          <h2>Recent commits</h2>
+          <div className="scroll" style={{ maxHeight: 150 }}>
+            <table>
+              <tbody>
+                {data.git.recentCommits.map((c, i) => {
+                  const [sha, ...rest] = c.split(" ");
+                  return <tr key={i}><td style={{ width: 60, color: "var(--accent)" }}>{sha}</td><td>{rest.join(" ")}</td></tr>;
+                })}
+              </tbody>
+            </table>
+          </div>
+        </>
       )}
     </div>
   );
