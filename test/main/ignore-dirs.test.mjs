@@ -65,6 +65,14 @@ describe("isAlwaysIgnoredDir", () => {
     assert.equal(isAlwaysIgnoredDir("notanegg"), false);
   });
 
+  it("does NOT ignore checked-in source-controlled dirs (snapshots, Xcode bundles)", () => {
+    // Jest snapshots are source-controlled test expectations, not build output.
+    assert.equal(isAlwaysIgnoredDir("__snapshots__"), false, "__snapshots__ must stay indexable");
+    // Xcode project/workspace bundles hold checked-in project config (project.pbxproj).
+    assert.equal(isAlwaysIgnoredDir("MyApp.xcodeproj"), false, "*.xcodeproj must stay indexable");
+    assert.equal(isAlwaysIgnoredDir("MyApp.xcworkspace"), false, "*.xcworkspace must stay indexable");
+  });
+
   it("exposes the raw set for reuse", () => {
     assert.ok(ALWAYS_IGNORE_DIRS instanceof Set);
     assert.ok(ALWAYS_IGNORE_DIRS.has("node_modules"));

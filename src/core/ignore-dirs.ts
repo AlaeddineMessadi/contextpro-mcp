@@ -29,9 +29,12 @@ export const ALWAYS_IGNORE_DIRS: ReadonlySet<string> = new Set([
   ".cache", ".turbo", ".parcel-cache", ".vite", ".rollup.cache",
   ".eslintcache", ".rpt2_cache",
 
-  // Test / coverage
+  // Test / coverage  (generated output only)
+  // NOTE: "__snapshots__" is intentionally NOT here — Jest `.snap` files are
+  // checked-in, source-controlled test expectations, not generated build output;
+  // agents need to read/update them.
   "coverage", ".nyc_output", ".vscode-test", "playwright-report",
-  "test-results", "__snapshots__",
+  "test-results",
 
   // Python  (bare "env" omitted — ambiguous; ".venv"/"venv" are conventional)
   "__pycache__", ".venv", "venv", ".tox", ".nox",
@@ -73,11 +76,13 @@ export const ALWAYS_IGNORE_DIRS: ReadonlySet<string> = new Set([
 
 // Suffix patterns (glob-style `*.suffix`) matched against the basename. Kept small
 // and specific so it can't accidentally swallow source directories.
+// NOTE: `*.xcodeproj` / `*.xcworkspace` are intentionally NOT here — those bundles
+// hold checked-in project configuration (project.pbxproj, workspace metadata) that
+// agents need indexed, not generated build/cache content. `*.dSYM` (debug symbols)
+// and `*.egg-info` (generated package metadata) are safe to skip.
 const IGNORE_SUFFIXES: readonly string[] = [
   ".egg-info",
   ".dSYM",
-  ".xcodeproj",
-  ".xcworkspace",
 ];
 
 /**
