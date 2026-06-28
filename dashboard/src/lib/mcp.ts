@@ -56,9 +56,106 @@ export interface ToolAggregate {
   lastAt: number;
 }
 
+async function mcpReindex() {
+  const mod: any = await import(/* webpackIgnore: true */ /* turbopackIgnore: true */ buildModuleUrl("tools/reindex.js"));
+  return mod;
+}
+
 export async function status(rootDir: string): Promise<unknown> {
   const { getStatusData } = await mcpStatus();
   return getStatusData({ rootDir });
+}
+
+export interface IndexStats {
+  totalFiles: number;
+  totalSymbols: number;
+  avgSymbolsPerFile: number;
+  languages: Array<{ language: string; files: number; symbols: number }>;
+  largestFiles: Array<{ path: string; symbols: number }>;
+}
+
+/** Per-language and per-file breakdown, computed from the files table. */
+export async function indexStats(rootDir: string): Promise<IndexStats> {
+  const { getDB } = await mcpDB();
+  const db = await getDB(rootDir);
+  const files = db.getAllFiles() as Array<{ path: string; language: string | null; symbol_count: number }>;
+
+  const byLang = new Map<string, { files: number; symbols: number }>();
+  let totalSymbols = 0;
+  for (const f of files) {
+    const lang = f.language || "other";
+    const e = byLang.get(lang) ?? { files: 0, symbols: 0 };
+    e.files += 1;
+    e.symbols += f.symbol_count ?? 0;
+    byLang.set(lang, e);
+    totalSymbols += f.symbol_count ?? 0;
+  }
+
+  const languages = [...byLang.entries()]
+    .map(([language, v]) => ({ language, ...v }))
+    .sort((a, b) => b.files - a.files);
+
+  const largestFiles = [...files]
+    .sort((a, b) => (b.symbol_count ?? 0) - (a.symbol_count ?? 0))
+    .slice(0, 10)
+    .map((f) => ({ path: f.path, symbols: f.symbol_count ?? 0 }));
+
+  return {
+    totalFiles: files.length,
+    totalSymbols,
+    avgSymbolsPerFile: files.length ? Math.round((totalSymbols / files.length) * 10) / 10 : 0,
+    languages,
+    largestFiles,
+  };
+}
+
+// In-process record of the most recent reindex per root, so the dashboard can poll
+// for the result of a fire-and-forget reindex it kicked off. (A full reindex with
+// embeddings can take minutes — far longer than an HTTP request should block — so
+// we start it in the background and report progress via the status `indexing` flag
+// plus this record.)
+export interface ReindexState {
+  running: boolean;
+  startedAt: number;
+  finishedAt?: number;
+  indexed?: number;
+  skipped?: number;
+  durationMs?: number;
+  filesPerSec?: number;
+  error?: string;
+}
+
+const reindexState = new Map<string, ReindexState>();
+
+export function getReindexState(rootDir: string): ReindexState | null {
+  return reindexState.get(rootDir) ?? null;
+}
+
+/** Kick off a reindex in the background; returns immediately. Poll status + getReindexState. */
+export async function startReindex(rootDir: string, force: boolean): Promise<{ started: boolean; alreadyRunning: boolean }> {
+  const existing = reindexState.get(rootDir);
+  if (existing?.running) return { started: false, alreadyRunning: true };
+
+  reindexState.set(rootDir, { running: true, startedAt: Date.now() });
+  const { reindex } = await mcpReindex();
+
+  void (async () => {
+    const start = Date.now();
+    try {
+      const result = await reindex({ rootDir, force });
+      const durationMs = Date.now() - start;
+      const indexed = result?.indexed ?? 0;
+      reindexState.set(rootDir, {
+        running: false, startedAt: start, finishedAt: Date.now(),
+        indexed, skipped: result?.skipped ?? 0, durationMs,
+        filesPerSec: durationMs > 0 ? Math.round((indexed / (durationMs / 1000)) * 10) / 10 : 0,
+      });
+    } catch (error) {
+      reindexState.set(rootDir, { running: false, startedAt: start, finishedAt: Date.now(), error: String(error) });
+    }
+  })();
+
+  return { started: true, alreadyRunning: false };
 }
 
 export async function toolHistory(rootDir: string, limit = 200): Promise<ToolCall[]> {

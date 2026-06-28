@@ -1,15 +1,16 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { StatusPanel } from "@/components/StatusPanel";
+import { StatsPanel } from "@/components/StatsPanel";
 import { ToolsPanel } from "@/components/ToolsPanel";
 import { CodeGraphPanel } from "@/components/CodeGraphPanel";
 import { MemoryPanel } from "@/components/MemoryPanel";
 
 interface Project { projectId: string | null; root: string; hasIndex: boolean }
 
-async function getJSON(url: string) {
-  const res = await fetch(url, { cache: "no-store" });
+async function getJSON(url: string, init?: RequestInit) {
+  const res = await fetch(url, { cache: "no-store", ...init });
   if (!res.ok) throw new Error(`${url} → ${res.status}`);
   return res.json();
 }
@@ -18,14 +19,18 @@ export default function Dashboard() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [root, setRoot] = useState<string | null>(null);
   const [status, setStatus] = useState<Record<string, unknown> | null>(null);
+  const [stats, setStats] = useState<Record<string, unknown> | null>(null);
   const [tools, setTools] = useState<Record<string, unknown> | null>(null);
   const [graph, setGraph] = useState<Record<string, unknown> | null>(null);
   const [memory, setMemory] = useState<Record<string, unknown> | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [auto, setAuto] = useState(true);
   const [updatedAt, setUpdatedAt] = useState<number | null>(null);
+  const [reindexing, setReindexing] = useState(false);
+  const [reindexMsg, setReindexMsg] = useState<string | null>(null);
+  const reindexStart = useRef<number>(0);
+  const [reindexElapsed, setReindexElapsed] = useState(0);
 
-  // Load project list once.
   useEffect(() => {
     getJSON("/api/projects")
       .then((d) => {
@@ -35,70 +40,101 @@ export default function Dashboard() {
       .catch((e) => setError(String(e)));
   }, [root]);
 
-  const refresh = useCallback(async (r: string | null) => {
-    const q = r ? `?root=${encodeURIComponent(r)}` : "";
-    try {
-      const [s, t, g, m] = await Promise.all([
-        getJSON(`/api/status${q}`),
-        getJSON(`/api/tools${q}`),
-        getJSON(`/api/graph${q}`),
-        getJSON(`/api/memory${q}`),
-      ]);
-      setStatus(s.status); setTools(t); setGraph(g.graph); setMemory(m.memory);
-      setUpdatedAt(Date.now()); setError(null);
-    } catch (e) {
-      setError(String(e));
-    }
+  const lightRefresh = useCallback(async (r: string) => {
+    const q = `?root=${encodeURIComponent(r)}`;
+    const [s, t] = await Promise.all([getJSON(`/api/status${q}`), getJSON(`/api/tools${q}`)]);
+    setStatus(s.status); setTools(t); setUpdatedAt(Date.now());
   }, []);
 
-  // Refresh on root change.
-  useEffect(() => { if (root) refresh(root); }, [root, refresh]);
+  const fullRefresh = useCallback(async (r: string | null) => {
+    const q = r ? `?root=${encodeURIComponent(r)}` : "";
+    try {
+      const [s, st, t, g, m] = await Promise.all([
+        getJSON(`/api/status${q}`), getJSON(`/api/stats${q}`), getJSON(`/api/tools${q}`),
+        getJSON(`/api/graph${q}`), getJSON(`/api/memory${q}`),
+      ]);
+      setStatus(s.status); setStats(st.stats); setTools(t); setGraph(g.graph); setMemory(m.memory);
+      setUpdatedAt(Date.now()); setError(null);
+    } catch (e) { setError(String(e)); }
+  }, []);
 
-  // Auto-refresh status + tools (cheap) every 4s; the graphs change rarely.
+  useEffect(() => { if (root) fullRefresh(root); }, [root, fullRefresh]);
+
   useEffect(() => {
-    if (!auto || !root) return;
-    const q = `?root=${encodeURIComponent(root)}`;
-    const id = setInterval(async () => {
-      try {
-        const [s, t] = await Promise.all([getJSON(`/api/status${q}`), getJSON(`/api/tools${q}`)]);
-        setStatus(s.status); setTools(t); setUpdatedAt(Date.now());
-      } catch { /* keep last good */ }
-    }, 4000);
+    if (!auto || !root || reindexing) return;
+    const id = setInterval(() => { lightRefresh(root).catch(() => {}); }, 4000);
     return () => clearInterval(id);
-  }, [auto, root]);
+  }, [auto, root, reindexing, lightRefresh]);
+
+  // Tick elapsed timer while reindexing.
+  useEffect(() => {
+    if (!reindexing) return;
+    const id = setInterval(() => setReindexElapsed(Date.now() - reindexStart.current), 200);
+    return () => clearInterval(id);
+  }, [reindexing]);
+
+  const doReindex = useCallback(async (force: boolean) => {
+    if (!root || reindexing) return;
+    setReindexing(true); setReindexMsg(null); reindexStart.current = Date.now(); setReindexElapsed(0);
+    try {
+      // Fire-and-forget: the server starts the reindex in the background (it can
+      // take minutes with embeddings), then we poll for completion.
+      await getJSON("/api/reindex", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ root, force }) });
+      const q = `?root=${encodeURIComponent(root)}`;
+      const poll = async (): Promise<void> => {
+        const { state } = await getJSON(`/api/reindex${q}`);
+        // Refresh status live so the user sees the "indexing" state + file counts.
+        lightRefresh(root).catch(() => {});
+        if (state && !state.running && state.finishedAt) {
+          if (state.error) setReindexMsg(`Reindex failed: ${state.error}`);
+          else setReindexMsg(`Indexed ${state.indexed} files in ${(state.durationMs / 1000).toFixed(1)}s · ${state.filesPerSec} f/s · ${state.skipped} skipped`);
+          await fullRefresh(root);
+          setReindexing(false);
+          return;
+        }
+        setTimeout(poll, 1500);
+      };
+      setTimeout(poll, 1500);
+    } catch (e) {
+      setReindexMsg(`Reindex failed: ${String(e)}`);
+      setReindexing(false);
+    }
+  }, [root, reindexing, fullRefresh, lightRefresh]);
 
   return (
     <>
       <header className="top">
-        <span className="dot" />
+        <span className="dot" style={{ background: reindexing ? "var(--yellow)" : "var(--green)" }} />
         <h1>ContextPro Dashboard</h1>
-        <select value={root ?? ""} onChange={(e) => setRoot(e.target.value)}>
+        <select value={root ?? ""} onChange={(e) => setRoot(e.target.value)} disabled={reindexing}>
           {projects.length === 0 && <option value="">(no projects found)</option>}
           {projects.map((p) => (
-            <option key={p.root} value={p.root}>
-              {(p.projectId ?? p.root.split("/").pop())}{p.hasIndex ? "" : " (no index)"}
-            </option>
+            <option key={p.root} value={p.root}>{(p.projectId ?? p.root.split("/").pop())}{p.hasIndex ? "" : " (no index)"}</option>
           ))}
         </select>
-        <button onClick={() => root && refresh(root)}>↻ refresh</button>
-        <button onClick={() => setAuto((a) => !a)} style={{ color: auto ? "var(--green)" : "var(--muted)" }}>
-          {auto ? "● live" : "○ paused"}
+        <button onClick={() => doReindex(false)} disabled={reindexing} title="Reindex changed files">
+          {reindexing ? `indexing… ${(reindexElapsed / 1000).toFixed(1)}s` : "↻ reindex"}
         </button>
+        <button onClick={() => doReindex(true)} disabled={reindexing} title="Force full reindex">force</button>
+        <button onClick={() => root && fullRefresh(root)} disabled={reindexing}>refresh</button>
+        <button onClick={() => setAuto((a) => !a)} style={{ color: auto ? "var(--green)" : "var(--muted)" }}>{auto ? "● live" : "○ paused"}</button>
         <span className="spacer" />
-        {updatedAt && <span className="muted" style={{ fontSize: 11 }}>updated {new Date(updatedAt).toLocaleTimeString()}</span>}
+        {reindexMsg && <span className="muted" style={{ fontSize: 11, color: reindexMsg.startsWith("Reindex failed") ? "var(--red)" : "var(--green)" }}>{reindexMsg}</span>}
+        {!reindexMsg && updatedAt && <span className="muted" style={{ fontSize: 11 }}>updated {new Date(updatedAt).toLocaleTimeString()}</span>}
       </header>
 
       <div className="wrap">
         {error && <div className="panel" style={{ borderColor: "var(--red)", marginBottom: 16 }}><span className="err">⚠ {error}</span></div>}
         <div className="grid">
           <StatusPanel data={status as never} />
+          <StatsPanel data={stats as never} timing={(status as { index?: never })?.index ?? null} />
           <ToolsPanel data={tools as never} />
-          <CodeGraphPanel data={graph as never} />
           <MemoryPanel data={memory as never} />
+          <CodeGraphPanel data={graph as never} />
         </div>
         <p className="muted" style={{ marginTop: 24, fontSize: 11 }}>
           {root && <>Reading <code>{root}/.contextpro/index.db</code> (WAL — safe alongside a live MCP). </>}
-          Tool history is persisted by the MCP server; restart it on this branch to start logging.
+          Drag to pan the graph, scroll to zoom, click a node to focus its connections. Click a tool row to filter history.
         </p>
       </div>
     </>
