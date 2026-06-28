@@ -90,11 +90,20 @@ export function createIdleMonitor(options: IdleMonitorOptions): IdleMonitor {
     if (timer) clearTimeout(timer);
     timer = setTimeout(() => {
       timer = null;
-      if (options.isTransportAlive && options.isTransportAlive()) {
+      // A throw inside this timer callback would escape to the process-level
+      // uncaughtException handler, which hard-exits the whole server (and drops
+      // every MCP tool). Background timers must never be able to crash the
+      // connection, so guard the body and degrade to staying alive on error.
+      try {
+        if (options.isTransportAlive && options.isTransportAlive()) {
+          schedule();
+          return;
+        }
+        options.onIdle();
+      } catch (error) {
+        console.error("Idle monitor tick failed (non-fatal):", error);
         schedule();
-        return;
       }
-      options.onIdle();
     }, options.timeoutMs);
     unrefHandle(timer);
   };
@@ -128,9 +137,16 @@ export function startParentMonitor(options: ParentMonitorOptions): () => void {
 
   const interval = setInterval(() => {
     if (stopped) return;
-    if (process.ppid !== options.parentPid || !isAlive(options.parentPid)) {
-      stop();
-      options.onParentExit();
+    // Guard the body: a throw here would reach the process uncaughtException
+    // handler and hard-exit the server. A failed liveness poll must never crash
+    // the connection — log and let the next poll retry.
+    try {
+      if (process.ppid !== options.parentPid || !isAlive(options.parentPid)) {
+        stop();
+        options.onParentExit();
+      }
+    } catch (error) {
+      console.error("Parent monitor poll failed (non-fatal):", error);
     }
   }, pollIntervalMs);
 

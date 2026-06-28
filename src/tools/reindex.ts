@@ -611,7 +611,12 @@ export async function refreshFilesStructural(
   const indexedPaths: string[] = [];
   let skipped = unique.length - targets.length;
 
+  let processed = 0;
   for (const path of targets) {
+    // Yield to the event loop between files. tree-sitter parsing is synchronous
+    // and blocks the single thread; yielding lets concurrent tool calls and
+    // transport heartbeats interleave so a large refresh never stalls the server.
+    if (++processed % 16 === 0) await new Promise((resolve) => setImmediate(resolve));
     try {
       const fullPath = resolveProjectPath(rootDir, path, "indexed file");
       const content = await readFile(fullPath, "utf-8");

@@ -68,9 +68,16 @@ export async function reconcileIndex(
   const diskPaths = new Set<string>();
   const drifted: string[] = [];
 
+  let scanned = 0;
   for (const entry of entries) {
     if (entry.isDirectory || !isSupportedFile(entry.path)) continue;
     diskPaths.add(entry.relativePath);
+
+    // Yield to the event loop periodically. The hash scan is otherwise a long
+    // synchronous-feeling stretch (readFile + sha256 per file); yielding lets
+    // concurrent tool calls and transport heartbeats interleave so the sweep
+    // never makes the server feel hung on a large repo.
+    if (++scanned % 64 === 0) await new Promise((resolve) => setImmediate(resolve));
 
     const indexedHash = indexedHashes.get(entry.relativePath);
     if (indexedHash === undefined) {
