@@ -4,11 +4,17 @@
 
 import { watch, type FSWatcher } from "fs";
 import { refreshFilesStructural } from "../tools/reindex.js";
+import { reconcileIndex } from "./index-reconcile.js";
+import { createReconcileScheduler } from "./reconcile-scheduler.js";
 
 export interface EmbeddingTrackerOptions {
   rootDir: string;
   debounceMs?: number;
   maxFilesPerTick?: number;
+  /** How often the self-healing reconcile sweep ticks, in ms. */
+  reconcileIntervalMs?: number;
+  /** Max drifted files reconciled per sweep (large backlogs drain over sweeps). */
+  reconcileMaxFiles?: number;
 }
 
 export interface EmbeddingTrackerController {
@@ -27,6 +33,12 @@ const MAX_FILES_PER_TICK = 10;
 const DEFAULT_FILES_PER_TICK = 8;
 const DEFAULT_DEBOUNCE_MS = 1500;
 const MAX_PENDING_FILES = 50;
+
+// Self-healing reconcile sweep — catches drift the FS-watch events miss.
+const DEFAULT_RECONCILE_INTERVAL_MS = 30_000;
+const MIN_RECONCILE_INTERVAL_MS = 5_000;
+const DEFAULT_RECONCILE_MAX_FILES = 40;
+const MIN_RECONCILE_MAX_FILES = 5;
 
 const IGNORE_PREFIXES = [
   ".contextpro/",
@@ -57,6 +69,16 @@ function clampDebounceMs(value: number | undefined): number {
   return Math.max(500, Math.floor(value ?? DEFAULT_DEBOUNCE_MS));
 }
 
+function clampReconcileIntervalMs(value: number | undefined): number {
+  if (!Number.isFinite(value)) return DEFAULT_RECONCILE_INTERVAL_MS;
+  return Math.max(MIN_RECONCILE_INTERVAL_MS, Math.floor(value ?? DEFAULT_RECONCILE_INTERVAL_MS));
+}
+
+function clampReconcileMaxFiles(value: number | undefined): number {
+  if (!Number.isFinite(value)) return DEFAULT_RECONCILE_MAX_FILES;
+  return Math.max(MIN_RECONCILE_MAX_FILES, Math.floor(value ?? DEFAULT_RECONCILE_MAX_FILES));
+}
+
 export function parseEmbeddingTrackerMode(value: string | undefined): "off" | "lazy" | "eager" {
   if (!value) return "lazy";
   const normalized = value.trim().toLowerCase();
@@ -69,11 +91,32 @@ export function startEmbeddingTracker(options: EmbeddingTrackerOptions): () => v
   const pendingFiles = new Set<string>();
   const debounceMs = clampDebounceMs(options.debounceMs);
   const maxFilesPerTick = clampFilesPerTick(options.maxFilesPerTick);
+  const reconcileIntervalMs = clampReconcileIntervalMs(options.reconcileIntervalMs);
+  const reconcileMaxFiles = clampReconcileMaxFiles(options.reconcileMaxFiles);
 
   let watcher: FSWatcher | null = null;
   let timer: NodeJS.Timeout | null = null;
+  let reconcileInterval: NodeJS.Timeout | null = null;
+  let reconcileDrain: NodeJS.Timeout | null = null;
   let isProcessing = false;
   let closed = false;
+
+  // Self-healing reconcile sweep — heals drift the FS-watch events miss (Linux
+  // non-recursive watch, atomic renames, git ops, dropped events under churn).
+  const scheduler = createReconcileScheduler({
+    rootDir: options.rootDir,
+    maxFilesPerSweep: reconcileMaxFiles,
+    sweep: async (rootDir) => {
+      const result = await reconcileIndex(rootDir, { maxFiles: reconcileMaxFiles });
+      if (result.refreshed > 0 || result.removed > 0) {
+        console.error(
+          `Index reconcile healed drift | refreshed ${result.refreshed} | pruned ${result.removed}`
+          + (result.pending > 0 ? ` | ${result.pending} pending` : ""),
+        );
+      }
+      return result;
+    },
+  });
 
   const schedule = (delay: number = debounceMs): void => {
     if (timer) clearTimeout(timer);
@@ -116,6 +159,9 @@ export function startEmbeddingTracker(options: EmbeddingTrackerOptions): () => v
       if (closed || !fileName) return;
       const relativePath = normalizeRelativePath(String(fileName));
       if (!shouldTrack(relativePath)) return;
+      // Tell the reconcile scheduler the tree changed even if the per-file queue
+      // is full or this exact event is dropped — so the sweep still heals it.
+      scheduler.signalActivity();
       if (pendingFiles.size >= MAX_PENDING_FILES) return;
       pendingFiles.add(relativePath);
       schedule();
@@ -129,9 +175,36 @@ export function startEmbeddingTracker(options: EmbeddingTrackerOptions): () => v
     console.error("Embedding tracker watcher error:", error);
   });
 
+  // Drive the reconcile scheduler on a steady interval. The first sweep is forced
+  // so any drift that accumulated before boot (new/removed files since the last
+  // index) is healed without waiting for an edit. `unref` keeps it from holding
+  // the process open.
+  scheduler.signalActivity();
+  const tickReconcile = (): void => {
+    if (closed) return;
+    void scheduler.tick().finally(() => {
+      // Drain a capped backlog promptly instead of waiting a full interval.
+      if (!closed && scheduler.isDraining()) {
+        if (reconcileDrain) clearTimeout(reconcileDrain);
+        reconcileDrain = setTimeout(tickReconcile, 250);
+        reconcileDrain.unref();
+      }
+    });
+  };
+  reconcileInterval = setInterval(tickReconcile, reconcileIntervalMs);
+  reconcileInterval.unref();
+
   return () => {
     closed = true;
     if (timer) clearTimeout(timer);
+    if (reconcileInterval) {
+      clearInterval(reconcileInterval);
+      reconcileInterval = null;
+    }
+    if (reconcileDrain) {
+      clearTimeout(reconcileDrain);
+      reconcileDrain = null;
+    }
     watcher?.close();
     watcher = null;
   };

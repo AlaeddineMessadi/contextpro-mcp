@@ -401,6 +401,8 @@ async function main() {
     mode: process.env.CONTEXTPRO_EMBED_TRACKER ?? process.env.CONTEXTPLUS_EMBED_TRACKER,
     debounceMs: Number.parseInt(process.env.CONTEXTPRO_EMBED_TRACKER_DEBOUNCE_MS ?? process.env.CONTEXTPLUS_EMBED_TRACKER_DEBOUNCE_MS ?? "700", 10),
     maxFilesPerTick: Number.parseInt(process.env.CONTEXTPRO_EMBED_TRACKER_MAX_FILES ?? process.env.CONTEXTPLUS_EMBED_TRACKER_MAX_FILES ?? "8", 10),
+    reconcileIntervalMs: Number.parseInt(process.env.CONTEXTPRO_RECONCILE_INTERVAL_MS ?? process.env.CONTEXTPLUS_RECONCILE_INTERVAL_MS ?? "30000", 10),
+    reconcileMaxFiles: Number.parseInt(process.env.CONTEXTPRO_RECONCILE_MAX_FILES ?? process.env.CONTEXTPLUS_RECONCILE_MAX_FILES ?? "40", 10),
   });
   const transport = new StdioServerTransport();
   await server.connect(transport);

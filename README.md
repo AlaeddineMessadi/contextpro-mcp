@@ -402,6 +402,8 @@ Canonical prefix is `CONTEXTPRO_*` (since 1.2.0). Legacy `CONTEXTPLUS_*` names w
 | --- | --- | --- |
 | `CONTEXTPRO_EMBED_BATCH_SIZE` | `8` | Embedding batch per call (clamped to 5–10) |
 | `CONTEXTPRO_EMBED_TRACKER` | `lazy` | `off`, `lazy`, or `eager` realtime updates |
+| `CONTEXTPRO_RECONCILE_INTERVAL_MS` | `30000` | Self-healing sweep interval; heals drift the file-watch misses (clamped ≥5000) |
+| `CONTEXTPRO_RECONCILE_MAX_FILES` | `40` | Max drifted files reconciled per sweep; large backlogs drain over sweeps (clamped ≥5) |
 | `CONTEXTPRO_REINDEX_NO_EMBED` | `false` | Skip eager embedding population during reindex |
 | `CONTEXTPRO_MAX_FILE_SIZE` | `5242880` | Skip source files larger than this (bytes) |
 | `CONTEXTPRO_QUICKREFRESH_MAX_FILES` | `30` | Max stale files auto-patched per search |
