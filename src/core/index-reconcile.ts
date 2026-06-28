@@ -10,12 +10,30 @@
 // and files deleted on disk are pruned. Work is capped per sweep so a large
 // backlog drains over several cheap sweeps instead of one long stall.
 
-import { readFile } from "fs/promises";
+import { readFile, stat } from "fs/promises";
 import { getDB, hashContent } from "./db.js";
 import { walkDirectory } from "./walker.js";
 import { isSupportedFile } from "./parser.js";
 import { resolveProjectPath } from "./path-guard.js";
 import { refreshFilesStructural } from "../tools/reindex.js";
+
+// Per-root cache of last-seen {mtimeMs, size} per file. The reconcile sweep used to
+// read + sha256 EVERY file every tick — expensive CPU/battery churn on each sweep,
+// multiplied across sessions. With this, we only hash a file when its mtime or size
+// actually changed since we last saw it; unchanged files are skipped entirely.
+// In-memory only (no schema change); the first sweep seeds it, later sweeps are cheap.
+const fileStatCache = new Map<string, Map<string, { mtimeMs: number; size: number }>>();
+
+function statCacheFor(rootDir: string): Map<string, { mtimeMs: number; size: number }> {
+  let m = fileStatCache.get(rootDir);
+  if (!m) { m = new Map(); fileStatCache.set(rootDir, m); }
+  return m;
+}
+
+/** Drop a root's stat cache (e.g. on worktree GC) so it can't leak memory. */
+export function forgetReconcileStatCache(rootDir: string): void {
+  fileStatCache.delete(rootDir);
+}
 
 export interface ReconcileOptions {
   /** Maximum number of drifted files to refresh in a single sweep. */
@@ -67,16 +85,14 @@ export async function reconcileIndex(
   const entries = await walkDirectory({ rootDir, depthLimit: 0 });
   const diskPaths = new Set<string>();
   const drifted: string[] = [];
+  const statCache = statCacheFor(rootDir);
 
   let scanned = 0;
   for (const entry of entries) {
     if (entry.isDirectory || !isSupportedFile(entry.path)) continue;
     diskPaths.add(entry.relativePath);
 
-    // Yield to the event loop periodically. The hash scan is otherwise a long
-    // synchronous-feeling stretch (readFile + sha256 per file); yielding lets
-    // concurrent tool calls and transport heartbeats interleave so the sweep
-    // never makes the server feel hung on a large repo.
+    // Yield to the event loop periodically so the sweep never feels hung.
     if (++scanned % 64 === 0) await new Promise((resolve) => setImmediate(resolve));
 
     const indexedHash = indexedHashes.get(entry.relativePath);
@@ -86,14 +102,26 @@ export async function reconcileIndex(
       continue;
     }
 
-    // Known file: re-index only if its content hash drifted from the index.
     try {
       const fullPath = resolveProjectPath(rootDir, entry.relativePath, "reconcile file");
+      // CHEAP pre-filter: stat first. If mtime+size match what we last saw for an
+      // already-indexed file, its content can't have changed — skip the expensive
+      // readFile + sha256 entirely. This is what makes idle sweeps near-free.
+      const st = await stat(fullPath);
+      const prev = statCache.get(entry.relativePath);
+      if (prev && prev.mtimeMs === st.mtimeMs && prev.size === st.size) {
+        continue; // unchanged since last sweep — no hashing needed
+      }
+
+      // mtime/size changed (or first time we've seen it this session): hash to
+      // confirm a real content change before marking drift, then remember the stat.
       const content = await readFile(fullPath, "utf-8");
+      statCache.set(entry.relativePath, { mtimeMs: st.mtimeMs, size: st.size });
       if (hashContent(content) !== indexedHash) drifted.push(entry.relativePath);
     } catch {
       // Unreadable (race with deletion / permissions) — let prune or the next
       // sweep handle it rather than treating an error as drift.
+      statCache.delete(entry.relativePath);
     }
   }
 
