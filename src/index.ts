@@ -491,6 +491,13 @@ process.on("uncaughtException", (error) => {
     process.exit(0);
   }
   console.error("Uncaught exception:", error);
+  // Last-resort guard ONLY. Reaching here means an error escaped every local
+  // try/catch, and Node considers the process state undefined — so a clean exit
+  // (which the MCP client recovers from by respawning) is safer than resuming
+  // into possible corruption. Do NOT "fix" disconnects by swallowing here:
+  // instead ensure the source can't throw uncaught. Known background timers
+  // (reconcile sweep, idle monitor, parent monitor) are individually guarded so
+  // a routine background failure never reaches this hard-exit path.
   // The `process.once("exit")` handler in main() synchronously stops the idle monitor, parent
   // monitor, and embedding tracker — those run even on this hard exit. Async cleanup (server /
   // transport close) cannot run during a synchronous exit and is reclaimed by the OS.

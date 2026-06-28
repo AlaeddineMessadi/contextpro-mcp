@@ -182,14 +182,24 @@ export function startEmbeddingTracker(options: EmbeddingTrackerOptions): () => v
   scheduler.signalActivity();
   const tickReconcile = (): void => {
     if (closed) return;
-    void scheduler.tick().finally(() => {
-      // Drain a capped backlog promptly instead of waiting a full interval.
-      if (!closed && scheduler.isDraining()) {
-        if (reconcileDrain) clearTimeout(reconcileDrain);
-        reconcileDrain = setTimeout(tickReconcile, 250);
-        reconcileDrain.unref();
-      }
-    });
+    // Background sweeps must NEVER be able to crash the server. The scheduler's
+    // own tick already swallows sweep errors, but a stray rejection (or a throw
+    // in the drain-scheduling callback below) would otherwise escape this
+    // fire-and-forget call and surface as an unhandledRejection. Catch it here so
+    // a failed background sweep can never take down the MCP stdio connection.
+    scheduler
+      .tick()
+      .then(() => {
+        // Drain a capped backlog promptly instead of waiting a full interval.
+        if (!closed && scheduler.isDraining()) {
+          if (reconcileDrain) clearTimeout(reconcileDrain);
+          reconcileDrain = setTimeout(tickReconcile, 250);
+          reconcileDrain.unref();
+        }
+      })
+      .catch((error) => {
+        console.error("Reconcile tick failed (non-fatal):", error);
+      });
   };
   reconcileInterval = setInterval(tickReconcile, reconcileIntervalMs);
   reconcileInterval.unref();
