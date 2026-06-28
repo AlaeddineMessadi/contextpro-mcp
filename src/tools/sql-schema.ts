@@ -65,14 +65,14 @@ export function aggregateSchemas(schemas: SqlSchema[]): AggregatedSchema {
     functions.push(...schema.functions);
   }
 
-  // A later `enable row level security` in a different file than the CREATE TABLE
-  // still applies — re-apply RLS flags across the merged set.
+  // Apply every `ENABLE ROW LEVEL SECURITY` seen in ANY migration to the merged
+  // table, even when the enable lives in a different file than the CREATE TABLE
+  // (the common Supabase layout). Without this, the table is wrongly reported
+  // `[RLS OFF]` because the per-file parse never saw both statements together.
   for (const schema of schemas) {
-    for (const table of schema.tables) {
-      if (table.rlsEnabled) {
-        const merged = tablesByName.get(table.name);
-        if (merged) merged.rlsEnabled = true;
-      }
+    for (const tableName of schema.rlsEnabledTables) {
+      const merged = tablesByName.get(tableName);
+      if (merged) merged.rlsEnabled = true;
     }
   }
 
@@ -98,6 +98,19 @@ export async function getSqlSchema(options: SqlSchemaOptions): Promise<string> {
   }
 
   return formatSchema(tables, policies, functions, aggregated.filesScanned, wanted);
+}
+
+/**
+ * Render a policy's predicate(s) for text output. INSERT/UPDATE policies frequently
+ * use only WITH CHECK, so both USING and WITH CHECK must be shown — otherwise the
+ * predicate an agent needs to answer the RLS-constraint question is silently
+ * dropped from the default text format.
+ */
+function policyPredicate(p: SqlPolicy): string {
+  const parts: string[] = [];
+  if (p.using) parts.push(`using (${p.using})`);
+  if (p.withCheck) parts.push(`with check (${p.withCheck})`);
+  return parts.length > 0 ? ` ${parts.join(" ")}` : "";
 }
 
 function formatSchema(
@@ -130,7 +143,7 @@ function formatSchema(
     }
     const tablePolicies = policies.filter((p) => p.table === table.name);
     for (const p of tablePolicies) {
-      lines.push(`  POLICY "${p.name}" ${p.command.toUpperCase()}${p.roles.length ? ` to ${p.roles.join(", ")}` : ""}${p.using ? ` using (${p.using})` : ""}`);
+      lines.push(`  POLICY "${p.name}" ${p.command.toUpperCase()}${p.roles.length ? ` to ${p.roles.join(", ")}` : ""}${policyPredicate(p)}`);
     }
     lines.push("");
   }
@@ -141,7 +154,7 @@ function formatSchema(
   if (orphanPolicies.length > 0) {
     lines.push("POLICIES:");
     for (const p of orphanPolicies) {
-      lines.push(`  "${p.name}" on ${p.table} ${p.command.toUpperCase()}${p.roles.length ? ` to ${p.roles.join(", ")}` : ""}`);
+      lines.push(`  "${p.name}" on ${p.table} ${p.command.toUpperCase()}${p.roles.length ? ` to ${p.roles.join(", ")}` : ""}${policyPredicate(p)}`);
     }
     lines.push("");
   }

@@ -50,6 +50,13 @@ export interface SqlSchema {
   tables: SqlTable[];
   policies: SqlPolicy[];
   functions: SqlFunction[];
+  /**
+   * Table names targeted by `ALTER TABLE ... ENABLE ROW LEVEL SECURITY` in THIS
+   * file. A migration commonly enables RLS in a different file than the CREATE
+   * TABLE, so the enable can't be resolved within one file — the aggregator
+   * applies these across the whole migration set.
+   */
+  rlsEnabledTables: string[];
 }
 
 function stripSchemaPrefix(qualified: string): { schema: string; name: string } {
@@ -136,14 +143,19 @@ function extractTables(source: string): SqlTable[] {
   return tables;
 }
 
-function applyRlsFlags(source: string, tables: SqlTable[]): void {
+function applyRlsFlags(source: string, tables: SqlTable[]): string[] {
+  const enabled: string[] = [];
   const re = /alter\s+table\s+(?:if\s+exists\s+)?([\w."]+)\s+enable\s+row\s+level\s+security/gi;
   let match: RegExpExecArray | null;
   while ((match = re.exec(source)) !== null) {
     const { name } = stripSchemaPrefix(match[1]);
+    enabled.push(name);
+    // Set the flag in-file when the CREATE TABLE is in the same file; otherwise the
+    // returned list lets the aggregator apply it across migration files.
     const table = tables.find((t) => t.name === name);
     if (table) table.rlsEnabled = true;
   }
+  return enabled;
 }
 
 function extractPolicies(source: string): SqlPolicy[] {
@@ -218,11 +230,12 @@ function extractFunctions(source: string): SqlFunction[] {
 export function extractSqlSchema(path: string, source: string): SqlSchema {
   const normalized = source.replace(/\r\n/g, "\n");
   const tables = extractTables(normalized);
-  applyRlsFlags(normalized, tables);
+  const rlsEnabledTables = applyRlsFlags(normalized, tables);
   return {
     path,
     tables,
     policies: extractPolicies(normalized),
     functions: extractFunctions(normalized),
+    rlsEnabledTables,
   };
 }
