@@ -87,6 +87,15 @@ describe("walker", () => {
       assert.equal(gitEntries.length, 0);
     });
 
+    it("returns empty when targetPath IS an always-ignored directory", async () => {
+      // A scoped walk into vendor/ must honor the ignore policy for the start dir
+      // itself, not just its children.
+      await mkdir(join(FIXTURE_DIR, "vendor", "pkg"), { recursive: true });
+      await writeFile(join(FIXTURE_DIR, "vendor", "pkg", "lib.ts"), "export {}");
+      const entries = await walkDirectory({ rootDir: FIXTURE_DIR, targetPath: "vendor" });
+      assert.equal(entries.length, 0, "scoping into an ignored dir must yield nothing");
+    });
+
     it("returns empty for non-existent targetPath", async () => {
       const entries = await walkDirectory({
         rootDir: FIXTURE_DIR,
