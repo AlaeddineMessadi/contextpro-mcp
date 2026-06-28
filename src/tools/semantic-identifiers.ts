@@ -615,16 +615,38 @@ export async function refreshIdentifierEmbeddings(options: { rootDir: string; re
   const cache = await loadIdentifierCache(options.rootDir);
   const dirtyKeys = new Set<string>();
   const pending: { key: string; hash: string; text: string }[] = [];
+  let reused = 0;
 
   for (const relativePath of uniquePaths) {
+    // Snapshot the file's existing cached vectors+hashes BEFORE clearing, so we can
+    // re-use the embedding of any identifier whose text is unchanged. Re-embedding
+    // every identifier in a file on any edit (the old behavior) sent a burst of
+    // Ollama calls per changed file — the main idle/edit-time battery cost, since a
+    // file averages ~25 identifiers and only one or two actually change per edit.
+    const previous = new Map<string, { hash: string; vector: number[] }>();
+    const defPrefix = `id:${relativePath}:`;
+    const callPrefix = `${CALLSITE_CACHE_PREFIX}${relativePath}:`;
+    for (const k of Object.keys(cache)) {
+      if (k.startsWith(defPrefix) || k.startsWith(callPrefix)) previous.set(k, cache[k]);
+    }
+
     removeFileScopedCacheEntries(cache, relativePath);
     db.deleteEmbeddingsByPrefix(IDENTIFIER_SOURCE_TYPE, `id:${relativePath}:`);
     db.deleteEmbeddingsByPrefix(IDENTIFIER_SOURCE_TYPE, `${CALLSITE_CACHE_PREFIX}${relativePath}:`);
+
     const docs = await buildIdentifierDocsForFile(options.rootDir, relativePath);
     for (const doc of docs) {
       const key = `id:${doc.id}`;
       const hash = hashContent(doc.text);
-      pending.push({ key, hash, text: doc.text });
+      const prior = previous.get(key);
+      if (prior && prior.hash === hash) {
+        // Unchanged identifier — reuse its vector, re-persist it, skip embedding.
+        cache[key] = prior;
+        dirtyKeys.add(key);
+        reused++;
+      } else {
+        pending.push({ key, hash, text: doc.text });
+      }
     }
   }
 
@@ -642,5 +664,7 @@ export async function refreshIdentifierEmbeddings(options: { rootDir: string; re
 
   await saveIdentifierCache(options.rootDir, cache, dirtyKeys);
   invalidateIdentifierSearchCache();
+  // Returns only the count actually EMBEDDED (not reused) — that's the real cost.
+  void reused;
   return pending.length;
 }
