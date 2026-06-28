@@ -5,6 +5,7 @@ import { MetricStrip } from "@/components/MetricStrip";
 import { StatusPanel } from "@/components/StatusPanel";
 import { StatsPanel } from "@/components/StatsPanel";
 import { ToolsPanel } from "@/components/ToolsPanel";
+import { PerfPanel } from "@/components/PerfPanel";
 import { GraphHero } from "@/components/GraphHero";
 
 interface Project { projectId: string | null; root: string; hasIndex: boolean }
@@ -23,6 +24,7 @@ export default function Dashboard() {
   const [tools, setTools] = useState<Record<string, unknown> | null>(null);
   const [graph, setGraph] = useState<Record<string, unknown> | null>(null);
   const [memory, setMemory] = useState<Record<string, unknown> | null>(null);
+  const [perf, setPerf] = useState<Record<string, unknown> | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [auto, setAuto] = useState(true);
   const [updatedAt, setUpdatedAt] = useState<number | null>(null);
@@ -42,8 +44,8 @@ export default function Dashboard() {
 
   const lightRefresh = useCallback(async (r: string) => {
     const q = `?root=${encodeURIComponent(r)}`;
-    const [s, t] = await Promise.all([getJSON(`/api/status${q}`), getJSON(`/api/tools${q}`)]);
-    setStatus(s.status); setTools(t); setUpdatedAt(Date.now());
+    const [s, t, p] = await Promise.all([getJSON(`/api/status${q}`), getJSON(`/api/tools${q}`), getJSON(`/api/perf`)]);
+    setStatus(s.status); setTools(t); setPerf(p); setUpdatedAt(Date.now());
   }, []);
 
   const fullRefresh = useCallback(async (r: string | null) => {
@@ -131,6 +133,7 @@ export default function Dashboard() {
         <GraphHero code={graph as never} memory={memory as never} />
 
         <div className="grid">
+          <PerfPanel data={perf as never} tools={(tools as { aggregates?: never })?.aggregates ?? null} />
           <ToolsPanel data={tools as never} />
           <StatsPanel data={stats as never} timing={(status as { index?: never })?.index ?? null} />
           <StatusPanel data={status as never} />
