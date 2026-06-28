@@ -474,6 +474,15 @@ const CONFIG_KEY_RESERVED = new Set([
 
 export async function analyzeFile(filePath: string): Promise<FileAnalysis> {
   const raw = await readFile(filePath, "utf-8");
+  return analyzeContent(filePath, raw);
+}
+
+/**
+ * Analyze already-loaded source text under a logical path. Same logic as
+ * analyzeFile but without touching disk — lets callers parse content that isn't a
+ * working-tree file (e.g. an old git blob for semantic_diff).
+ */
+export async function analyzeContent(filePath: string, raw: string): Promise<FileAnalysis> {
   const content = (raw.startsWith("﻿") ? raw.slice(1) : raw).replace(/\r\n/g, "\n");
   const lines = content.split("\n");
   const ext = extname(filePath).toLowerCase();
