@@ -131,8 +131,15 @@ export async function computeTestImpact(
     };
   }
 
-  const runAllTrigger = present.find(isRunAllTrigger);
-  const changedSources = present.filter((p) => !isTestFile(p));
+  // A run-all trigger anywhere (present OR deleted) forces the full suite — e.g.
+  // deleting package.json is just as impactful as changing it.
+  const runAllTrigger = [...present, ...deleted].find(isRunAllTrigger);
+
+  // Source impact seeds include DELETED/renamed-away non-test sources too: removing
+  // src/math.ts can break every test that imported it, and the import graph still
+  // knows those importers (the index isn't rebuilt yet). Only the runnable OUTPUT
+  // excludes deleted tests.
+  const changedSources = [...present, ...deleted].filter((p) => !isTestFile(p));
   // Only test files that STILL EXIST (present) are runnable; a deleted/renamed-away
   // test must never be selected as a path to run.
   const changedTests = present.filter(isTestFile);

@@ -108,4 +108,28 @@ describe("computeTestImpact", () => {
     const paths = result.tests.map((t) => t.path);
     assert.ok(!paths.includes("test/math.test.ts"), `deleted test must not be selected, got ${JSON.stringify(paths)}`);
   });
+
+  it("still selects tests for a DELETED source file (broken imports)", async () => {
+    // Delete a source file that math.test.ts imports — its test must still be
+    // selected, since removing it can break that test's imports.
+    await rm(join(root, "src", "math.ts"));
+
+    const { computeTestImpact } = await import("../../build/core/test-impact.js");
+    const result = await computeTestImpact(root, { since: "HEAD" });
+    const paths = result.tests.map((t) => t.path);
+    // math.test.ts still exists and imported the now-deleted math.ts.
+    assert.ok(paths.includes("test/math.test.ts"), `deleted source must still seed its tests, got ${JSON.stringify(paths)}`);
+  });
+
+  it("forces run-all when a config file is DELETED (not just modified)", async () => {
+    // Seed package.json into HEAD, then delete it.
+    await writeFile(join(root, "package.json"), '{"name":"x","version":"1.0.0"}\n');
+    git(["add", "-A"]);
+    git(["commit", "-q", "-m", "add pkg"]);
+    await rm(join(root, "package.json"));
+
+    const { computeTestImpact } = await import("../../build/core/test-impact.js");
+    const result = await computeTestImpact(root, { since: "HEAD" });
+    assert.equal(result.runAll, true, "deleting a config/lockfile must also force run-all");
+  });
 });
