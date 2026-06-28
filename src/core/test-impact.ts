@@ -59,29 +59,58 @@ function isRunAllTrigger(path: string): boolean {
   return RUN_ALL_PATTERNS.some((re) => re.test(path));
 }
 
-async function gitChangedFiles(rootDir: string, ref: string): Promise<string[]> {
-  const paths = new Set<string>();
+interface ChangedFiles {
+  /** Paths that exist now (added/modified/renamed-to) — safe to select & run. */
+  present: string[];
+  /** Paths removed by the change (deleted / renamed-away) — never runnable. */
+  deleted: string[];
+  /** True if the diff ref was invalid/unresolvable — caller must run all. */
+  invalidRef: boolean;
+}
+
+async function gitChangedFiles(rootDir: string, ref: string): Promise<ChangedFiles> {
+  const present = new Set<string>();
+  const deleted = new Set<string>();
+  let invalidRef = false;
+
   try {
-    const { stdout } = await execFileAsync("git", ["diff", "--name-only", ref], {
+    // --name-status keeps the change type so a DELETED test isn't re-selected as a
+    // runnable file, and rename records (R###  old  new) resolve to the new path.
+    const { stdout } = await execFileAsync("git", ["diff", "--name-status", ref], {
       cwd: rootDir, timeout: 15000, maxBuffer: 1024 * 1024,
     });
     for (const line of stdout.trim().split("\n")) {
-      if (line.trim()) paths.add(line.trim());
+      if (!line.trim()) continue;
+      const parts = line.split("\t");
+      const status = parts[0].trim();
+      if (status.startsWith("D")) {
+        if (parts[1]) deleted.add(parts[1].trim());
+      } else if (/^[RC]\d*/.test(status) && parts.length >= 3) {
+        deleted.add(parts[1].trim());   // old path is gone
+        present.add(parts[2].trim());   // new path exists
+      } else if (parts[1]) {
+        present.add(parts[1].trim());
+      }
     }
-  } catch {
-    // ignore — empty diff
+  } catch (error) {
+    // A non-zero exit here means the ref couldn't be resolved (e.g. `main` in a
+    // repo that only has `master`) — NOT an empty diff (which exits 0). Treat it as
+    // unknown scope so the caller runs the full suite rather than silently skipping.
+    invalidRef = true;
   }
+
   try {
     const { stdout } = await execFileAsync("git", ["ls-files", "--others", "--exclude-standard"], {
       cwd: rootDir, timeout: 10000, maxBuffer: 1024 * 1024,
     });
     for (const line of stdout.trim().split("\n")) {
-      if (line.trim()) paths.add(line.trim());
+      if (line.trim()) present.add(line.trim());
     }
   } catch {
-    // ignore
+    // untracked enumeration is best-effort
   }
-  return [...paths];
+
+  return { present: [...present], deleted: [...deleted], invalidRef };
 }
 
 export async function computeTestImpact(
@@ -89,11 +118,25 @@ export async function computeTestImpact(
   options: TestImpactOptions = {},
 ): Promise<TestImpactResult> {
   const ref = options.since ?? "HEAD";
-  const changedFiles = await gitChangedFiles(rootDir, ref);
+  const { present, deleted, invalidRef } = await gitChangedFiles(rootDir, ref);
 
-  const runAllTrigger = changedFiles.find(isRunAllTrigger);
-  const changedSources = changedFiles.filter((p) => !isTestFile(p));
-  const changedTests = changedFiles.filter(isTestFile);
+  // An unresolvable ref means we can't scope safely — run everything.
+  if (invalidRef) {
+    return {
+      ref,
+      changedFiles: present,
+      tests: [],
+      runAll: true,
+      runAllReason: `could not diff against '${ref}' (unknown ref) — run the full suite`,
+    };
+  }
+
+  const runAllTrigger = present.find(isRunAllTrigger);
+  const changedSources = present.filter((p) => !isTestFile(p));
+  // Only test files that STILL EXIST (present) are runnable; a deleted/renamed-away
+  // test must never be selected as a path to run.
+  const changedTests = present.filter(isTestFile);
+  const deletedSet = new Set(deleted);
 
   // Reverse-dependency walk from changed sources to the tests that exercise them.
   const reverseTests = changedSources.length > 0
@@ -103,6 +146,7 @@ export async function computeTestImpact(
   // A directly-edited test file is itself impacted (highest confidence).
   const byPath = new Map<string, ImpactedTest>();
   for (const test of reverseTests) {
+    if (deletedSet.has(test.path)) continue; // never run a test that was removed
     const existing = byPath.get(test.path);
     if (!existing || test.score > existing.score) byPath.set(test.path, test);
   }
@@ -114,7 +158,7 @@ export async function computeTestImpact(
 
   return {
     ref,
-    changedFiles,
+    changedFiles: present,
     tests,
     runAll: runAllTrigger !== undefined,
     runAllReason: runAllTrigger ? `${runAllTrigger} changed — run the full suite` : null,

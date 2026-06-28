@@ -91,4 +91,21 @@ describe("computeTestImpact", () => {
     const result = await computeTestImpact(root, { since: "HEAD" });
     assert.equal(result.runAll, true, "config change should force a run-all fallback");
   });
+
+  it("forces run-all when the diff ref is invalid (does not silently skip)", async () => {
+    const { computeTestImpact } = await import("../../build/core/test-impact.js");
+    const result = await computeTestImpact(root, { since: "no-such-ref-xyz" });
+    assert.equal(result.runAll, true, "an unresolvable ref must force run-all, not 'no changes'");
+    assert.match(result.runAllReason ?? "", /unknown ref|could not diff/i);
+  });
+
+  it("does not select a deleted test file as runnable", async () => {
+    // Delete a test that exists in HEAD — it must NOT appear in the runnable set.
+    await rm(join(root, "test", "math.test.ts"));
+
+    const { computeTestImpact } = await import("../../build/core/test-impact.js");
+    const result = await computeTestImpact(root, { since: "HEAD" });
+    const paths = result.tests.map((t) => t.path);
+    assert.ok(!paths.includes("test/math.test.ts"), `deleted test must not be selected, got ${JSON.stringify(paths)}`);
+  });
 });
