@@ -5,6 +5,7 @@ import { resolve } from "path";
 import { getDB, type FileRow, type SymbolRow } from "../core/db.js";
 import { loadProjectConfig } from "../core/project-config.js";
 import { persistArtifact } from "../core/artifacts.js";
+import { computePageRank } from "../core/pagerank.js";
 import { buildFreshnessMetadata, buildTrustMetadata, getIndexState, type TrustMetadata, type FreshnessMetadata } from "../core/context-metadata.js";
 
 export interface RepoMapOptions {
@@ -22,6 +23,8 @@ export interface RepoMapFileEntry {
   header: string | null;
   symbolCount: number;
   importance: number;
+  /** Normalized PageRank centrality over the import graph (0–100). */
+  pageRank: number;
   importsFromCount: number;
   importedByCount: number;
   symbols: Array<{
@@ -80,14 +83,22 @@ function docstringBoost(dbFile: FileRow): number {
   return 2;
 }
 
-function scoreFileImportance(dbFile: FileRow, symbols: SymbolRow[], importsFromCount: number, importedByCount: number): number {
+function scoreFileImportance(
+  dbFile: FileRow,
+  symbols: SymbolRow[],
+  importsFromCount: number,
+  importedByCount: number,
+  pageRankBoost: number,
+): number {
   const topLevelCount = symbols.filter((symbol) => symbol.parent_symbol_id === null).length;
-  // Strong dampener for files whose `importedByCount` is high purely because of test imports.
-  // We don't have a flag here, but the role boost above already strongly penalizes test paths,
-  // so a test file with 20 importers ends up below an entry point with 5 importers.
+  // PageRank captures TRANSITIVE importance over the import graph (a file depended
+  // on by important files, not just by many files). It dominates the local degree
+  // terms, which are kept as a small tie-breaker. The role/docstring boosts encode
+  // priors PageRank can't see (entry points up, test files down).
   return (
-    importedByCount * 5 +
-    importsFromCount * 1.5 +
+    pageRankBoost +
+    importedByCount * 1.5 +
+    importsFromCount * 0.5 +
     topLevelCount * 1.5 +
     Math.min(dbFile.symbol_count, 20) * 0.3 +
     fileRoleBoost(dbFile.path) +
@@ -109,8 +120,30 @@ export async function getRepoMapData(options: RepoMapOptions): Promise<RepoMapDa
     loadProjectConfig(options.rootDir),
     getIndexState(options.rootDir),
   ]);
-  const allFiles = db.getAllFiles()
+  const everyFile = db.getAllFiles();
+  const allFiles = everyFile
     .filter((file) => !options.targetPath || file.path.startsWith(options.targetPath));
+
+  // Compute PageRank over the WHOLE import graph (not just the target subtree) so
+  // transitive importance from outside the subtree still counts. Edge source→target
+  // means "source imports target", so rank flows toward heavily-depended-on files.
+  // When a targetPath is given, personalize toward that subtree to pull rank into it.
+  const idToPath = new Map<number, string>(everyFile.map((file) => [file.id, file.path]));
+  const edges: Array<[string, string]> = [];
+  for (const file of everyFile) {
+    for (const imp of db.getImportsFrom(file.id)) {
+      const targetPath = imp.target_file_id != null ? idToPath.get(imp.target_file_id) : undefined;
+      if (targetPath) edges.push([file.path, targetPath]);
+    }
+  }
+  const personalization = options.targetPath
+    ? new Set(allFiles.map((file) => file.path))
+    : undefined;
+  const rawRanks = computePageRank(everyFile.map((file) => file.path), edges, { personalization });
+  // Normalize to 0–100 against the max rank so the boost is scale-stable across
+  // repos of any size (PageRank values shrink as node count grows).
+  const maxRank = Math.max(...rawRanks.values(), Number.EPSILON);
+  const pageRankScore = (path: string): number => Math.round((100 * (rawRanks.get(path) ?? 0)) / maxRank);
 
   // Compute an effective file budget. If max_tokens is set and max_files wasn't, scale breadth
   // proportionally so repo_map can actually surface a meaningful coverage on large repos.
@@ -146,12 +179,14 @@ export async function getRepoMapData(options: RepoMapOptions): Promise<RepoMapDa
         }));
       const importsFromCount = db.getImportsFrom(file.id).length;
       const importedByCount = db.getImportersOf(file.id).length;
+      const pageRank = pageRankScore(file.path);
 
       return {
         path: file.path,
         header: file.header,
         symbolCount: file.symbol_count,
-        importance: scoreFileImportance(file, symbols, importsFromCount, importedByCount),
+        importance: scoreFileImportance(file, symbols, importsFromCount, importedByCount, pageRank),
+        pageRank,
         importsFromCount,
         importedByCount,
         symbols: topLevelSymbols,
