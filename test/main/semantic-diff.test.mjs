@@ -172,6 +172,36 @@ describe("computeSemanticDiff", () => {
       "collapsing double-space inside a string literal must NOT mask the change");
   });
 
+  it("detects punctuation-position whitespace inside a string (a -b → a- b)", async () => {
+    await writeFile(join(root, "pos.ts"), 'export function q(): string { return "a -b"; }\n');
+    await commitAll("base");
+    await writeFile(join(root, "pos.ts"), 'export function q(): string { return "a- b"; }\n');
+
+    const { computeSemanticDiff } = await import("../../build/core/semantic-diff.js");
+    const result = await computeSemanticDiff(root, { since: "HEAD" });
+    const file = result.files.find((f) => f.path === "pos.ts");
+    assert.ok(file && file.symbols.some((s) => s.name === "q" && s.change === "modified"),
+      'same-length "a -b"→"a- b" must still register (mask must not normalize literal contents)');
+  });
+
+  it("detects an in-string whitespace change in an indentation-significant language (Python)", async () => {
+    await writeFile(join(root, "m.py"), 'def greet():\n    return "a  b"\n');
+    await commitAll("base");
+    await writeFile(join(root, "m.py"), 'def greet():\n    return "a b"\n');
+
+    const { computeSemanticDiff } = await import("../../build/core/semantic-diff.js");
+    const result = await computeSemanticDiff(root, { since: "HEAD" });
+    const file = result.files.find((f) => f.path === "m.py");
+    assert.ok(file && file.symbols.some((s) => s.name === "greet" && s.change === "modified"),
+      "Python in-string whitespace change must not be collapsed away");
+  });
+
+  it("keeps the source file as text (no NUL bytes in fingerprint placeholders)", async () => {
+    const { readFile } = await import("node:fs/promises");
+    const src = await readFile(new URL("../../src/core/semantic-diff.ts", import.meta.url), "utf-8");
+    assert.ok(![...src].some((ch) => ch.charCodeAt(0) === 0), "semantic-diff.ts must contain no NUL bytes (keeps git treating it as text)");
+  });
+
   it("throws a clear error for an invalid baseline ref instead of reporting no changes", async () => {
     await writeFile(join(root, "x.ts"), "export const x = 1;\n");
     await commitAll("base");
