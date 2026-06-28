@@ -722,11 +722,12 @@ export function registerTools(
       target_path: z.string().optional().describe("Scope reindex to a specific directory (relative to root)."),
       force: z.boolean().optional().describe("Force re-process all files, ignoring cache. Default: false."),
       no_embed: z.boolean().optional().describe("Skip eager embedding population. Search/identifier semantic ranking will populate lazily on first call. Default: false."),
+      auto_hubs: z.boolean().optional().describe("Generate feature-hub labels (one chat-model call per hub). Off by default to keep reindex fast and free. Or set CONTEXTPRO_AUTO_HUBS=1."),
     },
-    withRequestActivity(async ({ target_path, force, no_embed }) => ({
+    withRequestActivity(async ({ target_path, force, no_embed, auto_hubs }) => ({
       content: [{
         type: "text" as const,
-        text: await reindex({ rootDir: rootDir(), targetPath: target_path, force, noEmbed: no_embed }),
+        text: await reindex({ rootDir: rootDir(), targetPath: target_path, force, noEmbed: no_embed, autoHubs: auto_hubs }),
       }],
     }), { toolName: "reindex", waitForIndexing: false }),
   );

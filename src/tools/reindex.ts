@@ -18,6 +18,20 @@ export interface ReindexOptions {
   targetPath?: string;
   force?: boolean;
   noEmbed?: boolean;
+  /**
+   * Generate feature-hub labels during reindex. OFF by default: hub labelling calls
+   * the configured chat model once per hub, which adds latency and (for a cloud
+   * model) cost/quota on every reindex — and silently churns in the background via
+   * the reconcile sweep. Opt in explicitly, or set CONTEXTPRO_AUTO_HUBS=1.
+   */
+  autoHubs?: boolean;
+}
+
+/** Whether auto-hub generation is enabled (opt-in via option or env). */
+function isAutoHubsEnabled(option?: boolean): boolean {
+  if (option !== undefined) return option;
+  const env = (process.env.CONTEXTPRO_AUTO_HUBS ?? process.env.CONTEXTPLUS_AUTO_HUBS ?? "").trim().toLowerCase();
+  return ["1", "true", "yes", "on"].includes(env);
 }
 
 export interface ReindexResult {
@@ -380,7 +394,9 @@ export async function reindex(options: ReindexOptions): Promise<string> {
     for (const path of removed) db.deleteFile(path);
 
     let autoHubCount = 0;
-    if (!options.targetPath) {
+    // Auto-hub generation makes a chat-model call per hub — off by default so reindex
+    // (including the background reconcile-driven path) stays fast, quiet, and free.
+    if (!options.targetPath && isAutoHubsEnabled(options.autoHubs)) {
       const hubResult = await autoGenerateHubData(options.rootDir).catch(() => null);
       autoHubCount = hubResult?.generated.length ?? 0;
     }
