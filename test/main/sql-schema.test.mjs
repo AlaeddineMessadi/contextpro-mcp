@@ -111,4 +111,42 @@ describe("extractSqlSchema", () => {
     assert.equal(fn.securityDefiner, true, "SECURITY DEFINER after body must be detected");
     assert.equal(fn.language, "plpgsql", "LANGUAGE after body must be detected");
   });
+
+  it("parses full multi-word and schema-qualified column types", () => {
+    const sql = [
+      "create table public.events (",
+      "  id uuid primary key,",
+      "  created_at timestamp with time zone not null default now(),",
+      "  ratio double precision,",
+      "  role public.user_role not null,",
+      "  label character varying(255)",
+      ");",
+    ].join("\n");
+    const schema = extractSqlSchema("m.sql", sql);
+    const t = schema.tables.find((x) => x.name === "events");
+    const typeOf = (n) => t.columns.find((c) => c.name === n)?.type;
+    assert.match(typeOf("created_at"), /timestamp with time zone/i);
+    assert.match(typeOf("ratio"), /double precision/i);
+    assert.match(typeOf("role"), /public\.user_role/i);
+    assert.match(typeOf("label"), /character varying\(255\)/i);
+  });
+
+  it("captures ALTER TABLE ... ADD COLUMN entries", () => {
+    const sql = "alter table public.users add column display_name text not null;\n";
+    const schema = extractSqlSchema("m.sql", sql);
+    assert.equal(schema.alterAddColumns.length, 1);
+    assert.equal(schema.alterAddColumns[0].table, "public.users");
+    assert.equal(schema.alterAddColumns[0].column.name, "display_name");
+    assert.match(schema.alterAddColumns[0].column.type, /text/i);
+  });
+
+  it("attaches a schema to extracted policies", () => {
+    const sql = [
+      "create policy p on auth.sessions for select to authenticated using (true);",
+    ].join("\n");
+    const schema = extractSqlSchema("m.sql", sql);
+    const p = schema.policies[0];
+    assert.equal(p.table, "sessions");
+    assert.equal(p.schema, "auth", "policy target schema must be preserved");
+  });
 });

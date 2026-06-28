@@ -29,6 +29,8 @@ export interface SqlTable {
 export interface SqlPolicy {
   name: string;
   table: string;
+  /** Schema of the target table, so a policy on public.users ≠ one on auth.users. */
+  schema: string;
   command: string; // select | insert | update | delete | all
   roles: string[];
   using: string | null;
@@ -57,6 +59,12 @@ export interface SqlSchema {
    * applies these across the whole migration set.
    */
   rlsEnabledTables: string[];
+  /**
+   * Columns added via `ALTER TABLE ... ADD COLUMN` in THIS file, schema-qualified
+   * by target table. A later migration often adds columns to a table created
+   * earlier in a different file, so the aggregator merges these across the set.
+   */
+  alterAddColumns: Array<{ table: string; column: SqlColumn }>;
 }
 
 /** A schema-qualified table key, e.g. "public.users" — distinguishes auth.users. */
@@ -112,9 +120,14 @@ function parseColumn(raw: string): SqlColumn | null {
   const name = nameMatch[1].replace(/"/g, "");
   let rest = nameMatch[2].trim();
 
-  // Type is the leading token(s), possibly with a (precision[, scale]) and array []/.
-  const typeMatch = rest.match(/^([a-zA-Z_][\w]*(\s+[a-zA-Z]+)?(\s*\([^)]*\))?(\s*\[\])?)/);
-  const type = typeMatch ? typeMatch[1].trim() : rest.split(/\s+/)[0];
+  // The type runs from here until the first column-constraint keyword (or end).
+  // This captures multi-word types (`timestamp with time zone`, `double precision`,
+  // `character varying(255)`) and schema-qualified enums (`public.user_role`),
+  // including a trailing `(precision[, scale])` and `[]` array marker — instead of
+  // the old pattern that grabbed at most one extra word and no dot.
+  const CONSTRAINT_BOUNDARY = /\s+\b(not\s+null|null|default|check|references|unique|primary\s+key|generated|collate|constraint)\b/i;
+  const boundary = rest.search(CONSTRAINT_BOUNDARY);
+  const type = (boundary >= 0 ? rest.slice(0, boundary) : rest).trim().replace(/,$/, "");
 
   const notNull = /\bnot\s+null\b/i.test(rest);
   const defaultMatch = rest.match(/\bdefault\s+(.+?)(?=\s+(?:not\s+null|check|references|unique|primary)\b|$)/is);
@@ -148,6 +161,19 @@ function extractTables(source: string): SqlTable[] {
   return tables;
 }
 
+function extractAlterAddColumns(source: string): Array<{ table: string; column: SqlColumn }> {
+  const added: Array<{ table: string; column: SqlColumn }> = [];
+  // `ALTER TABLE [IF EXISTS] <tbl> ADD COLUMN [IF NOT EXISTS] <col> <type…>;`
+  const re = /alter\s+table\s+(?:if\s+exists\s+)?([\w."]+)\s+add\s+column\s+(?:if\s+not\s+exists\s+)?([^;]+);/gi;
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(source)) !== null) {
+    const { schema, name } = stripSchemaPrefix(match[1]);
+    const column = parseColumn(match[2].trim());
+    if (column) added.push({ table: qualifiedName(schema, name), column });
+  }
+  return added;
+}
+
 function applyRlsFlags(source: string, tables: SqlTable[]): string[] {
   const enabled: string[] = [];
   const re = /alter\s+table\s+(?:if\s+exists\s+)?([\w."]+)\s+enable\s+row\s+level\s+security/gi;
@@ -172,7 +198,7 @@ function extractPolicies(source: string): SqlPolicy[] {
   let match: RegExpExecArray | null;
   while ((match = re.exec(source)) !== null) {
     const name = (match[2] ?? match[1]).replace(/"/g, "");
-    const { name: table } = stripSchemaPrefix(match[3]);
+    const { schema: tableSchema, name: table } = stripSchemaPrefix(match[3]);
     const clause = match[4];
 
     const commandMatch = clause.match(/\bfor\s+(all|select|insert|update|delete)\b/i);
@@ -189,6 +215,7 @@ function extractPolicies(source: string): SqlPolicy[] {
     policies.push({
       name,
       table,
+      schema: tableSchema,
       command,
       roles,
       using: usingMatch ? usingMatch[1].trim() : null,
@@ -251,5 +278,6 @@ export function extractSqlSchema(path: string, source: string): SqlSchema {
     policies: extractPolicies(normalized),
     functions: extractFunctions(normalized),
     rlsEnabledTables,
+    alterAddColumns: extractAlterAddColumns(normalized),
   };
 }

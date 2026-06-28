@@ -118,4 +118,23 @@ describe("sql_schema tool", () => {
     assert.equal(publicUsers.rlsEnabled, true);
     assert.equal(authUsers.rlsEnabled, false, "RLS enable on public.users must not apply to auth.users");
   });
+
+  it("merges ALTER TABLE ADD COLUMN from a later migration into the table", async () => {
+    await writeFile(
+      join(root, "supabase", "migrations", "0007_profiles.sql"),
+      "create table public.profiles (id uuid primary key);\n",
+    );
+    await writeFile(
+      join(root, "supabase", "migrations", "0008_profiles_add.sql"),
+      "alter table public.profiles add column bio text;\nalter table public.profiles add column avatar_url text;\n",
+    );
+
+    const { getSqlSchema } = await import("../../build/tools/sql-schema.js");
+    const json = JSON.parse(await getSqlSchema({ rootDir: root, name: "profiles", format: "json" }));
+    const profiles = json.tables.find((t) => t.name === "profiles");
+    assert.ok(profiles, "profiles table found");
+    const cols = profiles.columns.map((c) => c.name);
+    assert.ok(cols.includes("bio"), `bio added via ALTER should be present, got ${JSON.stringify(cols)}`);
+    assert.ok(cols.includes("avatar_url"), "avatar_url added via ALTER should be present");
+  });
 });

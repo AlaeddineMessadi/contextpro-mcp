@@ -69,6 +69,18 @@ export function aggregateSchemas(schemas: SqlSchema[]): AggregatedSchema {
     functions.push(...schema.functions);
   }
 
+  // Merge ALTER TABLE ... ADD COLUMN across files into the target table, so a
+  // column added in a later migration shows up in the current schema. Skip a
+  // column name already present (a CREATE that already had it / idempotent add).
+  for (const schema of schemas) {
+    for (const { table, column } of schema.alterAddColumns) {
+      const merged = tablesByKey.get(table);
+      if (merged && !merged.columns.some((c) => c.name === column.name)) {
+        merged.columns = [...merged.columns, column];
+      }
+    }
+  }
+
   // Apply every `ENABLE ROW LEVEL SECURITY` seen in ANY migration to the merged
   // table, even when the enable lives in a different file than the CREATE TABLE
   // (the common Supabase layout). The rlsEnabledTables entries are schema-qualified.
@@ -144,20 +156,23 @@ function formatSchema(
       ].filter(Boolean).join(", ");
       lines.push(`  ${col.name} ${col.type}${flags ? `  — ${flags}` : ""}`);
     }
-    const tablePolicies = policies.filter((p) => p.table === table.name);
+    // Match policies by SCHEMA-QUALIFIED table, so a public.users policy isn't
+    // rendered under auth.users (and vice-versa) when both tables exist.
+    const tablePolicies = policies.filter((p) => p.table === table.name && p.schema === table.schema);
     for (const p of tablePolicies) {
       lines.push(`  POLICY "${p.name}" ${p.command.toUpperCase()}${p.roles.length ? ` to ${p.roles.join(", ")}` : ""}${policyPredicate(p)}`);
     }
     lines.push("");
   }
 
-  // Policies whose table wasn't in the (possibly filtered) table list.
-  const shownTables = new Set(tables.map((t) => t.name));
-  const orphanPolicies = policies.filter((p) => !shownTables.has(p.table));
+  // Policies whose table wasn't in the (possibly filtered) table list — keyed
+  // schema-qualified so a policy is only "orphan" when ITS table is absent.
+  const shownTables = new Set(tables.map((t) => `${t.schema}.${t.name}`));
+  const orphanPolicies = policies.filter((p) => !shownTables.has(`${p.schema}.${p.table}`));
   if (orphanPolicies.length > 0) {
     lines.push("POLICIES:");
     for (const p of orphanPolicies) {
-      lines.push(`  "${p.name}" on ${p.table} ${p.command.toUpperCase()}${p.roles.length ? ` to ${p.roles.join(", ")}` : ""}${policyPredicate(p)}`);
+      lines.push(`  "${p.name}" on ${p.schema}.${p.table} ${p.command.toUpperCase()}${p.roles.length ? ` to ${p.roles.join(", ")}` : ""}${policyPredicate(p)}`);
     }
     lines.push("");
   }
