@@ -105,6 +105,46 @@ describe("computeSemanticDiff", () => {
     assert.ok(file.symbols.some((s) => s.name === "doomed"));
   });
 
+  it("reports a class METHOD change as a method change, not a coarse class change", async () => {
+    await writeFile(join(root, "svc.ts"), [
+      "export class Svc {",
+      "  keep(): number { return 1; }",
+      "  oldMethod(): void {}",
+      "}",
+    ].join("\n") + "\n");
+    await commitAll("base");
+
+    await writeFile(join(root, "svc.ts"), [
+      "export class Svc {",
+      "  keep(): number { return 1; }",
+      "  newMethod(): void {}",
+      "}",
+    ].join("\n") + "\n");
+
+    const { computeSemanticDiff } = await import("../../build/core/semantic-diff.js");
+    const result = await computeSemanticDiff(root, { since: "HEAD" });
+    const file = result.files.find((f) => f.path === "svc.ts");
+    assert.ok(file);
+    const names = file.symbols.map((s) => s.name);
+    assert.ok(names.some((n) => /newMethod/.test(n)), `expected newMethod added, got ${JSON.stringify(names)}`);
+    assert.ok(names.some((n) => /oldMethod/.test(n)), `expected oldMethod removed, got ${JSON.stringify(names)}`);
+    // The unchanged method must not appear.
+    assert.ok(!file.symbols.some((s) => /\bkeep\b/.test(s.name)), "unchanged method should not appear");
+  });
+
+  it("detects a change inside a string literal (meaningful whitespace not masked)", async () => {
+    await writeFile(join(root, "msg.ts"), 'export function greet(): string { return "a b"; }\n');
+    await commitAll("base");
+    await writeFile(join(root, "msg.ts"), 'export function greet(): string { return "ab"; }\n');
+
+    const { computeSemanticDiff } = await import("../../build/core/semantic-diff.js");
+    const result = await computeSemanticDiff(root, { since: "HEAD" });
+    const file = result.files.find((f) => f.path === "msg.ts");
+    assert.ok(file, "msg.ts should be in the diff");
+    assert.ok(file.symbols.some((s) => s.name === "greet" && s.change === "modified"),
+      "a string-content change must register as a modification");
+  });
+
   it("produces a summary count of changes", async () => {
     await writeFile(join(root, "c.ts"), "export function a(): void {}\n");
     await commitAll("base");

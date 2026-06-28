@@ -12,7 +12,7 @@
 import { execFile } from "child_process";
 import { promisify } from "util";
 import { readFile } from "fs/promises";
-import { analyzeContent, isSupportedFile, type CodeSymbol } from "./parser.js";
+import { analyzeContent, flattenSymbols, isSupportedFile, type SymbolLocation } from "./parser.js";
 import { resolveProjectPath } from "./path-guard.js";
 
 const execFileAsync = promisify(execFile);
@@ -53,24 +53,71 @@ export interface SemanticDiffOptions {
   since?: string;
 }
 
-function symbolKey(symbol: CodeSymbol): string {
-  return `${symbol.kind}:${symbol.name}`;
+function symbolKey(symbol: SymbolLocation): string {
+  // Include parent context so a class method (Foo.bar) is keyed distinctly from a
+  // top-level bar — and so method add/remove/modify is reported as a method change,
+  // not collapsed into a coarse change on the enclosing class.
+  return `${symbol.kind}:${symbol.parentName ? `${symbol.parentName}.` : ""}${symbol.name}`;
 }
+
+function displayName(symbol: SymbolLocation): string {
+  return symbol.parentName ? `${symbol.parentName}.${symbol.name}` : symbol.name;
+}
+
+// Languages where leading indentation is syntactically significant — there, the
+// indentation level is part of the meaning and must survive into the fingerprint.
+const INDENT_SIGNIFICANT_EXTS = new Set([".py", ".pyi", ".yaml", ".yml", ".coffee", ".hs", ".elm", ".fs", ".nim"]);
 
 /**
- * A whitespace-free view of a symbol's source span, so two formattings of the same
- * code hash identically and reformatting is not reported as a modification. We strip
- * ALL whitespace (not just collapse runs) because reformatting changes spacing
- * around punctuation too (`(){` vs `() {`), which a collapse-to-single-space would
- * still treat as different.
+ * A formatting-insensitive — but NOT whitespace-blind — view of a symbol's source
+ * span. Stripping ALL whitespace would mask semantically meaningful whitespace: a
+ * string-literal change `"a b"` → `"ab"`, or Python indentation that moves a
+ * statement into/out of a block, would read as "no change".
+ *
+ * For indentation-significant languages we keep newlines and per-line indent DEPTH
+ * (so block structure counts) while collapsing interior whitespace runs. For brace/
+ * free-form languages indentation is not semantic, so we collapse the whole span to
+ * one normalized token stream — that way `f(){return 1;}` and a multi-line
+ * `f() {\n  return 1;\n}` fingerprint identically, but a change inside a string or
+ * identifier still differs (runs are collapsed, not stripped).
  */
-function bodyFingerprint(symbol: CodeSymbol, lines: string[]): string {
+function bodyFingerprint(symbol: SymbolLocation, lines: string[], path: string): string {
   const start = Math.max(0, symbol.line - 1);
   const end = Math.min(lines.length, Math.max(symbol.endLine, symbol.line));
-  return lines.slice(start, end).join("\n").replace(/\s+/g, "");
+  const span = lines.slice(start, end);
+  const ext = path.slice(path.lastIndexOf(".")).toLowerCase();
+
+  if (INDENT_SIGNIFICANT_EXTS.has(ext)) {
+    return span
+      .map((line) => {
+        const indent = (line.match(/^[ \t]*/)?.[0] ?? "").replace(/\t/g, "  ").length;
+        const depth = Math.floor(indent / 2);
+        const content = line.trim().replace(/[ \t]+/g, " ");
+        return content.length > 0 ? `${"⁣".repeat(depth)}${content}` : "";
+      })
+      .filter((line) => line.length > 0)
+      .join("\n");
+  }
+
+  // Free-form languages: collapse the span to a single normalized token stream.
+  // Whitespace is removed only where it sits adjacent to punctuation (so `(){`,
+  // `() {`, and `; }` all normalize the same) but is PRESERVED between two word
+  // characters — so an identifier rename (`a b` vs `ab`) and a change inside a
+  // string literal (`"a b"` vs `"ab"`, where the spaces are flanked by quotes)
+  // still register as a modification rather than being silently masked.
+  const collapsed = span.join(" ").replace(/\s+/g, " ").trim();
+  return collapsed.replace(/\s*([^\w\s])\s*/g, "$1");
 }
 
-async function gitDiffNameStatus(rootDir: string, ref: string): Promise<Array<{ status: string; path: string }>> {
+interface DiffEntry {
+  status: string;
+  /** New-side path (what to read from the working tree). */
+  path: string;
+  /** Old-side path for renames/copies — where to read the OLD blob from. */
+  oldPath?: string;
+}
+
+async function gitDiffNameStatus(rootDir: string, ref: string): Promise<DiffEntry[]> {
   try {
     const { stdout } = await execFileAsync("git", ["diff", "--name-status", ref], {
       cwd: rootDir,
@@ -82,8 +129,16 @@ async function gitDiffNameStatus(rootDir: string, ref: string): Promise<Array<{ 
       .split("\n")
       .filter((line) => line.trim().length > 0)
       .map((line) => {
-        const [status, ...rest] = line.split("\t");
-        return { status: status.trim(), path: rest.join("\t").trim() };
+        const parts = line.split("\t");
+        const status = parts[0].trim();
+        // Rename (R###) and copy (C###) records carry TWO paths: old then new.
+        // The new-side path is what exists in the working tree; the old-side path
+        // is where the OLD blob lives. Without this, the tab-joined "old\tnew"
+        // path breaks both `git show <ref>:<path>` and the working-tree read.
+        if (/^[RC]\d*/.test(status) && parts.length >= 3) {
+          return { status, oldPath: parts[1].trim(), path: parts[2].trim() };
+        }
+        return { status, path: parts.slice(1).join("\t").trim() };
       });
   } catch {
     return [];
@@ -126,10 +181,11 @@ async function readWorkingTree(rootDir: string, path: string): Promise<string | 
 }
 
 function classifyFile(
-  oldSymbols: CodeSymbol[],
+  oldSymbols: SymbolLocation[],
   oldLines: string[],
-  newSymbols: CodeSymbol[],
+  newSymbols: SymbolLocation[],
   newLines: string[],
+  path: string,
 ): SemanticSymbolChange[] {
   const changes: SemanticSymbolChange[] = [];
   const oldByKey = new Map(oldSymbols.map((s) => [symbolKey(s), s]));
@@ -139,25 +195,25 @@ function classifyFile(
     const key = symbolKey(newSym);
     const oldSym = oldByKey.get(key);
     if (!oldSym) {
-      changes.push({ name: newSym.name, kind: newSym.kind, change: "added", line: newSym.line, signature: newSym.signature });
+      changes.push({ name: displayName(newSym), kind: newSym.kind, change: "added", line: newSym.line, signature: newSym.signature });
       continue;
     }
-    // Compare whitespace-free body fingerprints only. The signature text is itself
+    // Compare formatting-insensitive body fingerprints. The signature text is itself
     // formatting-sensitive (tree-sitter captures it differently across layouts), so
     // relying on it would flag pure reformatting; the fingerprint already includes
     // the signature line, so a real signature change still shows up as a body change.
-    const oldBody = bodyFingerprint(oldSym, oldLines);
-    const newBody = bodyFingerprint(newSym, newLines);
+    const oldBody = bodyFingerprint(oldSym, oldLines, path);
+    const newBody = bodyFingerprint(newSym, newLines, path);
     if (oldBody !== newBody) {
-      changes.push({ name: newSym.name, kind: newSym.kind, change: "modified", line: newSym.line, signature: newSym.signature });
+      changes.push({ name: displayName(newSym), kind: newSym.kind, change: "modified", line: newSym.line, signature: newSym.signature });
     } else if (oldSym.line !== newSym.line) {
-      changes.push({ name: newSym.name, kind: newSym.kind, change: "moved", line: newSym.line, signature: newSym.signature });
+      changes.push({ name: displayName(newSym), kind: newSym.kind, change: "moved", line: newSym.line, signature: newSym.signature });
     }
   }
 
   for (const oldSym of oldSymbols) {
     if (!newByKey.has(symbolKey(oldSym))) {
-      changes.push({ name: oldSym.name, kind: oldSym.kind, change: "removed", line: oldSym.line, signature: oldSym.signature });
+      changes.push({ name: displayName(oldSym), kind: oldSym.kind, change: "removed", line: oldSym.line, signature: oldSym.signature });
     }
   }
 
@@ -173,7 +229,7 @@ export async function computeSemanticDiff(
   // `git diff` omits untracked files, but "what changed since main" must include
   // brand-new files an agent just created — surface them as additions.
   const trackedPaths = new Set(tracked.map((e) => e.path));
-  const untracked = (await gitUntrackedFiles(rootDir))
+  const untracked: DiffEntry[] = (await gitUntrackedFiles(rootDir))
     .filter((path) => !trackedPaths.has(path))
     .map((path) => ({ status: "A", path }));
   const entries = [...tracked, ...untracked].filter((e) => isSupportedFile(e.path));
@@ -183,18 +239,20 @@ export async function computeSemanticDiff(
     const isDelete = entry.status.startsWith("D");
     const isAdd = entry.status.startsWith("A");
 
-    const oldRaw = isAdd ? null : await gitShow(rootDir, ref, entry.path);
+    const oldRaw = isAdd ? null : await gitShow(rootDir, ref, entry.oldPath ?? entry.path);
     const newRaw = isDelete ? null : await readWorkingTree(rootDir, entry.path);
 
-    const oldAnalysis = oldRaw != null ? await analyzeContent(entry.path, oldRaw) : null;
+    const oldAnalysis = oldRaw != null ? await analyzeContent(entry.oldPath ?? entry.path, oldRaw) : null;
     const newAnalysis = newRaw != null ? await analyzeContent(entry.path, newRaw) : null;
 
-    const oldSymbols = oldAnalysis?.symbols ?? [];
-    const newSymbols = newAnalysis?.symbols ?? [];
+    // Flatten nested symbols (class methods, etc.) so a method change is reported
+    // as a method change, not collapsed into a coarse change on its parent class.
+    const oldSymbols = oldAnalysis ? flattenSymbols(oldAnalysis.symbols) : [];
+    const newSymbols = newAnalysis ? flattenSymbols(newAnalysis.symbols) : [];
     const oldLines = (oldRaw ?? "").split("\n");
     const newLines = (newRaw ?? "").split("\n");
 
-    const symbols = classifyFile(oldSymbols, oldLines, newSymbols, newLines);
+    const symbols = classifyFile(oldSymbols, oldLines, newSymbols, newLines, entry.path);
     if (symbols.length === 0 && !isAdd && !isDelete) continue;
 
     files.push({
