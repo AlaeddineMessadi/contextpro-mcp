@@ -28,17 +28,27 @@ function formatChangedSince(result: ChangedSinceResult): string {
     "",
   ];
 
-  if (changes.files.length === 0) {
+  // Only bail entirely when there is genuinely nothing to report — no symbol
+  // changes AND no tests to run AND no run-all trigger. A non-symbol change (a
+  // package.json/lockfile edit, an invalid ref, or an import-only edit) can still
+  // require tests or a run-all fallback, and dropping that here would defeat the
+  // safety guarantee of the combined pack.
+  const hasTestSignal = tests.runAll || tests.tests.length > 0;
+  if (changes.files.length === 0 && !hasTestSignal) {
     lines.push("No symbol-level changes detected.");
     return lines.join("\n");
   }
 
-  lines.push("CHANGED SYMBOLS:");
-  for (const file of changes.files) {
-    lines.push(`  ${file.path} (${file.status})`);
-    const meaningful = file.symbols.filter((s) => s.change !== "moved");
-    for (const sym of meaningful) {
-      lines.push(`    ${CHANGE_MARK[sym.change] ?? "?"} ${sym.kind} ${sym.name}`);
+  if (changes.files.length === 0) {
+    lines.push("No symbol-level changes detected (non-symbol change — see tests below).");
+  } else {
+    lines.push("CHANGED SYMBOLS:");
+    for (const file of changes.files) {
+      lines.push(`  ${file.path} (${file.status})`);
+      const meaningful = file.symbols.filter((s) => s.change !== "moved");
+      for (const sym of meaningful) {
+        lines.push(`    ${CHANGE_MARK[sym.change] ?? "?"} ${sym.kind} ${sym.name}`);
+      }
     }
   }
   lines.push("");

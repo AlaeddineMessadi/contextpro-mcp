@@ -72,4 +72,14 @@ describe("computeChangedSince", () => {
     assert.equal(result.changes.files.length, 0);
     assert.equal(result.tests.tests.length, 0);
   });
+
+  it("still shows the run-all fallback when only a config file changed (no symbol changes)", async () => {
+    // A package.json change produces no SYMBOL changes but must surface run-all.
+    await writeFile(join(root, "package.json"), '{"name":"x","version":"2.0.0"}\n');
+
+    const { getChangedSince } = await import("../../build/tools/changed-since.js");
+    const text = await getChangedSince({ rootDir: root, since: "HEAD" });
+    assert.match(text, /TESTS TO RUN/, "TESTS section must not be dropped for a non-symbol change");
+    assert.match(text, /RUN ALL/, "run-all fallback must be shown even with no symbol changes");
+  });
 });
