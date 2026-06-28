@@ -19,6 +19,7 @@ import { getDiff } from "./diff.js";
 import { getSemanticDiff } from "./semantic-diff.js";
 import { getSqlSchema } from "./sql-schema.js";
 import { getTestImpact } from "./test-impact.js";
+import { getChangedSince } from "./changed-since.js";
 import { getRelated } from "./related.js";
 import { getTestMap } from "./test-map.js";
 import { explain } from "./explain.js";
@@ -846,6 +847,23 @@ export function registerTools(
         text: await getTestImpact({ rootDir: rootDir(), since, format }),
       }],
     }), { toolName: "test_impact" }),
+  );
+
+  server.tool(
+    "changed_since",
+    "Per-PR review pack in one call: what SYMBOLS changed (semantic_diff) + which TESTS to run " +
+    "(test_impact) + which files DEPEND ON the changed ones (file-level blast radius), since a git ref " +
+    "(default HEAD; pass a branch like 'main'). The 'what changed since main' review loop, token-lean.",
+    {
+      since: z.string().optional().describe("Git ref to compare against (e.g. main, HEAD~3). Default: HEAD."),
+      format: z.enum(["text", "json"]).optional().describe("Output format. Default: text."),
+    },
+    withRequestActivity(async ({ since, format }) => ({
+      content: [{
+        type: "text" as const,
+        text: await getChangedSince({ rootDir: rootDir(), since, format }),
+      }],
+    }), { toolName: "changed_since" }),
   );
 
   server.tool(
