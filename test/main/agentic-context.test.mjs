@@ -123,6 +123,18 @@ describe("agentic-context", () => {
     assert.notEqual(taskPack.files[0].path, "README.md");
     assert.ok(taskPack.tests.some((test) => test.path.includes("session.test.ts")));
 
+    const compactText = await agenticMod.buildTaskPack({
+      rootDir: fixtureRoot,
+      task: "fix auth session refresh race condition",
+      includeRecentDiffs: false,
+      maxTokens: 512,
+      format: "json",
+    });
+    const compact = JSON.parse(compactText);
+    assert.equal(compact.budget.maxTokens, 512);
+    assert.ok(compactText.length <= 512 * 4, `compact task pack exceeded budget: ${compactText.length} chars`);
+    assert.ok(compact.files.some((file) => file.path.includes("session.ts")), "budgeting must preserve the primary file");
+
     const impact = JSON.parse(await agenticMod.buildChangeImpact({
       rootDir: fixtureRoot,
       files: ["src/auth/session.ts"],

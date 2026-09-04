@@ -9,6 +9,7 @@ import { closeDB } from "../../build/core/db.js";
 import {
   invalidateSearchCache,
   semanticCodeSearch,
+  semanticCodeSearchResults,
 } from "../../build/tools/semantic-search.js";
 
 describe("semantic-search", () => {
@@ -126,6 +127,86 @@ describe("semantic-search", () => {
           topK: 3,
         });
         assert.match(result, /auth\.ts/);
+      } finally {
+        Ollama.prototype.embed = originalEmbed;
+        closeDB(rootDir);
+        await rm(rootDir, { recursive: true, force: true });
+      }
+    });
+
+    it("inlines a bounded relevant crux by default and supports full definition bodies", async () => {
+      const rootDir = await mkdtemp(join(tmpdir(), "contextplus-semantic-inline-"));
+      const originalEmbed = Ollama.prototype.embed;
+      const query = "where is exam scoring and the pass threshold enforced";
+      Ollama.prototype.embed = async function ({ input }) {
+        const batch = Array.isArray(input) ? input : [input];
+        return {
+          embeddings: batch.map((value) => value === query || value.includes("Server-authoritative submit") ? [1, 0] : [0, 1]),
+        };
+      };
+
+      try {
+        await writeFile(join(rootDir, "exam.ts"), [
+          "export async function finishExam(answers: number[]) {",
+          "  const localScore = answers.length;",
+          "  // Server-authoritative submit recomputes the score against correct answers.",
+          "  const result = await submitExamResult(answers);",
+          "  if (result.percentage < result.passThreshold) return 'failed';",
+          "  return 'passed';",
+          "}",
+          "",
+        ].join("\n"));
+        await writeFile(join(rootDir, "coverage.ts"), "export const coverageThreshold = 90;\n");
+        invalidateSearchCache();
+        const crux = await semanticCodeSearchResults({ rootDir, query, topK: 2, inlineCode: "crux" });
+        const hit = crux.results.find((result) => result.path === "exam.ts");
+        assert.equal(hit?.inlineCode?.mode, "crux");
+        assert.match(hit?.inlineCode?.text ?? "", /Server-authoritative submit/);
+        assert.ok((hit?.inlineCode?.endLine ?? 0) - (hit?.inlineCode?.startLine ?? 0) < 8);
+
+        invalidateSearchCache();
+        const full = await semanticCodeSearchResults({ rootDir, query, topK: 1, inlineCode: "full" });
+        assert.equal(full.results[0].inlineCode?.mode, "full");
+        assert.match(full.results[0].inlineCode?.text ?? "", /return 'passed'/);
+      } finally {
+        Ollama.prototype.embed = originalEmbed;
+        closeDB(rootDir);
+        await rm(rootDir, { recursive: true, force: true });
+      }
+    });
+
+    it("keeps keyword-only FTS tail scores distinct and below semantic matches", async () => {
+      const rootDir = await mkdtemp(join(tmpdir(), "contextplus-semantic-ranking-"));
+      const originalEmbed = Ollama.prototype.embed;
+      const query = "exam scoring pass threshold enforced";
+      Ollama.prototype.embed = async function ({ input }) {
+        const batch = Array.isArray(input) ? input : [input];
+        return {
+          embeddings: batch.map((value) => value === query || value.includes("AUTHORITATIVE_EXAM_LOGIC") ? [1, 0] : [0, 1]),
+        };
+      };
+
+      try {
+        await writeFile(join(rootDir, "exam.ts"), [
+          "// AUTHORITATIVE_EXAM_LOGIC exam scoring pass threshold enforced",
+          "export function finishExam() { return submitExam(); }",
+          "",
+        ].join("\n"));
+        for (let index = 1; index <= 4; index++) {
+          await writeFile(
+            join(rootDir, `coverage-${index}.ts`),
+            `// exam scoring pass threshold enforced ${"coverage ".repeat(index)}\nexport const threshold${index} = ${80 + index};\n`,
+          );
+        }
+        await reindex({ rootDir, force: true });
+        invalidateSearchCache();
+        const data = await semanticCodeSearchResults({ rootDir, query, topK: 5, inlineCode: "off" });
+        const semantic = data.results.find((result) => result.path === "exam.ts");
+        const lexicalOnly = data.results.filter((result) => result.semanticScore === 0);
+        assert.ok(semantic && semantic.semanticScore > 40);
+        assert.equal(lexicalOnly.length, 4);
+        assert.ok(lexicalOnly.every((result) => result.score < semantic.score));
+        assert.equal(new Set(lexicalOnly.map((result) => result.score)).size, lexicalOnly.length);
       } finally {
         Ollama.prototype.embed = originalEmbed;
         closeDB(rootDir);

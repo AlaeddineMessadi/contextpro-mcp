@@ -2,8 +2,8 @@
 
 import { useMemo, useState } from "react";
 
-interface ToolAggregate { tool: string; calls: number; errors: number; avgMs: number; maxMs: number; lastAt: number }
-interface ToolCall { tool: string; status: string; durationMs: number; calledAt: number }
+interface ToolAggregate { tool: string; calls: number; errors: number; avgMs: number; maxMs: number; lastAt: number; savedTokens: number; representedFiles: number }
+interface ToolCall { tool: string; status: string; durationMs: number; calledAt: number; savedTokens: number; representedFiles: number }
 interface ToolsData { total: number; aggregates: ToolAggregate[]; history: ToolCall[] }
 
 function ago(ms: number): string {
@@ -52,17 +52,19 @@ export function ToolsPanel({ data }: { data: ToolsData | null }) {
     (statusFilter === "all" || c.status === statusFilter),
   );
   const maxCalls = Math.max(1, ...data.aggregates.map((a) => a.calls));
+  const totalSaved = data.aggregates.reduce((sum, item) => sum + (item.savedTokens ?? 0), 0);
 
   return (
     <div className="panel">
       <h2>Tool Activity &amp; History</h2>
+      {totalSaved > 0 && <p className="muted">Estimated source tokens avoided: <strong>~{totalSaved.toLocaleString()}</strong> · numeric history only, not billing data</p>}
       {data.total === 0 ? (
         <p className="muted">No tool calls recorded yet. Use any MCP tool (search, status, semantic_diff…) and they&apos;ll appear here. (Requires the MCP server running the persistence build.)</p>
       ) : (
         <>
           <Sparkline history={data.history} />
           <table>
-            <thead><tr><th>Tool</th><th className="num">Calls</th><th className="num">Err</th><th className="num">Avg</th><th className="num">Max</th><th></th></tr></thead>
+            <thead><tr><th>Tool</th><th className="num">Calls</th><th className="num">Err</th><th className="num">Avg</th><th className="num">Saved est.</th><th></th></tr></thead>
             <tbody>
               {data.aggregates.map((a) => (
                 <tr key={a.tool} onClick={() => setToolFilter((t) => (t === a.tool ? "" : a.tool))}
@@ -71,7 +73,7 @@ export function ToolsPanel({ data }: { data: ToolsData | null }) {
                   <td className="num">{a.calls}</td>
                   <td className="num" style={{ color: a.errors > 0 ? "var(--red)" : "inherit" }}>{a.errors}</td>
                   <td className="num">{a.avgMs}ms</td>
-                  <td className="num">{a.maxMs}ms</td>
+                  <td className="num" title={`${a.representedFiles ?? 0} represented file references`}>~{(a.savedTokens ?? 0).toLocaleString()}</td>
                   <td style={{ width: 80 }}><div className="bar"><span style={{ width: `${(a.calls / maxCalls) * 100}%` }} /></div></td>
                 </tr>
               ))}
@@ -96,6 +98,7 @@ export function ToolsPanel({ data }: { data: ToolsData | null }) {
                     <td>{c.tool}</td>
                     <td>{c.status === "error" ? <span className="badge red">error</span> : <span className="badge green">ok</span>}</td>
                     <td className="num">{c.durationMs}ms</td>
+                    <td className="num muted">{c.savedTokens > 0 ? `~${c.savedTokens.toLocaleString()} saved` : "—"}</td>
                     <td className="num muted">{ago(c.calledAt)}</td>
                   </tr>
                 ))}

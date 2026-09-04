@@ -6,6 +6,7 @@ import { mkdir, readFile } from "fs/promises";
 import { dirname } from "path";
 import { resolveProjectPath, toProjectRelativePath } from "./path-guard.js";
 import { writeFileAtomic } from "./artifacts.js";
+import { getDB } from "./db.js";
 
 export const DEFAULT_SCIP_CACHE_PATH = ".contextpro/scip-index.json";
 
@@ -305,6 +306,12 @@ export async function importScipIndex(rootDir: string, indexPath: string): Promi
   const cachePath = resolveProjectPath(rootDir, DEFAULT_SCIP_CACHE_PATH, "scip cache");
   await mkdir(dirname(cachePath), { recursive: true });
   await writeFileAtomic(cachePath, JSON.stringify(index, null, 2) + "\n");
+  // A SCIP import changes what buildProjectGraph/exact_references produce (new resolved
+  // references, possibly new file nodes) without touching any file's content hash, so it
+  // needs to bump the index generation itself — otherwise generation-keyed caches (the
+  // project graph cache, artifact freshness checks) would keep serving pre-import results.
+  const db = await getDB(rootDir);
+  db.bumpIndexGeneration();
   return { cachePath, index };
 }
 

@@ -4,6 +4,7 @@
 import { readFile } from "fs/promises";
 import { extname } from "path";
 import { parseWithTreeSitter, getSupportedExtensions } from "./tree-sitter.js";
+import { maskSourceText } from "./source-mask.js";
 
 export enum SymbolKind {
   Function = "function",
@@ -35,6 +36,8 @@ export interface SymbolLocation {
   endLine: number;
   signature: string;
   parentName?: string;
+  /** Index into the same flattened array of this symbol's parent, if nested. Always < this entry's own index. */
+  parentIndex?: number;
 }
 
 export interface FileAnalysis {
@@ -685,18 +688,20 @@ const STDLIB_GLOBALS = new Set([
   "Reflect", "Proxy", "globalThis", "console", "process",
 ]);
 
-export function extractCallSites(content: string): CallSite[] {
+export function extractCallSites(content: string, filePath?: string): CallSite[] {
   const lines = content.split("\n");
+  const codeLines = maskSourceText(content, filePath).split("\n");
   const sites: CallSite[] = [];
   const callPattern = /(?<![A-Za-z0-9_$.])([a-zA-Z_$][a-zA-Z0-9_$]*)\s*\(/g;
   const definitionPattern = /(?:function|class|interface|enum|type|const|let|var|def|fn|func|pub)\s+[a-zA-Z_$]/;
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
-    if (definitionPattern.test(line)) continue;
+    const codeLine = codeLines[i] ?? "";
+    if (definitionPattern.test(codeLine)) continue;
     callPattern.lastIndex = 0;
     let match: RegExpExecArray | null;
     const seen = new Set<string>();
-    while ((match = callPattern.exec(line)) !== null) {
+    while ((match = callPattern.exec(codeLine)) !== null) {
       const callee = match[1];
       if (seen.has(callee)) continue;
       if (CALL_SITE_KEYWORDS.has(callee)) continue;
@@ -709,9 +714,14 @@ export function extractCallSites(content: string): CallSite[] {
   return sites;
 }
 
-export function flattenSymbols(symbols: CodeSymbol[], parentName?: string): SymbolLocation[] {
-  const out: SymbolLocation[] = [];
+export function flattenSymbols(
+  symbols: CodeSymbol[],
+  parentName?: string,
+  parentIndex?: number,
+  out: SymbolLocation[] = [],
+): SymbolLocation[] {
   for (const sym of symbols) {
+    const selfIndex = out.length;
     out.push({
       name: sym.name,
       kind: sym.kind,
@@ -719,9 +729,10 @@ export function flattenSymbols(symbols: CodeSymbol[], parentName?: string): Symb
       endLine: sym.endLine,
       signature: sym.signature,
       parentName,
+      parentIndex,
     });
     if (sym.children.length > 0) {
-      out.push(...flattenSymbols(sym.children, sym.name));
+      flattenSymbols(sym.children, sym.name, selfIndex, out);
     }
   }
   return out;

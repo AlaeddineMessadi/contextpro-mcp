@@ -38,6 +38,13 @@ export interface SearchResult {
   header: string;
   matchedSymbols: string[];
   matchedSymbolLocations: string[];
+  inlineCode?: {
+    mode: "crux" | "full";
+    startLine: number;
+    endLine: number;
+    symbol?: string;
+    text: string;
+  };
 }
 
 export interface SearchQueryOptions {
@@ -49,6 +56,17 @@ export interface SearchQueryOptions {
   minCombinedScore?: number;
   requireKeywordMatch?: boolean;
   requireSemanticMatch?: boolean;
+  /**
+   * How to fuse the semantic and keyword component scores into one ranking.
+   * "weighted": semanticWeight/keywordWeight-blended average — simple, but BM25-style
+   * keyword scores and cosine-similarity scores aren't on comparable scales, so the blend can
+   * drift as the corpus/embedding model changes and near-tied components can round to
+   * identical displayed totals despite different underlying signal.
+   * "rrf" (default): reciprocal rank fusion (Cormack, Clarke & Büttcher 2009) — ranks candidates
+   * separately by each component, then fuses by rank position (1/(60+rank)) rather than raw
+   * score value. Ignores magnitude entirely, so it can't be thrown off by scale mismatches.
+   */
+  fusion?: "weighted" | "rrf";
 }
 
 interface ResolvedSearchQueryOptions {
@@ -60,6 +78,7 @@ interface ResolvedSearchQueryOptions {
   minCombinedScore: number;
   requireKeywordMatch: boolean;
   requireSemanticMatch: boolean;
+  fusion: "weighted" | "rrf";
 }
 
 interface EmbedRuntimeOptions {
@@ -406,7 +425,51 @@ function resolveSearchOptions(optionsOrTopK?: number | SearchQueryOptions): Reso
     minCombinedScore: normalizeThreshold(raw.minCombinedScore, 0.1),
     requireKeywordMatch: raw.requireKeywordMatch ?? false,
     requireSemanticMatch: raw.requireSemanticMatch ?? false,
+    fusion: raw.fusion === "weighted" ? "weighted" : "rrf",
   };
+}
+
+/**
+ * Reciprocal rank fusion (Cormack, Clarke & Büttcher, SIGIR 2009): fuse two ranked lists by
+ * rank position rather than raw score value, sidestepping the scale mismatch between an
+ * unbounded/keyword-style score and a bounded cosine similarity. k=60 is the empirical
+ * default from the original paper's TREC evaluation. Result is normalized to [0, 1] by the
+ * best-possible score (rank 1 in both lists) so it composes with the existing 0-1 score
+ * conventions (rounding, clamping, minCombinedScore) used by the weighted fusion path.
+ */
+const RRF_K = 60;
+function reciprocalRankFusionScores(semanticScores: number[], keywordScores: number[]): number[] {
+  const n = semanticScores.length;
+  const buildRanks = (scores: number[]): Array<number | null> => {
+    const ranks = new Array<number | null>(n).fill(null);
+    const ranked = [...scores.keys()]
+      .filter((index) => scores[index] > 0)
+      .sort((left, right) => scores[right] - scores[left] || left - right);
+    ranked.forEach((index, rank) => { ranks[index] = rank + 1; });
+    return ranks;
+  };
+  const semanticRank = buildRanks(semanticScores.map((score) => Math.max(score, 0)));
+  const keywordRank = buildRanks(keywordScores);
+  const activeLists = Number(semanticRank.some((rank) => rank !== null)) + Number(keywordRank.some((rank) => rank !== null));
+  if (activeLists === 0) return new Array<number>(n).fill(0);
+  const bestPossible = activeLists / (RRF_K + 1);
+  return semanticScores.map((_, index) => {
+    const semantic = semanticRank[index] === null ? 0 : 1 / (RRF_K + semanticRank[index]!);
+    const keyword = keywordRank[index] === null ? 0 : 1 / (RRF_K + keywordRank[index]!);
+    return (semantic + keyword) / bestPossible;
+  });
+}
+
+const LOW_SEMANTIC_FLOOR = 0.15;
+
+function dampLowSemanticScore(score: number, semanticScore: number, keywordScore: number, semanticAvailable: boolean): number {
+  const semantic = Math.max(semanticScore, 0);
+  if (!semanticAvailable || semantic >= LOW_SEMANTIC_FLOOR) return score;
+  // A lexical collision should remain visible as a low-confidence fallback, but it must not
+  // outrank a genuinely semantic result. The ceiling rises smoothly from 12% at semantic=0
+  // to just under 40% at the 0.15 semantic floor.
+  const ceiling = keywordScore * (0.12 + 0.28 * (semantic / LOW_SEMANTIC_FLOOR));
+  return Math.min(score, ceiling);
 }
 
 function getTermCoverage(queryTerms: Set<string>, docTerms: Set<string>): number {
@@ -576,9 +639,8 @@ export class SearchIndex {
       queryVec = [];
     }
     const queryTerms = new Set(splitCamelCase(query));
-    const scores: {
+    const candidates: {
       idx: number;
-      score: number;
       semanticScore: number;
       keywordScore: number;
       matchedSymbols: string[];
@@ -595,16 +657,33 @@ export class SearchIndex {
         : getMatchedSymbols(doc.symbols, queryTerms);
       const matchedSymbolLocations = matchedEntries.map((entry) => `${entry.name}@${formatLineRange(entry.line, entry.endLine)}`);
       const keywordScore = computeKeywordScore(query, queryTerms, doc, matchedSymbols);
-      const score = computeCombinedScore(semanticScore, keywordScore, options);
 
       if (options.requireSemanticMatch && semanticScore <= 0) continue;
       if (options.requireKeywordMatch && keywordScore <= 0) continue;
       if (Math.max(semanticScore, 0) < options.minSemanticScore) continue;
       if (keywordScore < options.minKeywordScore) continue;
-      if (score < options.minCombinedScore) continue;
 
-      scores.push({ idx: i, score, semanticScore, keywordScore, matchedSymbols, matchedSymbolLocations });
+      candidates.push({ idx: i, semanticScore, keywordScore, matchedSymbols, matchedSymbolLocations });
     }
+
+    // RRF fuses by rank position across the filtered candidate set, so it's computed once over
+    // all of them rather than per-candidate like the weighted blend.
+    const rrfScores = options.fusion === "rrf"
+      ? reciprocalRankFusionScores(candidates.map((c) => c.semanticScore), candidates.map((c) => c.keywordScore))
+      : null;
+    const semanticAvailable = candidates.some((candidate) => candidate.semanticScore >= LOW_SEMANTIC_FLOOR);
+
+    const scores = candidates
+      .map((candidate, i) => ({
+        ...candidate,
+        score: dampLowSemanticScore(
+          rrfScores ? clamp01(rrfScores[i]) : computeCombinedScore(candidate.semanticScore, candidate.keywordScore, options),
+          candidate.semanticScore,
+          candidate.keywordScore,
+          semanticAvailable,
+        ),
+      }))
+      .filter((candidate) => candidate.score >= options.minCombinedScore);
 
     return scores
       .sort((a, b) => b.score - a.score || b.keywordScore - a.keywordScore || b.semanticScore - a.semanticScore)
@@ -613,7 +692,7 @@ export class SearchIndex {
         const doc = this.documents[idx];
         return {
           path: doc.path,
-          score: Math.round(score * 1000) / 10,
+          score: Math.round(score * 10000) / 100,
           semanticScore: Math.round(Math.max(semanticScore, 0) * 1000) / 10,
           keywordScore: Math.round(keywordScore * 1000) / 10,
           header: doc.header,

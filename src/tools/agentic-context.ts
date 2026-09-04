@@ -38,6 +38,7 @@ export interface TaskPackOptions {
   task: string;
   maxFiles?: number;
   maxMemory?: number;
+  maxTokens?: number;
   includeTests?: boolean;
   includeRecentDiffs?: boolean;
   includeMemory?: boolean;
@@ -57,6 +58,21 @@ interface TaskPackPayload {
   [key: string]: unknown;
 }
 
+interface TaskPackBudgetReport {
+  maxTokens: number;
+  estimatedTokens: number;
+  truncated: boolean;
+  dropped: {
+    files: number;
+    tests: number;
+    recentDiffs: number;
+    memory: number;
+    symbols: number;
+    risks: number;
+    metadataFields: number;
+  };
+}
+
 // The cache identity for a task pack: same task + same option flags → same artifact. The repo
 // fingerprint and index generation gate freshness separately (handled by lookupFreshArtifact).
 function taskPackArtifactKey(task: string, maxFiles: number, opts: TaskPackOptions): string {
@@ -70,6 +86,101 @@ function taskPackArtifactKey(task: string, maxFiles: number, opts: TaskPackOptio
     // identity — otherwise two calls differing only in maxMemory would collide on one cached pack.
     maxMemory: opts.includeMemory === false ? 0 : Math.min(opts.maxMemory ?? 3, 10),
   });
+}
+
+function budgetTaskPackPayload(payload: TaskPackPayload, maxTokens?: number): TaskPackPayload & { budget: TaskPackBudgetReport } {
+  const budget = Math.max(512, Math.min(maxTokens ?? 3000, 12_000));
+  const maxChars = budget * 4;
+  const original = {
+    files: payload.files.length,
+    tests: payload.tests.length,
+    recentDiffs: payload.recentDiffs.length,
+    memory: payload.memory.length,
+    symbols: payload.files.reduce((sum, file) => sum + file.symbols.length, 0),
+    risks: payload.risks.length,
+  };
+  const result: TaskPackPayload = {
+    ...payload,
+    files: payload.files.map((file) => ({ ...file, symbols: file.symbols.slice() })),
+    tests: payload.tests.slice(),
+    recentDiffs: payload.recentDiffs.slice(),
+    memory: payload.memory.slice(),
+    risks: payload.risks.slice(),
+  };
+  if (payload.trust && typeof payload.trust === "object" && !Array.isArray(payload.trust)) {
+    const trust = payload.trust as Record<string, unknown>;
+    result.trust = {
+      ...trust,
+      evidence: Array.isArray(trust.evidence) ? trust.evidence.slice() : trust.evidence,
+      ambiguities: Array.isArray(trust.ambiguities) ? trust.ambiguities.slice() : trust.ambiguities,
+    };
+  }
+
+  let droppedMetadataFields = 0;
+  const pruneNext = (): boolean => {
+    if (result.recentDiffs.length > 0) result.recentDiffs.pop();
+    else if (result.memory.length > 0) result.memory.pop();
+    else if (result.tests.length > 0) result.tests.pop();
+    else {
+      const verboseFile = [...result.files].reverse().find((file) => file.symbols.length > 0);
+      if (verboseFile) verboseFile.symbols.pop();
+      // Preserve the two strongest files: task packs commonly need both the entry point
+      // and the implementation file, and dropping the latter makes a tiny pack useless.
+      else if (result.files.length > 2) result.files.pop();
+      else if (result.risks.length > 1) result.risks.pop();
+      else {
+        const trust = result.trust as Record<string, unknown> | undefined;
+        // Freshness is already present at the payload's top level, so this is the first
+        // metadata field to remove under an extremely tight budget.
+        if (trust && "freshness" in trust) {
+          delete trust.freshness;
+          droppedMetadataFields += 1;
+        } else if (trust && Array.isArray(trust.evidence) && trust.evidence.length > 1) {
+          trust.evidence.pop();
+          droppedMetadataFields += 1;
+        } else {
+          return false;
+        }
+      }
+    }
+    return true;
+  };
+
+  const buildReport = (estimatedTokens: number): TaskPackBudgetReport => {
+    const retainedSymbols = result.files.reduce((sum, file) => sum + file.symbols.length, 0);
+    return {
+      maxTokens: budget,
+      estimatedTokens,
+      truncated: original.files !== result.files.length
+        || original.tests !== result.tests.length
+        || original.recentDiffs !== result.recentDiffs.length
+        || original.memory !== result.memory.length
+        || original.symbols !== retainedSymbols
+        || original.risks !== result.risks.length
+        || droppedMetadataFields > 0,
+      dropped: {
+        files: original.files - result.files.length,
+        tests: original.tests - result.tests.length,
+        recentDiffs: original.recentDiffs - result.recentDiffs.length,
+        memory: original.memory - result.memory.length,
+        symbols: original.symbols - retainedSymbols,
+        risks: original.risks - result.risks.length,
+        metadataFields: droppedMetadataFields,
+      },
+    };
+  };
+
+  const indentation = maxTokens === undefined ? 2 : undefined;
+  while (true) {
+    let estimatedTokens = 0;
+    let candidate = { ...result, budget: buildReport(estimatedTokens) };
+    // The estimate changes its own digit count at most a couple of times.
+    for (let iteration = 0; iteration < 3; iteration += 1) {
+      estimatedTokens = Math.ceil(JSON.stringify(candidate, null, indentation).length / 4);
+      candidate = { ...result, budget: buildReport(estimatedTokens) };
+    }
+    if (JSON.stringify(candidate, null, indentation).length <= maxChars || !pruneNext()) return candidate;
+  }
 }
 
 export interface ChangeImpactOptions {
@@ -349,7 +460,7 @@ export async function buildTaskPack(options: TaskPackOptions): Promise<string> {
         artifact: { id: cached.id, kind: cached.kind, key: cached.key, path: cached.path, createdAt: cached.createdAt, updatedAt: cached.updatedAt, indexGeneration: cached.indexGeneration },
       });
       const cachedPayload: TaskPackPayload = { ...cached.payload, trust };
-      return renderTaskPack(options.task, options.format, cachedPayload, cached.projectId ?? "unknown", cached.repoRoot, cached.id);
+      return renderTaskPack(options.task, options.format, cachedPayload, cached.projectId ?? "unknown", cached.repoRoot, cached.id, options.maxTokens);
     }
   } catch {
     // Cache lookup failed (e.g. corrupt manifest, DB not ready) — fall through to recompute.
@@ -451,7 +562,7 @@ export async function buildTaskPack(options: TaskPackOptions): Promise<string> {
       artifact,
     }),
   };
-  return renderTaskPack(options.task, options.format, payload, search.repo.projectId ?? "unknown", search.repo.root, artifact?.id ?? null);
+  return renderTaskPack(options.task, options.format, payload, search.repo.projectId ?? "unknown", search.repo.root, artifact?.id ?? null, options.maxTokens);
 }
 
 // Render a task pack payload to text/JSON. Pulled out of buildTaskPack so a cache HIT can re-render
@@ -463,39 +574,43 @@ function renderTaskPack(
   projectId: string,
   root: string,
   artifactId: string | null,
+  maxTokens?: number,
 ): string {
-  return formatMaybeJson(format, payload, () => {
+  const budgeted = budgetTaskPackPayload(payload, maxTokens);
+  if (format === "json" && maxTokens !== undefined) return JSON.stringify(budgeted);
+  return formatMaybeJson(format, budgeted, () => {
     const lines = [
       `Task Pack: ${task}`,
       `Repo: ${projectId} | Root: ${root}`,
       artifactId ? `Artifact: ${artifactId}` : "",
-      `Summary: ${payload.summary}`,
+      `Summary: ${budgeted.summary}`,
+      `Budget: ~${budgeted.budget.estimatedTokens}/${budgeted.budget.maxTokens} tokens${budgeted.budget.truncated ? " (utility-pruned)" : ""}`,
       "",
       "Files:",
     ].filter(Boolean);
-    for (const file of payload.files) {
+    for (const file of budgeted.files) {
       lines.push(`  ${file.path} (${Math.round(file.score * 100)}%) - ${file.reason}`);
       if (file.symbols.length > 0) lines.push(`    Symbols: ${file.symbols.join(", ")}`);
     }
-    if (payload.tests.length > 0) {
+    if (budgeted.tests.length > 0) {
       lines.push("");
       lines.push("Tests:");
-      for (const test of payload.tests.slice(0, 6)) lines.push(`  ${test.path} (${Math.round(test.score * 100)}%) - ${test.reason}`);
+      for (const test of budgeted.tests.slice(0, 6)) lines.push(`  ${test.path} (${Math.round(test.score * 100)}%) - ${test.reason}`);
     }
-    if (payload.recentDiffs.length > 0) {
+    if (budgeted.recentDiffs.length > 0) {
       lines.push("");
       lines.push("Recent Diffs:");
-      for (const diff of payload.recentDiffs.slice(0, 5)) lines.push(`  ${diff?.path} @ ${diff?.commit} - ${diff?.summary}`);
+      for (const diff of budgeted.recentDiffs.slice(0, 5)) lines.push(`  ${diff?.path} @ ${diff?.commit} - ${diff?.summary}`);
     }
-    if (payload.memory.length > 0) {
+    if (budgeted.memory.length > 0) {
       lines.push("");
       lines.push("Memory:");
-      for (const item of payload.memory) lines.push(`  ${item.id} [${item.kind}] ${item.summary}`);
+      for (const item of budgeted.memory) lines.push(`  ${item.id} [${item.kind}] ${item.summary}`);
     }
-    if (payload.risks.length > 0) {
+    if (budgeted.risks.length > 0) {
       lines.push("");
       lines.push("Risks:");
-      for (const risk of payload.risks) lines.push(`  - ${risk}`);
+      for (const risk of budgeted.risks) lines.push(`  - ${risk}`);
     }
     return lines.join("\n");
   });
@@ -591,7 +706,24 @@ export async function buildChangeImpact(options: ChangeImpactOptions): Promise<s
   if (totalChurn > 0) reasons.push(`Recent churn count: ${totalChurn}`);
   const fanOut = totalImporters;
   const blastRadius = affected.size;
-  const riskScore = Math.min(0.99, 0.28 + fanOut * 0.07 + (targetTests.length === 0 ? 0.14 : 0) + Math.min(totalChurn, 10) * 0.025 + Math.min(blastRadius, 12) * 0.015);
+  // A requested symbol name that resolved ambiguously (e.g. "search" matching a throwaway
+  // local variable as readily as the real implementation) means everything computed below —
+  // inputFiles, fanOut, blastRadius — may be built on the wrong file entirely. Don't let the
+  // score present a confident-looking number in that case; a high riskScore built on a bad
+  // resolution is worse than no score.
+  const ambiguousResolutions = resolvedSymbols
+    .filter((item) => item.resolution?.ambiguous)
+    .map((item) => ({
+      symbol: item.symbol,
+      candidates: (item.resolution?.candidates ?? []).slice(0, 5).map((c) => ({
+        path: c.path,
+        line: c.line,
+        kind: c.kind,
+        score: c.score,
+      })),
+    }));
+  const rawRiskScore = Math.min(0.99, 0.28 + fanOut * 0.07 + (targetTests.length === 0 ? 0.14 : 0) + Math.min(totalChurn, 10) * 0.025 + Math.min(blastRadius, 12) * 0.015);
+  const riskScore = ambiguousResolutions.length > 0 ? Math.min(rawRiskScore, 0.4) : rawRiskScore;
   const config = await loadProjectConfig(options.rootDir);
   const repo = buildRepoMetadata({
     rootDir: options.rootDir,
@@ -615,6 +747,9 @@ export async function buildChangeImpact(options: ChangeImpactOptions): Promise<s
       .map((item) => `${item.symbol} resolved ambiguously`),
     ...(inputFiles.length === 0 ? ["no files resolved for impact analysis"] : []),
   ];
+  const ambiguousWarning = ambiguousResolutions.length > 0
+    ? `⚠ AMBIGUOUS: ${ambiguousResolutions.map((item) => `"${item.symbol}"`).join(", ")} did not resolve to a single definition — this report may be built on the wrong file. Disambiguate with resolve_symbol(file_context: ...) or pass "files" explicitly. `
+    : "";
   const partial = {
     repo,
     freshness,
@@ -626,9 +761,10 @@ export async function buildChangeImpact(options: ChangeImpactOptions): Promise<s
       artifact: null,
     }),
     riskScore,
-    impactSummary: inputFiles.length > 0
+    ambiguousResolutions,
+    impactSummary: ambiguousWarning + (inputFiles.length > 0
       ? `Changes may affect ${affected.size} structurally related files around ${inputFiles.join(", ")}.`
-      : "No files resolved for impact analysis.",
+      : "No files resolved for impact analysis."),
     affectedFiles: [...affected.values()].sort((a, b) => b.score - a.score),
     affectedTests: targetTests,
     publicSurface,
@@ -663,12 +799,20 @@ export async function buildChangeImpact(options: ChangeImpactOptions): Promise<s
   return formatMaybeJson(options.format, payload, () => {
     const lines = [
       `Change Impact`,
-      `Risk Score: ${Math.round(payload.riskScore * 100)}%`,
+      `Risk Score: ${Math.round(payload.riskScore * 100)}%${payload.ambiguousResolutions.length > 0 ? " (capped — see ambiguity warning below)" : ""}`,
       artifact ? `Artifact: ${artifact.id}` : "",
-      `Summary: ${payload.impactSummary}`,
       "",
-      "Affected Files:",
     ].filter(Boolean);
+    if (payload.ambiguousResolutions.length > 0) {
+      lines.push("⚠ AMBIGUOUS SYMBOL RESOLUTION — this report may be built on the wrong file:");
+      for (const item of payload.ambiguousResolutions) {
+        lines.push(`  "${item.symbol}" matched ${item.candidates.length} candidate(s):`);
+        for (const c of item.candidates) lines.push(`    ${c.path}:L${c.line} [${c.kind}] (score ${c.score})`);
+      }
+      lines.push("  Disambiguate with resolve_symbol(file_context: ...) or pass \"files\" explicitly.");
+      lines.push("");
+    }
+    lines.push(`Summary: ${payload.impactSummary}`, "", "Affected Files:");
     for (const file of payload.affectedFiles.slice(0, 12)) {
       lines.push(`  ${file.path} [${file.kind}] (${Math.round(file.score * 100)}%) - ${file.reason}`);
     }

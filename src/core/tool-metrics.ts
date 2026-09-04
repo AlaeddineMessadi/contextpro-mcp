@@ -2,6 +2,7 @@
 // FEATURE: Runtime metrics — status exposes which tools are hot or failing
 
 import { resolve } from "path";
+import type { ToolCallEfficiency } from "./db.js";
 
 export interface ToolTimingSnapshot {
   tool: string;
@@ -35,7 +36,14 @@ const MAX_TRACKED_ROOTS = 50;
  * separate dashboard process can read tool-call history across restarts. Best-effort:
  * a sink that throws must never break the tool that was being timed.
  */
-export type ToolCallSink = (event: { rootDir: string; tool: string; status: "ok" | "error"; durationMs: number; calledAt: number }) => void;
+export type ToolCallSink = (event: {
+  rootDir: string;
+  tool: string;
+  status: "ok" | "error";
+  durationMs: number;
+  calledAt: number;
+  efficiency?: ToolCallEfficiency;
+}) => void;
 
 let toolCallSink: ToolCallSink | null = null;
 
@@ -43,7 +51,13 @@ export function setToolCallSink(sink: ToolCallSink | null): void {
   toolCallSink = sink;
 }
 
-export function recordToolTiming(rootDir: string, tool: string, durationMs: number, status: "ok" | "error"): void {
+export function recordToolTiming(
+  rootDir: string,
+  tool: string,
+  durationMs: number,
+  status: "ok" | "error",
+  efficiency?: ToolCallEfficiency,
+): void {
   const normalizedRoot = resolve(rootDir);
   // Touch-to-front LRU: delete + re-set moves this root to the end of insertion order.
   const existingByTool = toolMetricsByRoot.get(normalizedRoot);
@@ -77,7 +91,7 @@ export function recordToolTiming(rootDir: string, tool: string, durationMs: numb
   // Persist to the optional sink (best-effort — never let telemetry break a tool).
   if (toolCallSink) {
     try {
-      toolCallSink({ rootDir: normalizedRoot, tool, status, durationMs, calledAt: Date.now() });
+      toolCallSink({ rootDir: normalizedRoot, tool, status, durationMs, calledAt: Date.now(), efficiency });
     } catch {
       // swallow — persistence is non-critical
     }

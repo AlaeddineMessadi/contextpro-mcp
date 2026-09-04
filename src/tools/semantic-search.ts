@@ -2,7 +2,7 @@
 // Uses vector embeddings with cosine similarity for concept matching
 
 import { walkDirectory } from "../core/walker.js";
-import { analyzeFile, flattenSymbols, isSupportedFile } from "../core/parser.js";
+import { analyzeContent, analyzeFile, flattenSymbols, isSupportedFile } from "../core/parser.js";
 import {
   fetchEmbedding,
   getEmbeddingBatchSize,
@@ -31,6 +31,8 @@ export interface SemanticSearchOptions {
   minCombinedScore?: number;
   requireKeywordMatch?: boolean;
   requireSemanticMatch?: boolean;
+  fusion?: "weighted" | "rrf";
+  inlineCode?: "off" | "crux" | "full";
 }
 
 export interface SemanticCodeSearchData {
@@ -89,6 +91,7 @@ function applySearchPreset(options: SemanticSearchOptions): SemanticSearchOption
       semanticWeight: options.semanticWeight ?? 1,
       keywordWeight: options.keywordWeight ?? 0,
       requireSemanticMatch: options.requireSemanticMatch ?? true,
+      fusion: options.fusion ?? "weighted",
     };
   }
   if (preset === "keyword_only") {
@@ -98,6 +101,7 @@ function applySearchPreset(options: SemanticSearchOptions): SemanticSearchOption
       semanticWeight: options.semanticWeight ?? 0,
       keywordWeight: options.keywordWeight ?? 1,
       requireKeywordMatch: options.requireKeywordMatch ?? true,
+      fusion: options.fusion ?? "weighted",
     };
   }
   return {
@@ -296,20 +300,28 @@ async function fuseFtsMatches(rootDir: string, query: string, results: SearchRes
   if (ftsMatches.length === 0) return results;
   const terms = queryTerms(query);
   const byPath = new Map(results.map((result) => [result.path, result]));
+  const semanticAvailable = options.preset !== "keyword_only" && results.some((result) => result.semanticScore >= 15);
+
+  const lowSemanticScore = (semantic: number, keyword: number): number => {
+    if (!semanticAvailable) return keyword;
+    const ratio = Math.max(0, Math.min(1, semantic / 15));
+    return Math.round(keyword * (0.12 + 0.28 * ratio) * 100) / 100;
+  };
 
   for (let i = 0; i < ftsMatches.length; i++) {
     const match = ftsMatches[i];
     const lexicalScore = Math.max(45, 100 - i * 6);
     const existing = byPath.get(match.path);
     if (existing) {
-      // Trust dampener: when semantic ≈ 0, cap the combined at 70 so the rolled-up label can
-      // never show "high (100%)" on a pure-keyword hit. Keep the keyword component honest.
       const semantic = existing.semanticScore;
-      const cap = semantic < 5 ? 70 : 100;
+      const keyword = Math.max(existing.keywordScore, lexicalScore);
+      const boosted = semantic < 15
+        ? lowSemanticScore(semantic, keyword)
+        : existing.score + (100 - existing.score) * 0.08 * (lexicalScore / 100);
       byPath.set(match.path, {
         ...existing,
-        score: Math.min(cap, Math.max(existing.score, Math.round((existing.score + lexicalScore * 0.18) * 10) / 10)),
-        keywordScore: Math.max(existing.keywordScore, lexicalScore),
+        score: Math.round(boosted * 100) / 100,
+        keywordScore: keyword,
       });
       continue;
     }
@@ -319,10 +331,9 @@ async function fuseFtsMatches(rootDir: string, query: string, results: SearchRes
     const matchedSymbols = symbols
       .filter((symbol) => terms.some((term) => symbol.name.toLowerCase().includes(term) || (symbol.signature ?? "").toLowerCase().includes(term)))
       .map((symbol) => symbol.name);
-    // Synthetic FTS-only entry: semantic is genuinely zero so cap the headline score at 65.
     byPath.set(match.path, {
       path: match.path,
-      score: Math.min(65, lexicalScore),
+      score: lowSemanticScore(0, lexicalScore),
       semanticScore: 0,
       keywordScore: lexicalScore,
       header: file.header ?? "",
@@ -336,8 +347,93 @@ async function fuseFtsMatches(rootDir: string, query: string, results: SearchRes
   return [...byPath.values()]
     .filter((result) => !options.requireKeywordMatch || result.keywordScore > 0)
     .filter((result) => options.minKeywordScore === undefined || result.keywordScore >= (options.minKeywordScore > 1 ? options.minKeywordScore : options.minKeywordScore * 100))
+    .filter((result) => options.minCombinedScore === undefined || result.score >= (options.minCombinedScore > 1 ? options.minCombinedScore : options.minCombinedScore * 100))
     .sort((a, b) => b.score - a.score || b.keywordScore - a.keywordScore || a.path.localeCompare(b.path))
     .slice(0, topK ?? 5);
+}
+
+const INLINE_CRUX_LINES = 8;
+const INLINE_QUERY_STOPWORDS = new Set([
+  "the", "and", "for", "from", "that", "this", "with", "where", "what", "when", "how",
+  "are", "was", "were", "is", "to", "of", "in", "on", "a", "an", "it", "its", "be",
+]);
+
+function inlineQueryTerms(query: string): string[] {
+  return queryTerms(query).filter((term) => term.length > 2 && !INLINE_QUERY_STOPWORDS.has(term));
+}
+
+function scoreLineForQuery(line: string, terms: string[]): number {
+  const lower = line.toLowerCase();
+  return terms.reduce((score, term) => score + (lower.includes(term) ? 1 : 0), 0);
+}
+
+async function addInlineCode(
+  rootDir: string,
+  query: string,
+  results: SearchResult[],
+  mode: "off" | "crux" | "full",
+): Promise<SearchResult[]> {
+  if (mode === "off") return results;
+  const terms = inlineQueryTerms(query);
+
+  return Promise.all(results.map(async (result) => {
+    try {
+      const fullPath = resolveProjectPath(rootDir, result.path, "search result");
+      const content = await readFile(fullPath, "utf-8");
+      const lines = content.split("\n");
+      const analysis = await analyzeContent(fullPath, content);
+      const symbols = flattenSymbols(analysis.symbols);
+      const matchedNames = new Set(result.matchedSymbols.map((name) => name.toLowerCase()));
+
+      const rankedSymbols = symbols
+        .map((symbol) => {
+          const start = Math.max(1, symbol.line);
+          const end = Math.min(lines.length, Math.max(start, symbol.endLine));
+          const bodyLines = lines.slice(start - 1, end);
+          const lineScores = bodyLines.map((line) => scoreLineForQuery(line, terms));
+          const bestRelativeLine = lineScores.reduce(
+            (best, score, index) => score > lineScores[best] ? index : best,
+            0,
+          );
+          const bodyText = bodyLines.join("\n").toLowerCase();
+          const bodyCoverage = terms.filter((term) => bodyText.includes(term)).length;
+          const identityCoverage = scoreLineForQuery(`${symbol.name} ${symbol.signature}`, terms);
+          const matchedBonus = matchedNames.has(symbol.name.toLowerCase()) ? 1 : 0;
+          const callableBonus = symbol.kind === "function" || symbol.kind === "method" ? 1 : 0;
+          // Favor a symbol whose own name/signature answers the query. Summing every matching
+          // line unfairly rewards large classes and modules simply because they contain more text.
+          const score = identityCoverage * 6 + bodyCoverage * 2 + lineScores[bestRelativeLine] * 2 + matchedBonus + callableBonus;
+          return { symbol, score, bestLine: start + bestRelativeLine };
+        })
+        .sort((left, right) => right.score - left.score || (left.symbol.endLine - left.symbol.line) - (right.symbol.endLine - right.symbol.line));
+
+      const selected = rankedSymbols[0]?.score > 0 ? rankedSymbols[0].symbol : undefined;
+      const scopeStart = selected?.line ?? 1;
+      const scopeEnd = selected?.endLine ?? lines.length;
+      const relevantLine = selected ? rankedSymbols[0].bestLine : 1;
+      let startLine = scopeStart;
+      let endLine = scopeEnd;
+
+      if (mode === "crux") {
+        startLine = Math.max(scopeStart, relevantLine - Math.floor(INLINE_CRUX_LINES / 2));
+        endLine = Math.min(scopeEnd, startLine + INLINE_CRUX_LINES - 1);
+        startLine = Math.max(scopeStart, endLine - INLINE_CRUX_LINES + 1);
+      }
+
+      return {
+        ...result,
+        inlineCode: {
+          mode,
+          startLine,
+          endLine,
+          symbol: selected?.name,
+          text: lines.slice(startLine - 1, endLine).join("\n"),
+        },
+      };
+    } catch {
+      return result;
+    }
+  }));
 }
 
 export async function semanticCodeSearchResults(options: SemanticSearchOptions): Promise<SemanticCodeSearchData> {
@@ -352,10 +448,12 @@ export async function semanticCodeSearchResults(options: SemanticSearchOptions):
     minCombinedScore: resolvedOptions.minCombinedScore,
     requireKeywordMatch: resolvedOptions.requireKeywordMatch,
     requireSemanticMatch: resolvedOptions.requireSemanticMatch,
+    fusion: resolvedOptions.fusion,
   };
   const rawResults = await index.search(options.query, searchOptions);
   const fusedResults = await fuseFtsMatches(options.rootDir, options.query, rawResults, Math.max((searchOptions.topK ?? 5) * 2, 10), resolvedOptions);
-  const results = rankSearchResults(options.query, fusedResults, searchOptions.topK);
+  const rankedResults = rankSearchResults(options.query, fusedResults, searchOptions.topK);
+  const results = await addInlineCode(options.rootDir, options.query, rankedResults, options.inlineCode ?? "off");
 
   return {
     query: options.query,
@@ -363,9 +461,7 @@ export async function semanticCodeSearchResults(options: SemanticSearchOptions):
   };
 }
 
-export async function semanticCodeSearch(options: SemanticSearchOptions): Promise<string> {
-  const { query, results } = await semanticCodeSearchResults(options);
-
+export function formatSemanticCodeSearchData({ query, results }: SemanticCodeSearchData): string {
   if (results.length === 0) return "No matching files found for the given query.";
 
   const lines: string[] = [`Top ${results.length} hybrid matches for: "${query}"\n`];
@@ -377,10 +473,19 @@ export async function semanticCodeSearch(options: SemanticSearchOptions): Promis
     if (r.header) lines.push(`   Header: ${r.header}`);
     if (r.matchedSymbols.length > 0) lines.push(`   Matched symbols: ${r.matchedSymbols.join(", ")}`);
     if (r.matchedSymbolLocations.length > 0) lines.push(`   Definition lines: ${r.matchedSymbolLocations.join(", ")}`);
+    if (r.inlineCode) {
+      const symbol = r.inlineCode.symbol ? `, ${r.inlineCode.symbol}` : "";
+      lines.push(`   Code (${r.inlineCode.mode}${symbol}, L${r.inlineCode.startLine}-L${r.inlineCode.endLine}):`);
+      lines.push("```", r.inlineCode.text, "```");
+    }
     lines.push("");
   }
 
   return lines.join("\n");
+}
+
+export async function semanticCodeSearch(options: SemanticSearchOptions): Promise<string> {
+  return formatSemanticCodeSearchData(await semanticCodeSearchResults({ ...options, inlineCode: options.inlineCode ?? "crux" }));
 }
 
 export function invalidateSearchCache(): void {

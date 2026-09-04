@@ -72,7 +72,9 @@ A separate [`pmll-memory-mcp`](https://www.npmjs.com/package/pmll-memory-mcp) se
 - Batch independent reads/searches in parallel — do not serialize them.
 - If a command fails, diagnose once, pivot strategy, continue. Cap retries to 1–2.
 - Keep outputs concise: short status updates, no verbose reasoning.
-- Trust the trust envelope. Every agentic tool returns freshness/confidence metadata. The index **self-heals**: a background tracker re-indexes new/changed files and prunes deleted ones within ~30s, so you normally do **not** need a manual `reindex` during a fast-moving session — even for files you created out-of-band. Only run `reindex` if `status` still reports drift after a sweep window, or right after a large `git pull`/branch switch when you need fresh results immediately.
+- Trust the trust envelope. Structural graph tools run a cheap freshness probe before reading, refresh changed/added/deleted files, and coordinate concurrent agents through a shared SQLite lock. A background tracker still heals idle-time drift. You normally do **not** need a manual `reindex`; use it after a large branch switch or when `status` reports an embedding problem.
+- Treat savings footers as transparent estimates, not billing facts. Use `efficiency_report` for the calculation method, numeric-only history, and an optional model-price scenario.
+- When a substantive task used ContextPro, include the largest "this MCP session" estimate from its footers in the final summary. Do not call it billed-token savings, and do not add footer values manually.
 
 ## Tool Reference
 
@@ -80,15 +82,16 @@ A separate [`pmll-memory-mcp`](https://www.npmjs.com/package/pmll-memory-mcp) se
 | Tool          | When to Use                                                            |
 |---------------|------------------------------------------------------------------------|
 | `status`      | First call of a session. File counts, index state, memory stats, git.  |
+| `efficiency_report` | Auditable estimated token savings for this session, 24h, 7d, or all history. |
 | `tree`        | Map files + symbols with line ranges.                                  |
 | `repo_map`    | Compact whole-repo outline with importance ranking.                    |
-| `task_pack`   | Minimum useful working set for a task: ranked files + tests + memory.  |
+| `task_pack`   | Ranked files + tests + memory; use `max_tokens` to bound context without losing the two strongest files. |
 | `decision_brief` | Compressed context for a subsystem.                                |
 
 ### Discovery
 | Tool              | When to Use                                                  |
 |-------------------|--------------------------------------------------------------|
-| `search`          | Hybrid (default), file, or identifier search. Returns confidence + matched symbol locations. |
+| `search`          | Hybrid RRF search with confidence, symbol locations, and an inline crux by default. |
 | `skeleton`        | Function signatures and class methods, no bodies.            |
 | `explain`         | Specific symbol body + immediate dependencies.               |
 | `resolve_symbol`  | Resolve a name to its definition with ambiguity scoring.     |
@@ -98,7 +101,7 @@ A separate [`pmll-memory-mcp`](https://www.npmjs.com/package/pmll-memory-mcp) se
 ### Impact
 | Tool                | When to Use                                                |
 |---------------------|------------------------------------------------------------|
-| `blast_radius`      | Before deleting or modifying any symbol.                   |
+| `blast_radius`      | Before deleting or modifying any symbol; summary groups usage kinds by enclosing caller. |
 | `change_impact`     | Estimate breakage from changing files/symbols.             |
 | `related`           | What a file imports, what imports it, siblings, tests.     |
 | `test_map`          | Source-to-test file mapping.                               |
@@ -148,7 +151,7 @@ A separate [`pmll-memory-mcp`](https://www.npmjs.com/package/pmll-memory-mcp) se
 | Tool             | When to Use                                                  |
 |------------------|--------------------------------------------------------------|
 | `graph_export`   | Export portable project graph (JSON + report).               |
-| `graph_query`    | Summary, file, symbol, or impact view.                       |
+| `graph_query`    | Summary, file/symbol/impact, weighted path, hotspots, or structural communities. Use `max_tokens` to bound context. |
 | `scip_import`    | Import a SCIP JSON index for exact cross-language refs.      |
 | `scip_status`    | Check whether a SCIP index is available.                     |
 
@@ -173,7 +176,7 @@ A separate [`pmll-memory-mcp`](https://www.npmjs.com/package/pmll-memory-mcp) se
 2. Deleting functions without checking blast radius.
 3. Running independent commands sequentially when they can be parallelized.
 4. Repeating failed commands without changing approach.
-5. Reflexively running a full `reindex` after adding a few files — the index self-heals within ~30s. Re-check `status` first; only force a reindex if drift persists past a sweep window or you need fresh results immediately after a big git pull.
+5. Reflexively running a full `reindex` after adding a few files — structural reads now refresh small changes on demand and concurrent agents share the same refresh.
 6. Calling deprecated alias tools when the canonical name is documented.
 7. Pretending the optional `pmll-memory-mcp` companion server is part of ContextPro — those tools are only available if the user installed and connected it separately.
 8. Working inside a git worktree without passing `root` — your calls hit the main checkout's index instead of the worktree's, so you see the wrong code. Check `git rev-parse --show-toplevel` and pass it as `root`.

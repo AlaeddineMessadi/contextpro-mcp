@@ -1,8 +1,8 @@
 // Unified semantic search over files, identifiers, or both with metadata
 // FEATURE: Search — single entry point for structured and text discovery
 
-import { semanticCodeSearch, semanticCodeSearchResults, invalidateSearchCache, type SemanticSearchOptions, type SemanticCodeSearchData } from "./semantic-search.js";
-import { semanticIdentifierSearch, semanticIdentifierSearchResults, invalidateIdentifierSearchCache, type SemanticIdentifierSearchOptions, type SemanticIdentifierSearchData } from "./semantic-identifiers.js";
+import { formatSemanticCodeSearchData, semanticCodeSearchResults, invalidateSearchCache, type SemanticSearchOptions, type SemanticCodeSearchData } from "./semantic-search.js";
+import { formatSemanticIdentifierSearchData, semanticIdentifierSearchResults, invalidateIdentifierSearchCache, type SemanticIdentifierSearchOptions, type SemanticIdentifierSearchData } from "./semantic-identifiers.js";
 import { quickRefresh } from "./reindex.js";
 import { loadProjectConfig } from "../core/project-config.js";
 import { persistArtifact, canonicalArtifactKey } from "../core/artifacts.js";
@@ -32,6 +32,8 @@ export interface UnifiedSearchOptions {
   requireKeywordMatch?: boolean;
   requireSemanticMatch?: boolean;
   persistArtifact?: boolean;
+  fusion?: "weighted" | "rrf";
+  inlineCode?: "off" | "crux" | "full";
 }
 
 export interface TopResultBreakdown {
@@ -179,6 +181,12 @@ async function applyExactSymbolFileBoosts(
   const symbolLocationsByPath = new Map<string, string[]>();
   const symbolsByPath = new Map<string, string[]>();
   const allFiles = db.getAllFiles();
+  const semanticBackedScores = files.results
+    .filter((result) => result.semanticScore > 40)
+    .map((result) => result.score);
+  const keywordOnlyCap = semanticBackedScores.length > 0
+    ? Math.max(0, Math.min(...semanticBackedScores) - 0.01)
+    : 65;
 
   for (const symbol of exactSymbols) {
     const file = allFiles.find((candidate) => candidate.id === symbol.file_id);
@@ -199,15 +207,13 @@ async function applyExactSymbolFileBoosts(
     const exactPathBoost = exactPaths.has(result.path) ? 25 : 0;
     const exactSymbolBoost = matchedExactSymbols.length > 0 ? 12 : 0;
     if (exactPathBoost === 0 && exactSymbolBoost === 0) return result;
-    // Trust dampener: when semantic ≈ 0, cap the boosted total at 70% so a pure-keyword hit
-    // never looks like a "high confidence" hybrid match. Keep the keyword score honest at 100
-    // because the hit IS a real lexical match — but the combined score reflects the missing
-    // semantic component.
+    // Keep exact-name evidence, but never let a zero-semantic result jump above a result with
+    // strong semantic agreement. The keyword component remains honest at 100.
     const rawCombined = result.score + exactPathBoost + exactSymbolBoost;
-    const cap = result.semanticScore < 5 ? 70 : 100;
+    const cap = result.semanticScore < 15 ? keywordOnlyCap : 100;
     return {
       ...result,
-      score: Math.min(cap, Math.round(rawCombined * 10) / 10),
+      score: Math.min(cap, Math.round(rawCombined * 100) / 100),
       keywordScore: Math.min(100, Math.round(Math.max(result.keywordScore, matchedExactSymbols.length > 0 ? 96 : result.keywordScore) * 10) / 10),
       matchedSymbols: [...new Set([...matchedExactSymbols, ...result.matchedSymbols])],
       matchedSymbolLocations: [...new Set([...(symbolLocationsByPath.get(result.path) ?? []), ...result.matchedSymbolLocations])],
@@ -219,9 +225,8 @@ async function applyExactSymbolFileBoosts(
     const dbFile = db.getFile(path);
     boosted.push({
       path,
-      // Was 99.9 — but a hit found ONLY via the symbol-name path with no embedding signal is
-      // not a high-confidence hybrid match; cap at 65% so the UI label says "medium".
-      score: 65,
+      // A hit found only through the symbol table stays below every strong semantic result.
+      score: keywordOnlyCap,
       semanticScore: 0,
       keywordScore: 100,
       header: dbFile?.header ?? "",
@@ -301,6 +306,8 @@ export async function unifiedSearchData(options: UnifiedSearchOptions): Promise<
         minCombinedScore: options.minCombinedScore,
         requireKeywordMatch: options.requireKeywordMatch,
         requireSemanticMatch: options.requireSemanticMatch,
+        fusion: options.fusion,
+        inlineCode: options.inlineCode,
       }),
       semanticIdentifierSearchResults({
         rootDir: options.rootDir,
@@ -406,6 +413,7 @@ function buildQualityBanner(data: UnifiedSearchData): string {
 export async function unifiedSearch(options: UnifiedSearchOptions): Promise<string> {
   const data = await unifiedSearchData({
     ...options,
+    inlineCode: options.inlineCode ?? "crux",
     persistArtifact: options.persistArtifact ?? options.format === "json",
   });
   if (options.format === "json") {
@@ -415,26 +423,10 @@ export async function unifiedSearch(options: UnifiedSearchOptions): Promise<stri
   const warning = data.freshness.warning ? `\n⚠ ${data.freshness.warning}\n\n` : "";
   const quality = buildQualityBanner(data);
   if (data.mode === "file") {
-    return warning + quality + await semanticCodeSearch(options as SemanticSearchOptions);
+    return warning + quality + formatSemanticCodeSearchData(data.files ?? { query: data.query, results: [] });
   }
   if (data.mode === "identifier") {
-    return warning + quality + await semanticIdentifierSearch({
-      rootDir: options.rootDir,
-      query: options.query,
-      topK: options.topK,
-      topCallsPerIdentifier: options.topCallsPerIdentifier,
-      includeKinds: options.includeKinds,
-      semanticWeight: options.semanticWeight,
-      keywordWeight: options.keywordWeight,
-    });
+    return warning + quality + formatSemanticIdentifierSearchData(data.identifiers ?? { query: data.query, results: [] }, options.includeKinds);
   }
-  return `${warning}${quality}=== FILE MATCHES ===\n\n${await semanticCodeSearch(options as SemanticSearchOptions)}\n\n=== IDENTIFIER MATCHES ===\n\n${await semanticIdentifierSearch({
-    rootDir: options.rootDir,
-    query: options.query,
-    topK: options.topK,
-    topCallsPerIdentifier: options.topCallsPerIdentifier,
-    includeKinds: options.includeKinds,
-    semanticWeight: options.semanticWeight,
-    keywordWeight: options.keywordWeight,
-  })}`;
+  return `${warning}${quality}=== FILE MATCHES ===\n\n${formatSemanticCodeSearchData(data.files ?? { query: data.query, results: [] })}\n\n=== IDENTIFIER MATCHES ===\n\n${formatSemanticIdentifierSearchData(data.identifiers ?? { query: data.query, results: [] }, options.includeKinds)}`;
 }

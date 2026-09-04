@@ -18,6 +18,8 @@ The MCP server is built with TypeScript and communicates over stdio using the Mo
 - `project-config.ts` - Project identity (projectId, clientId, repoFingerprint, workspaceRoot) for multi-repo isolation.
 - `artifacts.ts` - Stable content-addressed artifact cache for low-token reuse of task packs, repo maps, search results.
 - `context-metadata.ts` - Trust and freshness metadata emitted by every agentic tool for confidence signaling.
+- `index-freshness.ts` / `extractor-stamp.ts` - Pre-query source drift repair, multi-process coordination, and parser-version invalidation.
+- `efficiency.ts` - Conservative response/source token estimates; retains no prompts or code.
 - `hub.ts` - Wikilink parser for `[[path]]` links, cross-link tags, hub discovery, orphan detection.
 - `chat-model.ts` - Optional LLM integration for cluster labeling and hub name derivation.
 
@@ -69,6 +71,9 @@ Canonical prefix is `CONTEXTPRO_*` (since 1.2.0). Legacy `CONTEXTPLUS_*` names c
 | `CONTEXTPRO_SESSION_ID`                 | (empty)              | Session identifier for session-scoped memory isolation           |
 | `CONTEXTPRO_SESSION_SOURCE`             | `mcp`                | Session source tag stored in memory node metadata                |
 | `CONTEXTPRO_QUICKREFRESH_MAX_FILES`     | `30`                 | Max stale files auto-patched per search call before warning      |
+| `CONTEXTPRO_AUTO_REFRESH`               | `true`               | Refresh changed files before structural graph reads              |
+| `CONTEXTPRO_REFRESH`                    | `stat`               | `stat` fast path or `hash` every source for maximum integrity    |
+| `CONTEXTPRO_EFFICIENCY_FOOTER`          | `true`               | Add estimated token-savings footer when savings are meaningful  |
 | `CONTEXTPRO_NATIVE_AUTO_REPAIR`         | `true`               | Auto-repair native SQLite bindings for the current Node runtime  |
 | `CONTEXTPRO_ALLOW_UNSAFE_ROOT`          | `false`              | Allow root selection at filesystem root or home-level dirs       |
 | `CONTEXTPRO_REINDEX_NO_EMBED`           | `false`              | Skip eager embedding population during reindex (keyword-only)    |
@@ -155,11 +160,12 @@ Strict order within every file:
 | Tool                  | When to Use                                                                          |
 | --------------------- | ------------------------------------------------------------------------------------ |
 | `status`              | Start of every session. Project overview, index state, git info, memory stats.      |
+| `efficiency_report`   | Inspect numeric-only savings history and optional input-price scenarios.            |
 | `tree`                | Map files + symbols with line ranges. Use after status for structural orientation.  |
 | `skeleton`            | MUST run before full reads. Get signatures + line ranges first.                     |
-| `search`              | Find files/identifiers by meaning. Modes: file, identifier, hybrid (default).       |
+| `search`              | Find files/identifiers by meaning. RRF + inline crux are defaults; use `inline_code: off` for pointers only. |
 | `cluster`             | Browse codebase by meaning, not directory structure.                                 |
-| `blast_radius`        | Before deleting or modifying any symbol. Uses call_sites index → import graph → full scan. |
+| `blast_radius`        | Before deleting or modifying any symbol. Summary attributes usage kinds to callers; detailed mode lists every line. |
 | `lint`                | After writing code. Auto-detects linters + skill score checking.                    |
 | `checkpoint`          | Save files with validation. Creates restore point before writing.                   |
 | `checkpoints`         | See undo history.                                                                    |
@@ -171,12 +177,13 @@ Strict order within every file:
 | `test_map`            | Map source files to their test files via import graph and naming conventions.       |
 | `explain`             | Extract a function/class body with its dependencies. Cheaper than reading the file. |
 | `resolve_symbol`      | Resolve an identifier to its most likely definition with ambiguity scoring.         |
-| `task_pack`           | Assemble minimum working set: ranked files, tests, memory, recent diffs.           |
+| `task_pack`           | Assemble a ranked working set; use `max_tokens` for utility-aware pruning that preserves the two strongest files. |
 | `decision_brief`      | Compressed context for a subsystem: ranked files, hubs, memory, risks.             |
 | `change_impact`       | Estimate what could break if specific files or symbols change.                      |
 | `edit_scope`          | Identify the smallest safe edit set for a task.                                     |
 | `validate_scope`      | Recommend validation checks and commands for scoped files.                          |
 | `repo_map`            | Compact repository map with important files and top-level symbols.                  |
+| `graph_query`         | Query file/symbol neighborhoods, impact, confidence-weighted paths, PageRank hotspots, and structural communities without reading source. Bound output with `max_tokens`. |
 | `workspace_context`   | List active projects and recent sessions without loading per-project code context.  |
 | `artifact_list`       | List reusable context artifacts (task packs, repo maps, search results).            |
 | `artifact_read`       | Load a previously generated artifact to reuse without regenerating.                 |
@@ -188,6 +195,8 @@ Strict order within every file:
 | `memory_list`         | List all memory nodes filtered by scope/kind. Use to audit or find IDs.            |
 | `memory_delete`       | Delete a specific memory node by ID.                                                |
 | `memory_record_task`  | Persist task outcomes with linked files, assumptions, evidence, and open risks.     |
+
+Set `CONTEXTPRO_TOOL_PROFILE=core` when an agent benefits from a smaller high-frequency tool surface. Leave it unset (or use `full`) for every specialist, memory-management, export, and setup tool. Every registered tool advertises MCP read-only, destructive, idempotent, and open-world hints so compatible clients can make safer choices.
 
 ## Anti-Patterns to Avoid
 

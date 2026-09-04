@@ -10,6 +10,12 @@ import { getDB, type ContextPlusDB, type FileRow, type SymbolRow } from "./db.js
 import { resolveProjectPath } from "./path-guard.js";
 import { writeFileAtomic } from "./artifacts.js";
 import { loadScipIndex, scipSymbolDisplayName, scipSymbolNodeId } from "./scip-index.js";
+import {
+  detectGraphCommunities,
+  findWeightedShortestPath,
+  rankGraphHotspots,
+  type ProjectGraphAnalysis,
+} from "./graph-analytics.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -61,6 +67,7 @@ export interface ProjectGraphQueryResult {
   graph: Pick<ProjectGraph, "generatedAt" | "indexGeneration" | "stats">;
   nodes: ProjectGraphNode[];
   edges: ProjectGraphEdge[];
+  analysis?: ProjectGraphAnalysis;
 }
 
 function stableId(parts: string[]): string {
@@ -266,9 +273,37 @@ function resolveRelativeImport(sourcePath: string, specifier: string, filesByPat
   return null;
 }
 
+const graphCache = new Map<string, { indexGeneration: number; promise: Promise<ProjectGraph> }>();
+const MAX_GRAPH_CACHE_ROOTS = 50;
+
 export async function buildProjectGraph(rootDir: string): Promise<ProjectGraph> {
   const db = await getDB(rootDir);
-  return buildProjectGraphFromDB(rootDir, db);
+  const indexGeneration = db.getIndexGeneration();
+  const cached = graphCache.get(rootDir);
+  if (cached && cached.indexGeneration === indexGeneration) {
+    graphCache.delete(rootDir);
+    graphCache.set(rootDir, cached);
+    return cached.promise;
+  }
+  const promise = buildProjectGraphFromDB(rootDir, db);
+  graphCache.delete(rootDir);
+  graphCache.set(rootDir, { indexGeneration, promise });
+  while (graphCache.size > MAX_GRAPH_CACHE_ROOTS) {
+    const oldest = graphCache.keys().next().value as string | undefined;
+    if (!oldest) break;
+    graphCache.delete(oldest);
+  }
+  try {
+    return await promise;
+  } catch (error) {
+    if (graphCache.get(rootDir)?.promise === promise) graphCache.delete(rootDir);
+    throw error;
+  }
+}
+
+export function invalidateProjectGraphCache(rootDir?: string): void {
+  if (rootDir) graphCache.delete(rootDir);
+  else graphCache.clear();
 }
 
 export async function buildProjectGraphFromDB(rootDir: string, db: ContextPlusDB): Promise<ProjectGraph> {
@@ -804,17 +839,54 @@ export async function writeProjectGraphArtifacts(rootDir: string): Promise<{ gra
   return { graph, graphPath, reportPath, dashboardPath };
 }
 
+function graphSummary(graph: ProjectGraph): ProjectGraphQueryResult["graph"] {
+  return { generatedAt: graph.generatedAt, indexGeneration: graph.indexGeneration, stats: graph.stats };
+}
+
 export async function queryProjectGraph(rootDir: string, input: {
-  kind?: "summary" | "file" | "symbol" | "impact";
+  kind?: "summary" | "file" | "symbol" | "impact" | "path" | "hotspots" | "communities";
   file?: string;
   symbol?: string;
+  source?: string;
+  target?: string;
+  maxHops?: number;
   limit?: number;
 }): Promise<ProjectGraphQueryResult> {
   const graph = await buildProjectGraph(rootDir);
+  const summary = graphSummary(graph);
   const limit = Math.max(1, Math.min(input.limit ?? 50, 200));
   const kind = input.kind ?? "summary";
   if (kind === "summary") {
-    return { graph, nodes: graph.nodes.slice(0, limit), edges: graph.edges.slice(0, limit) };
+    return { graph: summary, nodes: graph.nodes.slice(0, limit), edges: graph.edges.slice(0, limit) };
+  }
+  if (kind === "path") {
+    const path = findWeightedShortestPath(graph, input.source ?? "", input.target ?? "", Math.max(1, Math.min(input.maxHops ?? 8, 20)));
+    return { graph: summary, ...path };
+  }
+  if (kind === "hotspots") {
+    const rankings = rankGraphHotspots(graph, limit);
+    const byId = new Map(graph.nodes.map((node) => [node.id, node] as const));
+    const nodes = rankings.map((ranking) => {
+      const node = byId.get(ranking.nodeId)!;
+      return { ...node, metadata: { ...node.metadata, centrality: ranking } };
+    });
+    const nodeIds = new Set(rankings.map((ranking) => ranking.nodeId));
+    const edges = graph.edges
+      .filter((edge) => nodeIds.has(edge.source) && nodeIds.has(edge.target) && edge.type !== "contains")
+      .slice(0, limit);
+    return { graph: summary, nodes, edges, analysis: { kind: "hotspots", rankings } };
+  }
+  if (kind === "communities") {
+    const communities = detectGraphCommunities(graph, Math.min(limit, 25));
+    const selectedPaths = new Set(communities.flatMap((community) => community.files));
+    const nodes = graph.nodes
+      .filter((node) => node.path && selectedPaths.has(node.path) && ["file", "test", "config", "document"].includes(node.type))
+      .slice(0, limit);
+    const nodeIds = new Set(nodes.map((node) => node.id));
+    const edges = graph.edges
+      .filter((edge) => nodeIds.has(edge.source) && nodeIds.has(edge.target) && edge.type !== "contains")
+      .slice(0, limit);
+    return { graph: summary, nodes, edges, analysis: { kind: "communities", communities } };
   }
   const startNodes = graph.nodes.filter((node) => {
     if (kind === "file" || kind === "impact") {
@@ -862,7 +934,7 @@ export async function queryProjectGraph(rootDir: string, input: {
 
     const nodeIds = new Set<string>([...fileFrontier, ...symbolFrontier]);
     const nodes = graph.nodes.filter((node) => nodeIds.has(node.id));
-    return { graph, nodes, edges: collectedEdges };
+    return { graph: summary, nodes, edges: collectedEdges };
   }
 
   const edges = graph.edges
@@ -874,5 +946,5 @@ export async function queryProjectGraph(rootDir: string, input: {
     nodeIds.add(edge.target);
   }
   const nodes = graph.nodes.filter((node) => nodeIds.has(node.id)).slice(0, limit);
-  return { graph, nodes, edges };
+  return { graph: summary, nodes, edges };
 }

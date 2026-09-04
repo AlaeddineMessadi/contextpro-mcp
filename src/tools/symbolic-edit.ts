@@ -5,6 +5,7 @@ import { readFile, writeFile } from "fs/promises";
 import { extname } from "path";
 import { resolveProjectPath } from "../core/path-guard.js";
 import { analyzeFile, flattenSymbols, isSupportedFile, type CodeSymbol, type SymbolLocation } from "../core/parser.js";
+import { sourceMaskFlags } from "../core/source-mask.js";
 import { validateSyntax } from "../core/tree-sitter.js";
 import { walkDirectory } from "../core/walker.js";
 import { getDB } from "../core/db.js";
@@ -384,23 +385,72 @@ export async function replaceSymbolBody(options: SymbolicEditOptions): Promise<s
   return `Replaced ${symbol.kind} "${options.namePath}" in ${options.relativePath} (was L${symbol.line}-L${symbol.endLine}). Syntax validated.`;
 }
 
+const DECORATOR_LINE_RE = /^(@[\w$.]|#\[)/;
+
+/**
+ * Walk upward past any contiguous single-line decorator/annotation lines directly above a
+ * symbol's own definition line (`@Injectable()`, `@Log()`, Python `@staticmethod`, Rust
+ * `#[derive(...)]`), so a "before" insertion lands above the decorator block instead of
+ * splicing between a decorator and the symbol it attaches to (which silently reassigns the
+ * decorator to whatever gets inserted). `defLine0` is the symbol's own 0-based line index;
+ * returns that unchanged when no decorator lines precede it. Does not attempt to span
+ * multi-line decorator argument lists (e.g. `@Component({ ... })`) — those fall back to the
+ * original position rather than risk misidentifying unrelated preceding code.
+ */
+function decoratorBlockStartLine(lines: string[], defLine0: number): number {
+  let start = defLine0;
+  let i = defLine0 - 1;
+  while (i >= 0 && DECORATOR_LINE_RE.test(lines[i].trim())) {
+    start = i;
+    i--;
+  }
+  return start;
+}
+
 export async function insertAroundSymbol(options: InsertSymbolOptions): Promise<string> {
   const { symbol, fullPath } = await locateSymbolForEdit(options.rootDir, options.relativePath, options.namePath);
   const content = await readFile(fullPath, "utf-8");
+  const lines = content.split("\n");
   const insertion = options.position === "before"
     ? `${options.body}\n`
     : `\n${options.body}`;
-  const insertLine = options.position === "before" ? symbol.line - 1 : symbol.endLine;
+  const insertLine = options.position === "before"
+    ? decoratorBlockStartLine(lines, symbol.line - 1)
+    : symbol.endLine;
   const next = insertLines(content, insertLine, insertion);
   await assertEditKeepsSyntaxValid(options.relativePath, fullPath, content, next, `insert_${options.position}_symbol`);
   await createRestorePoint(options.rootDir, [options.relativePath], options.message ?? `insert_${options.position}_symbol:${options.namePath}`);
   await writeFile(fullPath, next, "utf-8");
   invalidateCaches();
-  return `Inserted ${options.position} ${symbol.kind} "${options.namePath}" in ${options.relativePath} at L${options.position === "before" ? symbol.line : symbol.endLine + 1}. Syntax validated.`;
+  return `Inserted ${options.position} ${symbol.kind} "${options.namePath}" in ${options.relativePath} at L${options.position === "before" ? insertLine + 1 : symbol.endLine + 1}. Syntax validated.`;
 }
 
 function escapeRegex(input: string): string {
   return input.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/** Shared offset-preserving mask prevents renames inside comments and literal text. */
+function maskStringsAndComments(content: string, filePath: string): boolean[] {
+  return sourceMaskFlags(content, filePath);
+}
+
+/** Word-boundary rename that skips occurrences inside string literals and comments. */
+function renameOutsideStringsAndComments(
+  text: string,
+  oldName: string,
+  newName: string,
+  filePath: string,
+): { result: string; occurrences: number; skipped: number } {
+  const masked = maskStringsAndComments(text, filePath);
+  const pattern = new RegExp(`\\b${escapeRegex(oldName)}\\b`, "g");
+  let occurrences = 0;
+  let skipped = 0;
+  const result = text.replace(pattern, (match, offset: number) => {
+    if (masked[offset]) { skipped++; return match; }
+    occurrences++;
+    return newName;
+  });
+  return { result, occurrences, skipped };
 }
 
 export async function renameSymbol(options: RenameSymbolOptions): Promise<string> {
@@ -426,14 +476,13 @@ export async function renameSymbol(options: RenameSymbolOptions): Promise<string
   }
   await createRestorePoint(options.rootDir, [options.relativePath], options.message ?? `rename_symbol:${oldName}->${options.newName}`);
   const original = await readFile(fullPath, "utf-8");
-  const pattern = new RegExp(`\\b${escapeRegex(oldName)}\\b`, "g");
-  const next = original.replace(pattern, options.newName);
-  const occurrences = (original.match(pattern) ?? []).length;
+  const { result: next, occurrences, skipped: skippedInFile } = renameOutsideStringsAndComments(original, oldName, options.newName, fullPath);
   await writeFile(fullPath, next, "utf-8");
 
   const db = await getDB(options.rootDir);
   const dbFile = db.getFile(options.relativePath);
   let crossFileEdited = 0;
+  let crossFileSkipped = 0;
   if (dbFile) {
     const importers = db.getImportersOf(dbFile.id);
     const callers = db.getCallersOf(oldName);
@@ -455,10 +504,10 @@ export async function renameSymbol(options: RenameSymbolOptions): Promise<string
         try {
           const candidatePath = resolveProjectPath(options.rootDir, path, "renameCandidate");
           const text = await readFile(candidatePath, "utf-8");
-          const filePattern = new RegExp(`\\b${escapeRegex(oldName)}\\b`, "g");
-          if (!filePattern.test(text)) continue;
-          const replaced = text.replace(new RegExp(`\\b${escapeRegex(oldName)}\\b`, "g"), options.newName);
-          if (replaced !== text) {
+          const { result: replaced, occurrences: fileOccurrences, skipped: fileSkipped } =
+            renameOutsideStringsAndComments(text, oldName, options.newName, candidatePath);
+          crossFileSkipped += fileSkipped;
+          if (fileOccurrences > 0 && replaced !== text) {
             await writeFile(candidatePath, replaced, "utf-8");
             crossFileEdited++;
           }
@@ -469,7 +518,11 @@ export async function renameSymbol(options: RenameSymbolOptions): Promise<string
     }
   }
   invalidateCaches();
-  return `Renamed ${symbol.kind} "${oldName}" → "${options.newName}" in ${options.relativePath} (${occurrences} occurrences in definition file, ${crossFileEdited} other file(s) updated based on import/call graph).`;
+  const totalSkipped = skippedInFile + crossFileSkipped;
+  const skipNote = totalSkipped > 0
+    ? ` (${totalSkipped} additional occurrence(s) inside string literals/comments left untouched)`
+    : "";
+  return `Renamed ${symbol.kind} "${oldName}" → "${options.newName}" in ${options.relativePath} (${occurrences} occurrences in definition file, ${crossFileEdited} other file(s) updated based on import/call graph).${skipNote}`;
 }
 
 export type { SymbolLocation };

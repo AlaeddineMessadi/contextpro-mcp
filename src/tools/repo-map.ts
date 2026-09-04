@@ -2,7 +2,7 @@
 // FEATURE: RepoMap — low-token whole-repo outline for first-turn agent orientation
 
 import { resolve } from "path";
-import { getDB, type FileRow, type SymbolRow } from "../core/db.js";
+import { getDB, type ContextPlusDB, type FileRow, type SymbolRow } from "../core/db.js";
 import { loadProjectConfig } from "../core/project-config.js";
 import { persistArtifact } from "../core/artifacts.js";
 import { computePageRank } from "../core/pagerank.js";
@@ -16,6 +16,18 @@ export interface RepoMapOptions {
   maxSymbolsPerFile?: number;
   maxTokens?: number;
   format?: "text" | "json";
+  /**
+   * Files to bias PageRank toward, Aider-repomap-style — e.g. the files a task_pack/search
+   * call already ranked as relevant, or files touched by the active diff. Reseeds the
+   * personalization vector per call instead of relying on a single static global ranking.
+   */
+  focusFiles?: string[];
+  /**
+   * Identifiers mentioned in the current task/query. Files that DEFINE one of these get an
+   * extra teleport-weight boost on top of any focusFiles weight, mirroring Aider's
+   * mentioned-identifier multiplier.
+   */
+  focusIdentifiers?: string[];
 }
 
 export interface RepoMapFileEntry {
@@ -106,6 +118,45 @@ function scoreFileImportance(
   );
 }
 
+// Aider's repo-map trick (aider/repomap.py get_ranked_tags): reseed the PageRank
+// personalization vector per call from the task's current focus, instead of relying on one
+// static global ranking. Relative weights mirror Aider's multipliers — files explicitly in
+// focus (their "chat file" boost) outweigh files merely defining a mentioned identifier,
+// which in turn outweigh a plain targetPath-subtree membership.
+const TARGET_SUBTREE_WEIGHT = 1;
+const FOCUS_IDENTIFIER_WEIGHT = 10;
+const FOCUS_FILE_WEIGHT = 50;
+
+function buildPersonalization(
+  db: ContextPlusDB,
+  everyFile: FileRow[],
+  targetSubtreeFiles: FileRow[],
+  options: RepoMapOptions,
+): Map<string, number> | undefined {
+  const weights = new Map<string, number>();
+  const addWeight = (path: string, weight: number): void => {
+    weights.set(path, (weights.get(path) ?? 0) + weight);
+  };
+
+  if (options.targetPath) {
+    for (const file of targetSubtreeFiles) addWeight(file.path, TARGET_SUBTREE_WEIGHT);
+  }
+  if (options.focusIdentifiers && options.focusIdentifiers.length > 0) {
+    const pathById = new Map(everyFile.map((file) => [file.id, file.path]));
+    for (const identifier of options.focusIdentifiers) {
+      const exactMatches = db.searchSymbolsByName(identifier).filter((symbol) => symbol.name === identifier);
+      for (const symbol of exactMatches) {
+        const path = pathById.get(symbol.file_id);
+        if (path) addWeight(path, FOCUS_IDENTIFIER_WEIGHT);
+      }
+    }
+  }
+  if (options.focusFiles && options.focusFiles.length > 0) {
+    for (const path of options.focusFiles) addWeight(path, FOCUS_FILE_WEIGHT);
+  }
+  return weights.size > 0 ? weights : undefined;
+}
+
 function formatSymbolLine(symbol: RepoMapFileEntry["symbols"][number], includeSignatures: boolean): string {
   const lineRange = symbol.endLine && symbol.endLine > symbol.line ? `L${symbol.line}-L${symbol.endLine}` : `L${symbol.line}`;
   if (includeSignatures && symbol.signature) {
@@ -136,9 +187,7 @@ export async function getRepoMapData(options: RepoMapOptions): Promise<RepoMapDa
       if (targetPath) edges.push([file.path, targetPath]);
     }
   }
-  const personalization = options.targetPath
-    ? new Set(allFiles.map((file) => file.path))
-    : undefined;
+  const personalization = buildPersonalization(db, everyFile, allFiles, options);
   const rawRanks = computePageRank(everyFile.map((file) => file.path), edges, { personalization });
   // Normalize to 0–100 against the max rank so the boost is scale-stable across
   // repos of any size (PageRank values shrink as node count grows).

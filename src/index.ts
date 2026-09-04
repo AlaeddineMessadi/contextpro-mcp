@@ -23,6 +23,9 @@ import { resolveRequestRoot } from "./core/request-root.js";
 import { runWithRequestRoot } from "./core/request-context.js";
 import { CONTEXTPRO_DIR, ensureContextProDir } from "./core/data-dir.js";
 import { closeDB, getDB } from "./core/db.js";
+import { ensureFreshIndex } from "./core/index-freshness.js";
+import { addToSessionSavings, appendEfficiencyFooter, estimateToolEfficiency } from "./core/efficiency.js";
+import type { IndexFreshnessResult } from "./core/index-freshness.js";
 
 type AgentTarget = "claude" | "cursor" | "vscode" | "windsurf" | "opencode";
 
@@ -64,6 +67,23 @@ function isInstructionsRemoteEnabled(): boolean {
 
 let noteServerActivity = () => { };
 let ensureTrackerRunning = () => { };
+
+function appendFreshnessNotice(result: unknown, freshness: IndexFreshnessResult | undefined): void {
+  if (!freshness?.refreshed || !result || typeof result !== "object") return;
+  const content = (result as { content?: unknown }).content;
+  if (!Array.isArray(content)) return;
+  const item = content.find((candidate) => candidate && typeof candidate === "object" && typeof (candidate as { text?: unknown }).text === "string") as { text: string } | undefined;
+  if (!item) return;
+  try {
+    JSON.parse(item.text);
+    return;
+  } catch {
+    // Text response; add a concise provenance notice.
+  }
+  const mode = freshness.fullReindex ? "structural reindex" : "incremental refresh";
+  const subject = freshness.fullReindex ? "indexed file" : "changed file";
+  item.text = `[ContextPro ${mode}: ${freshness.staleCount} ${subject}${freshness.staleCount === 1 ? "" : "s"} in ${freshness.durationMs}ms]\n\n${item.text}`;
+}
 
 interface ParsedCliArgs {
   command?: string;
@@ -182,7 +202,7 @@ async function getClientRoots(): Promise<string[]> {
 
 function withRequestActivity<TArgs, TResult>(
   handler: (args: TArgs) => Promise<TResult>,
-  options?: { useEmbeddingTracker?: boolean; toolName?: string; waitForIndexing?: boolean },
+  options?: { useEmbeddingTracker?: boolean; toolName?: string; waitForIndexing?: boolean; ensureFreshIndex?: boolean },
 ): (args: TArgs) => Promise<TResult> {
   return async (args: TArgs): Promise<TResult> => {
     const started = Date.now();
@@ -201,14 +221,29 @@ function withRequestActivity<TArgs, TResult>(
     return runWithRequestRoot(effectiveRoot, async () => {
       try {
         await verifyProjectContext(effectiveRoot);
-        if (options?.waitForIndexing !== false) {
+        let freshness: IndexFreshnessResult | undefined;
+        if (options?.ensureFreshIndex) {
+          freshness = await ensureFreshIndex(effectiveRoot);
+          if (freshness.warning) process.stderr.write(`[contextpro/freshness] ${freshness.warning}\n`);
+        } else if (options?.waitForIndexing !== false) {
           const waitState = await waitForIndexingCompletion(effectiveRoot);
           if (waitState.timedOut) {
             throw new Error("Indexing is still in progress and did not settle before timeout.");
           }
         }
         const result = await handler(handlerArgs);
-        recordToolTiming(effectiveRoot, options?.toolName ?? "unknown", Date.now() - started, "ok");
+        const durationMs = Date.now() - started;
+        const toolName = options?.toolName ?? "unknown";
+        appendFreshnessNotice(result, freshness);
+        let efficiency: Awaited<ReturnType<typeof estimateToolEfficiency>> | undefined;
+        try {
+          efficiency = await estimateToolEfficiency(effectiveRoot, handlerArgs, result);
+          const sessionSavedTokens = addToSessionSavings(effectiveRoot, efficiency);
+          if (toolName !== "efficiency_report") appendEfficiencyFooter(result, efficiency, sessionSavedTokens);
+        } catch {
+          // Efficiency telemetry is optional and must never affect the tool result.
+        }
+        recordToolTiming(effectiveRoot, toolName, durationMs, "ok", efficiency);
         return result;
       } catch (error) {
         recordToolTiming(effectiveRoot, options?.toolName ?? "unknown", Date.now() - started, "error");
@@ -253,6 +288,7 @@ function buildMcpConfig(runner: "npx" | "bunx") {
             CONTEXTPRO_EMBED_MODEL: "nomic-embed-text:latest",
             CONTEXTPRO_CHAT_MODEL: "nemotron-3-ultra:cloud",
             CONTEXTPRO_EMBED_TRACKER: "lazy",
+            CONTEXTPRO_TOOL_PROFILE: "core",
           },
         },
       },
@@ -283,6 +319,7 @@ function buildOpenCodeConfig(runner: "npx" | "bunx") {
             CONTEXTPRO_EMBED_MODEL: "nomic-embed-text:latest",
             CONTEXTPRO_CHAT_MODEL: "nemotron-3-ultra:cloud",
             CONTEXTPRO_EMBED_TRACKER: "lazy",
+            CONTEXTPRO_TOOL_PROFILE: "core",
           },
         },
       },
@@ -373,7 +410,7 @@ setToolCallSink((event) => {
   void (async () => {
     try {
       const db = await getDB(event.rootDir);
-      db.recordToolCall(event.tool, event.status, event.durationMs, event.calledAt);
+      db.recordToolCall(event.tool, event.status, event.durationMs, event.calledAt, event.efficiency);
       if (++toolCallWrites % 200 === 0) db.pruneToolCalls(5000);
     } catch {
       // telemetry is non-critical

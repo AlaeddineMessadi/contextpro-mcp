@@ -69,8 +69,15 @@ export function loadNativeStorageBindings(): { Database: BetterSqlite3Constructo
     return cachedBindings;
   } catch (error) {
     const diagnostic = describeNativeStorageError(error);
+    // Lead with a short, actionable summary — the underlying error (kept below for
+    // diagnosability) can be a 10+ line bindings-search path dump that otherwise buries the
+    // fact that this self-repairs automatically on server startup and is usually transient.
     throw new Error(
-      `ContextPro native storage unavailable [${diagnostic.code}]: ${diagnostic.message}\n${diagnostic.remediation.join("\n")}`,
+      `ContextPro storage engine is unavailable [${diagnostic.code}]. This is usually transient: ` +
+      `ContextPro attempts an automatic native-module repair on server startup (~1-2 min) — call the ` +
+      `"health" tool for live repair status, then retry this call.\n` +
+      `Manual fix if it persists (run in a shell, then restart the MCP host):\n${diagnostic.remediation.map((step) => `  - ${step}`).join("\n")}\n` +
+      `Underlying error: ${diagnostic.message}`,
     );
   }
 }

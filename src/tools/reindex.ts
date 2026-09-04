@@ -12,6 +12,7 @@ import { autoGenerateHubData } from "./feature-hub.js";
 import { toolUpsertMemoryNode } from "./memory-tools.js";
 import { resolveProjectPath } from "../core/path-guard.js";
 import { getEmbedProvider, getEmbedModel } from "../core/embeddings.js";
+import { getExtractorStamp } from "../core/extractor-stamp.js";
 
 export interface ReindexOptions {
   rootDir: string;
@@ -59,10 +60,24 @@ const INDEX_STATUS_KEY = "index_status";
 const INDEX_STARTED_AT_KEY = "index_started_at";
 const INDEX_FINISHED_AT_KEY = "index_finished_at";
 const INDEX_TARGET_PATH_KEY = "index_target_path";
+const INDEX_OWNER_PID_KEY = "index_owner_pid";
 const LAST_INDEX_ERROR_KEY = "last_index_error";
 const INDEXING_STATUS = "indexing";
 const IDLE_STATUS = "idle";
 const MAX_SEARCH_BODY_CHARS = 4000;
+
+function tryAcquireIndexLock(db: ContextPlusDB, targetPath: string): boolean {
+  const extra: Array<[string, string]> = [
+    [INDEX_STARTED_AT_KEY, String(Date.now())],
+    [INDEX_TARGET_PATH_KEY, targetPath],
+    [INDEX_OWNER_PID_KEY, String(process.pid)],
+    [LAST_INDEX_ERROR_KEY, ""],
+  ];
+  // A brand-new DB has no index_status row yet; null and explicit idle are both
+  // unlocked states, acquired atomically through the same compare-and-set path.
+  return db.compareAndSetMeta(INDEX_STATUS_KEY, IDLE_STATUS, INDEXING_STATUS, extra)
+    || db.compareAndSetMeta(INDEX_STATUS_KEY, null, INDEXING_STATUS, extra);
+}
 
 function isReindexEmbedDisabled(): boolean {
   const raw = (process.env.CONTEXTPRO_REINDEX_NO_EMBED ?? process.env.CONTEXTPLUS_REINDEX_NO_EMBED ?? "").trim().toLowerCase();
@@ -198,6 +213,7 @@ function setIndexStatus(db: ContextPlusDB, status: string, input?: { targetPath?
       [INDEX_STATUS_KEY, status],
       [INDEX_STARTED_AT_KEY, String(Date.now())],
       [INDEX_TARGET_PATH_KEY, input?.targetPath ?? ""],
+      [INDEX_OWNER_PID_KEY, String(process.pid)],
       [LAST_INDEX_ERROR_KEY, ""],
     ]);
     return;
@@ -206,12 +222,40 @@ function setIndexStatus(db: ContextPlusDB, status: string, input?: { targetPath?
     [INDEX_STATUS_KEY, status],
     [INDEX_FINISHED_AT_KEY, String(Date.now())],
     [INDEX_TARGET_PATH_KEY, ""],
+    [INDEX_OWNER_PID_KEY, ""],
     [LAST_INDEX_ERROR_KEY, input?.error ?? ""],
   ]);
 }
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolveSleep) => setTimeout(resolveSleep, ms));
+}
+
+function processIsAlive(pid: number): boolean {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function recoverAbandonedIndexLock(db: ContextPlusDB): boolean {
+  if (db.getMeta(INDEX_STATUS_KEY) !== INDEXING_STATUS) return false;
+  const ownerPid = Number.parseInt(db.getMeta(INDEX_OWNER_PID_KEY) ?? "", 10);
+  const startedAt = Number.parseInt(db.getMeta(INDEX_STARTED_AT_KEY) ?? "", 10);
+  const ownerKnownDead = Number.isInteger(ownerPid) && ownerPid > 0 && !processIsAlive(ownerPid);
+  // Pre-owner-version locks cannot be attributed. Only reclaim those after ten
+  // minutes so a legitimate long-running legacy reindex is not interrupted.
+  const legacyLockExpired = (!Number.isInteger(ownerPid) || ownerPid <= 0)
+    && Number.isFinite(startedAt)
+    && Date.now() - startedAt > 10 * 60_000;
+  if (!ownerKnownDead && !legacyLockExpired) return false;
+  return db.compareAndSetMeta(INDEX_STATUS_KEY, INDEXING_STATUS, IDLE_STATUS, [
+    [INDEX_OWNER_PID_KEY, ""],
+    [LAST_INDEX_ERROR_KEY, "Recovered an abandoned index lock."],
+  ]);
 }
 
 export async function waitForIndexingCompletion(
@@ -225,6 +269,7 @@ export async function waitForIndexingCompletion(
   let waited = false;
 
   while (db.getMeta(INDEX_STATUS_KEY) === INDEXING_STATUS) {
+    if (recoverAbandonedIndexLock(db)) break;
     waited = true;
     if (Date.now() - startedAt >= timeoutMs) {
       return { waited, timedOut: true };
@@ -239,11 +284,7 @@ export async function reindex(options: ReindexOptions): Promise<string> {
   const start = Date.now();
   const db = await getDB(options.rootDir);
   // Atomic check-and-set so two parallel reindex calls don't race past the guard.
-  const acquired = db.compareAndSetMeta(INDEX_STATUS_KEY, IDLE_STATUS, INDEXING_STATUS, [
-    [INDEX_STARTED_AT_KEY, String(Date.now())],
-    [INDEX_TARGET_PATH_KEY, options.targetPath ?? ""],
-    [LAST_INDEX_ERROR_KEY, ""],
-  ]);
+  const acquired = tryAcquireIndexLock(db, options.targetPath ?? "");
   if (!acquired) {
     const current = db.getMeta(INDEX_STATUS_KEY);
     if (current === INDEXING_STATUS) {
@@ -252,11 +293,7 @@ export async function reindex(options: ReindexOptions): Promise<string> {
         return "Reindex skipped: another reindex is already in progress and did not finish within 60s.";
       }
       // Retry the acquisition once the other reindex finishes.
-      const retried = db.compareAndSetMeta(INDEX_STATUS_KEY, IDLE_STATUS, INDEXING_STATUS, [
-        [INDEX_STARTED_AT_KEY, String(Date.now())],
-        [INDEX_TARGET_PATH_KEY, options.targetPath ?? ""],
-        [LAST_INDEX_ERROR_KEY, ""],
-      ]);
+      const retried = tryAcquireIndexLock(db, options.targetPath ?? "");
       if (!retried) {
         return "Reindex skipped: index lock could not be acquired after the prior reindex finished. Try again in a moment.";
       }
@@ -278,6 +315,11 @@ export async function reindex(options: ReindexOptions): Promise<string> {
     const files = entries.filter((e) => !e.isDirectory);
     const sourceFiles = files.filter((file) => isSupportedFile(file.path));
     const previouslyIndexed = db.getAllFiles().length;
+    const extractorStamp = getExtractorStamp();
+    const extractorChanged = !options.targetPath
+      && previouslyIndexed > 0
+      && db.getMeta("extractor_stamp") !== extractorStamp;
+    const force = options.force === true || extractorChanged;
     if (!options.targetPath && sourceFiles.length === 0 && previouslyIndexed > 0 && !options.force) {
       setIndexStatus(db, IDLE_STATUS, { targetPath: options.targetPath, error: null });
       return (
@@ -330,7 +372,7 @@ export async function reindex(options: ReindexOptions): Promise<string> {
         currentHashes.set(file.relativePath, hash);
 
         const existing = db.getFile(file.relativePath);
-        if (existing && existing.content_hash === hash && !options.force) {
+        if (existing && existing.content_hash === hash && !force) {
           pendingImports.push({
             fileId: existing.id,
             imports: extractImports(content, file.path),
@@ -342,16 +384,17 @@ export async function reindex(options: ReindexOptions): Promise<string> {
         const analysis = await analyzeFile(file.path);
         const flatSymbols = flattenSymbols(analysis.symbols);
         const lang = detectLanguage(file.path);
-        const fileSize = (await stat(file.path)).size;
+        const fileSize = fileStats?.size ?? buf.length;
+        const fileMtimeMs = fileStats ? Math.trunc(fileStats.mtimeMs) : 0;
 
-        const fileId = db.upsertFile(file.relativePath, hash, analysis.header, lang, fileSize);
+        const fileId = db.upsertFile(file.relativePath, hash, analysis.header, lang, fileSize, fileMtimeMs);
         db.upsertSymbols(fileId, flatSymbols.map((s) => ({
           name: s.name,
           kind: s.kind,
           lineStart: s.line,
           lineEnd: s.endLine,
           signature: s.signature,
-          parentSymbolId: undefined,
+          parentIndex: s.parentIndex,
         })));
         db.upsertFileSearchDocument({
           path: file.relativePath,
@@ -366,7 +409,7 @@ export async function reindex(options: ReindexOptions): Promise<string> {
           imports: extractImports(content, file.path),
         });
 
-        db.upsertCallSites(fileId, extractCallSites(content));
+        db.upsertCallSites(fileId, extractCallSites(content, file.relativePath));
 
         totalSymbols += flatSymbols.length;
         indexed++;
@@ -422,7 +465,8 @@ export async function reindex(options: ReindexOptions): Promise<string> {
     }
 
     const duration = Date.now() - start;
-    db.bumpIndexGeneration();
+    const structuralChanged = force || indexed > 0 || removed.length > 0;
+    if (structuralChanged) db.bumpIndexGeneration();
     db.setMeta("last_reindex_at", String(Date.now()));
     db.setMeta("last_reindex_duration_ms", String(duration));
     db.setMeta("last_auto_hub_count", String(autoHubCount));
@@ -438,6 +482,7 @@ export async function reindex(options: ReindexOptions): Promise<string> {
     invalidateIdentifierSearchCache();
 
     if (!options.targetPath) {
+      db.setMeta("extractor_stamp", extractorStamp);
       toolUpsertMemoryNode({
         rootDir: options.rootDir,
         type: "note",
@@ -461,7 +506,10 @@ export async function reindex(options: ReindexOptions): Promise<string> {
     } else {
       lines.push(`  Embeddings: ${fileEmbedCount} files, ${identifierEmbedCount} identifiers`);
     }
-    if (options.force) lines.push("  Mode: force (all files re-processed)");
+    if (force) lines.push(extractorChanged
+      ? "  Mode: force (extractor changed; all files re-processed)"
+      : "  Mode: force (all files re-processed)");
+    if (!structuralChanged) lines.push("  Index generation: unchanged (no structural changes)");
     if (options.targetPath) lines.push(`  Scope: ${options.targetPath}`);
 
     return lines.join("\n");
@@ -474,31 +522,79 @@ export async function reindex(options: ReindexOptions): Promise<string> {
   }
 }
 
-export async function quickRefresh(rootDir: string): Promise<{
+export interface QuickRefreshOptions {
+  /** Refresh semantic embeddings too. Graph readers set false for a fast structural-only pass. */
+  includeEmbeddings?: boolean;
+}
+
+export interface QuickRefreshResult {
   staleCount: number;
+  remainingStaleCount?: number;
   refreshed: boolean;
+  complete: boolean;
+  fullReindex?: boolean;
   waitedForIndexing?: boolean;
   indexingTimedOut?: boolean;
   changedSymbols?: string[];
-}> {
+}
+
+export async function quickRefresh(rootDir: string, options: QuickRefreshOptions = {}): Promise<QuickRefreshResult> {
+  return quickRefreshAttempt(rootDir, options, 0);
+}
+
+async function quickRefreshAttempt(rootDir: string, options: QuickRefreshOptions, retry: number): ReturnType<typeof quickRefresh> {
+  const startedAt = Date.now();
   const waitState = await waitForIndexingCompletion(rootDir);
   if (waitState.timedOut) {
     return {
       staleCount: 0,
+      remainingStaleCount: 0,
       refreshed: false,
+      complete: false,
       waitedForIndexing: waitState.waited,
       indexingTimedOut: true,
     };
   }
   const db = await getDB(rootDir);
+  const indexedBefore = db.getAllFiles();
+  const extractorStamp = getExtractorStamp();
+  if (indexedBefore.length > 0 && db.getMeta("extractor_stamp") !== extractorStamp) {
+    const generationBefore = db.getIndexGeneration();
+    await reindex({ rootDir, force: true, noEmbed: true, autoHubs: false });
+    return {
+      staleCount: indexedBefore.length,
+      remainingStaleCount: db.getMeta("extractor_stamp") === extractorStamp ? 0 : indexedBefore.length,
+      refreshed: db.getIndexGeneration() > generationBefore,
+      complete: db.getMeta("extractor_stamp") === extractorStamp,
+      fullReindex: true,
+      waitedForIndexing: waitState.waited,
+      indexingTimedOut: false,
+    };
+  }
+
   const entries = await walkDirectory({ rootDir, depthLimit: 0 });
   const files = entries.filter((e) => !e.isDirectory && isSupportedFile(e.path));
-
+  const indexedByPath = new Map(indexedBefore.map((file) => [file.path, file] as const));
+  const hashMode = (process.env.CONTEXTPRO_REFRESH ?? process.env.CONTEXTPLUS_REFRESH ?? "").trim().toLowerCase() === "hash";
   const currentHashes = new Map<string, string>();
+  const fingerprintUpdates: Array<{ path: string; size: number; mtimeMs: number }> = [];
   for (const file of files) {
     try {
+      const fileStats = await stat(file.path);
+      const mtimeMs = Math.trunc(fileStats.mtimeMs);
+      const existing = indexedByPath.get(file.relativePath);
+      if (!hashMode && existing && existing.file_mtime_ms > 0
+        && existing.file_size === fileStats.size && existing.file_mtime_ms === mtimeMs) {
+        currentHashes.set(file.relativePath, existing.content_hash);
+        continue;
+      }
       const content = await readFile(file.path, "utf-8");
-      currentHashes.set(file.relativePath, hashContent(content));
+      const hash = hashContent(content);
+      currentHashes.set(file.relativePath, hash);
+      if (existing?.content_hash === hash
+        && (existing.file_size !== fileStats.size || existing.file_mtime_ms !== mtimeMs)) {
+        fingerprintUpdates.push({ path: file.relativePath, size: fileStats.size, mtimeMs });
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       process.stderr.write(`[contextpro/quickRefresh] read failed for ${file.relativePath}: ${message}\n`);
@@ -507,19 +603,46 @@ export async function quickRefresh(rootDir: string): Promise<{
 
   const stale = db.getStaleFiles(currentHashes);
   const currentPaths = new Set(files.map((f) => f.relativePath));
+  const added = [...currentPaths].filter((path) => !indexedByPath.has(path));
   const removed = db.getRemovedFiles(currentPaths);
-  const totalStale = stale.length + removed.length;
+  let totalStale = new Set([...stale, ...added, ...removed]).size;
 
   if (totalStale === 0) {
-    return { staleCount: 0, refreshed: false, waitedForIndexing: waitState.waited, indexingTimedOut: false };
+    for (const update of fingerprintUpdates) db.updateFileFingerprint(update.path, update.size, update.mtimeMs);
+    return { staleCount: 0, remainingStaleCount: 0, refreshed: false, complete: true, waitedForIndexing: waitState.waited, indexingTimedOut: false };
   }
+
+  const acquired = tryAcquireIndexLock(db, "<automatic-refresh>");
+  if (!acquired) {
+    const waited = await waitForIndexingCompletion(rootDir);
+    if (waited.timedOut || retry >= 2) {
+      return { staleCount: totalStale, remainingStaleCount: totalStale, refreshed: false, complete: false, waitedForIndexing: true, indexingTimedOut: waited.timedOut };
+    }
+    return quickRefreshAttempt(rootDir, options, retry + 1);
+  }
+
+  let refreshError: string | null = null;
+  try {
+    // Another process may have refreshed between our initial probe and lock
+    // acquisition. Re-check the hashes against the current DB before doing work.
+    const staleAfterLock = db.getStaleFiles(currentHashes);
+    const indexedPathsAfterLock = new Set(db.getAllFiles().map((file) => file.path));
+    const addedAfterLock = [...currentPaths].filter((path) => !indexedPathsAfterLock.has(path));
+    const changedAfterLock = [...new Set([...staleAfterLock, ...addedAfterLock])];
+    const removedAfterLock = db.getRemovedFiles(currentPaths);
+    totalStale = new Set([...changedAfterLock, ...removedAfterLock]).size;
+    if (totalStale === 0) {
+      for (const update of fingerprintUpdates) db.updateFileFingerprint(update.path, update.size, update.mtimeMs);
+      return { staleCount: 0, remainingStaleCount: 0, refreshed: false, complete: true, waitedForIndexing: true, indexingTimedOut: false };
+    }
 
     const maxStale = Math.max(1, parseInt(process.env.CONTEXTPRO_QUICKREFRESH_MAX_FILES ?? process.env.CONTEXTPLUS_QUICKREFRESH_MAX_FILES ?? "30", 10));
     if (totalStale <= maxStale) {
       const changedSymbols: string[] = [];
       const pendingImports: PendingImportSet[] = [];
+      const indexedPaths: string[] = [];
       let degradedCount = 0;
-      for (const path of stale) {
+      for (const path of changedAfterLock) {
         try {
         const fullPath = resolveProjectPath(rootDir, path, "indexed file");
         const content = await readFile(fullPath, "utf-8");
@@ -527,7 +650,9 @@ export async function quickRefresh(rootDir: string): Promise<{
         const analysis = await analyzeFile(fullPath);
         const flatSymbols = flattenSymbols(analysis.symbols);
         const lang = detectLanguage(fullPath);
-        const fileSize = (await stat(fullPath)).size;
+        const fileStats = await stat(fullPath);
+        const fileSize = fileStats.size;
+        const fileMtimeMs = Math.trunc(fileStats.mtimeMs);
 
         const existingFile = db.getFile(path);
         const oldSymbolNames = existingFile ? new Set(db.getSymbolsByFile(existingFile.id).map((s) => s.name)) : new Set<string>();
@@ -539,9 +664,9 @@ export async function quickRefresh(rootDir: string): Promise<{
           if (!newSymbolNames.has(name)) changedSymbols.push(`-${path}:${name}`);
         }
 
-        const fileId = db.upsertFile(path, hash, analysis.header, lang, fileSize);
+        const fileId = db.upsertFile(path, hash, analysis.header, lang, fileSize, fileMtimeMs);
         db.upsertSymbols(fileId, flatSymbols.map((s) => ({
-          name: s.name, kind: s.kind, lineStart: s.line, lineEnd: s.endLine, signature: s.signature,
+          name: s.name, kind: s.kind, lineStart: s.line, lineEnd: s.endLine, signature: s.signature, parentIndex: s.parentIndex,
         })));
         db.upsertFileSearchDocument({
           path,
@@ -554,7 +679,8 @@ export async function quickRefresh(rootDir: string): Promise<{
           fileId,
           imports: extractImports(content, fullPath),
         });
-        db.upsertCallSites(fileId, extractCallSites(content));
+        db.upsertCallSites(fileId, extractCallSites(content, path));
+        indexedPaths.push(path);
       } catch (error) {
         // A failed quick-refresh of one file leaves its prior (stale) imports intact. Log it so
         // the user knows the graph for that file may be out of date until the next full reindex.
@@ -577,20 +703,38 @@ export async function quickRefresh(rootDir: string): Promise<{
         db.upsertImport(pending.fileId, imp.source, targetFile?.id ?? null, imp.type, imp.specifiers.length > 0 ? imp.specifiers : undefined);
       }
     }
-    for (const path of removed) db.deleteFile(path);
-    db.bumpIndexGeneration();
+    for (const path of removedAfterLock) db.deleteFile(path);
+    const structuralChanged = indexedPaths.length > 0 || removedAfterLock.length > 0;
+    if (structuralChanged) db.bumpIndexGeneration();
+    db.setMeta("extractor_stamp", extractorStamp);
     db.setMeta("last_reindex_at", String(Date.now()));
-    db.setMeta("last_reindex_duration_ms", "0");
+    db.setMeta("last_reindex_duration_ms", String(Date.now() - startedAt));
 
-    await Promise.all([
-      refreshFileSearchEmbeddings({ rootDir, relativePaths: stale }).catch(() => 0),
-      refreshIdentifierEmbeddings({ rootDir, relativePaths: stale }).catch(() => 0),
-    ]);
+    if (options.includeEmbeddings !== false) {
+      await Promise.all([
+        refreshFileSearchEmbeddings({ rootDir, relativePaths: changedAfterLock }).catch(() => 0),
+        refreshIdentifierEmbeddings({ rootDir, relativePaths: changedAfterLock }).catch(() => 0),
+      ]);
+    }
 
-    return { staleCount: totalStale, refreshed: true, waitedForIndexing: waitState.waited, indexingTimedOut: false, changedSymbols };
+    return {
+      staleCount: totalStale,
+      remainingStaleCount: degradedCount,
+      refreshed: structuralChanged,
+      complete: degradedCount === 0,
+      waitedForIndexing: waitState.waited,
+      indexingTimedOut: false,
+      changedSymbols,
+    };
   }
 
-  return { staleCount: totalStale, refreshed: false, waitedForIndexing: waitState.waited, indexingTimedOut: false };
+  return { staleCount: totalStale, remainingStaleCount: totalStale, refreshed: false, complete: false, waitedForIndexing: waitState.waited, indexingTimedOut: false };
+  } catch (error) {
+    refreshError = error instanceof Error ? error.message : String(error);
+    throw error;
+  } finally {
+    setIndexStatus(db, IDLE_STATUS, { error: refreshError });
+  }
 }
 
 export interface StructuralRefreshResult {
@@ -621,7 +765,19 @@ export async function refreshFilesStructural(
     return { indexed: 0, skipped: unique.length, changedSymbols: [] };
   }
 
+  const initialWait = await waitForIndexingCompletion(rootDir);
+  if (initialWait.timedOut) return { indexed: 0, skipped: unique.length, changedSymbols: [] };
   const db = await getDB(rootDir);
+  let acquired = tryAcquireIndexLock(db, "<tracker-refresh>");
+  if (!acquired) {
+    const waited = await waitForIndexingCompletion(rootDir);
+    if (waited.timedOut) return { indexed: 0, skipped: unique.length, changedSymbols: [] };
+    acquired = tryAcquireIndexLock(db, "<tracker-refresh>");
+    if (!acquired) return { indexed: 0, skipped: unique.length, changedSymbols: [] };
+  }
+
+  let refreshError: string | null = null;
+  try {
   const changedSymbols: string[] = [];
   const pendingImports: PendingImportSet[] = [];
   const indexedPaths: string[] = [];
@@ -640,7 +796,9 @@ export async function refreshFilesStructural(
       const analysis = await analyzeFile(fullPath);
       const flatSymbols = flattenSymbols(analysis.symbols);
       const lang = detectLanguage(fullPath);
-      const fileSize = (await stat(fullPath)).size;
+      const fileStats = await stat(fullPath);
+      const fileSize = fileStats.size;
+      const fileMtimeMs = Math.trunc(fileStats.mtimeMs);
 
       const existingFile = db.getFile(path);
       const oldSymbolNames = existingFile ? new Set(db.getSymbolsByFile(existingFile.id).map((s) => s.name)) : new Set<string>();
@@ -652,9 +810,9 @@ export async function refreshFilesStructural(
         if (!newSymbolNames.has(name)) changedSymbols.push(`-${path}:${name}`);
       }
 
-      const fileId = db.upsertFile(path, hash, analysis.header, lang, fileSize);
+      const fileId = db.upsertFile(path, hash, analysis.header, lang, fileSize, fileMtimeMs);
       db.upsertSymbols(fileId, flatSymbols.map((s) => ({
-        name: s.name, kind: s.kind, lineStart: s.line, lineEnd: s.endLine, signature: s.signature,
+        name: s.name, kind: s.kind, lineStart: s.line, lineEnd: s.endLine, signature: s.signature, parentIndex: s.parentIndex,
       })));
       db.upsertFileSearchDocument({
         path,
@@ -664,7 +822,7 @@ export async function refreshFilesStructural(
         content: buildSearchBody(content),
       });
       pendingImports.push({ fileId, imports: extractImports(content, fullPath) });
-      db.upsertCallSites(fileId, extractCallSites(content));
+      db.upsertCallSites(fileId, extractCallSites(content, path));
       indexedPaths.push(path);
     } catch (error) {
       skipped++;
@@ -698,4 +856,10 @@ export async function refreshFilesStructural(
   }
 
   return { indexed: indexedPaths.length, skipped, changedSymbols };
+  } catch (error) {
+    refreshError = error instanceof Error ? error.message : String(error);
+    throw error;
+  } finally {
+    setIndexStatus(db, IDLE_STATUS, { error: refreshError });
+  }
 }

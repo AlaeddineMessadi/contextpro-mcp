@@ -42,7 +42,21 @@ function offsetAtLineSymbol(content: string, line: number, symbolName: string): 
   return before + Math.max(0, index);
 }
 
-async function resolveTarget(options: ExactReferencesOptions): Promise<{ file: string; line: number } | null> {
+interface ResolvedTarget {
+  file: string;
+  line: number;
+  /** Present when the symbol name matched more than one definition site and the pick below
+   * (structural kind, non-test file, lowest line) is a best guess, not a certainty. */
+  ambiguousCandidates?: Array<{ file: string; line: number; kind: string }>;
+}
+
+const EXACT_REF_STRUCTURAL_KINDS = new Set(["function", "method", "class", "interface", "enum", "type", "struct", "trait", "export"]);
+
+function looksLikeTestPath(path: string): boolean {
+  return /(^|\/)(test|tests|__tests__|spec)(\/|$)|\.(test|spec)\./.test(path);
+}
+
+async function resolveTarget(options: ExactReferencesOptions): Promise<ResolvedTarget | null> {
   if (options.file && options.line !== undefined) {
     return {
       file: toProjectRelativePath(options.rootDir, options.file, "file"),
@@ -65,40 +79,68 @@ async function resolveTarget(options: ExactReferencesOptions): Promise<{ file: s
     }
     return { file: relativeFile, line: options.line ?? 1 };
   }
-  const sorted = exact.sort((a, b) => a.line_start - b.line_start);
   const files = db.getAllFiles();
-  const selected = sorted[0];
+  const fileById = new Map(files.map((file) => [file.id, file]));
+  // Prefer a real structural definition (function/class/...) over a same-named local
+  // variable, and a non-test file over a test file, before falling back to line order —
+  // this is a best-guess ranking, not a resolution: multiple distinct sites still surface
+  // as an ambiguity warning below rather than being silently picked between.
+  const ranked = exact
+    .map((symbol) => ({ symbol, file: fileById.get(symbol.file_id) }))
+    .filter((entry): entry is { symbol: (typeof exact)[number]; file: NonNullable<(typeof entry)["file"]> } => Boolean(entry.file))
+    .sort((a, b) => {
+      const structural = Number(EXACT_REF_STRUCTURAL_KINDS.has(b.symbol.kind)) - Number(EXACT_REF_STRUCTURAL_KINDS.has(a.symbol.kind));
+      if (structural !== 0) return structural;
+      const nonTest = Number(looksLikeTestPath(a.file.path)) - Number(looksLikeTestPath(b.file.path));
+      if (nonTest !== 0) return nonTest;
+      return a.symbol.line_start - b.symbol.line_start;
+    });
+  const selected = ranked[0];
   if (!selected) return null;
-  const file = files.find((candidate) => candidate.id === selected.file_id);
-  if (!file) return null;
-  return { file: file.path, line: selected.line_start };
+  const distinctSites = new Set(ranked.map((entry) => `${entry.file.path}:${entry.symbol.line_start}`));
+  const ambiguousCandidates = distinctSites.size > 1
+    ? ranked.slice(0, 5).map((entry) => ({ file: entry.file.path, line: entry.symbol.line_start, kind: entry.symbol.kind }))
+    : undefined;
+  return { file: selected.file.path, line: selected.symbol.line_start, ambiguousCandidates };
 }
 
 function formatReferencePayload(input: {
   symbolName: string;
-  target?: { file: string; line: number } | null;
+  target?: ResolvedTarget | null;
   confidence: "LSP_RESOLVED" | "SCIP_RESOLVED" | "PYTHON_INDEX_RESOLVED";
   references: ExactReference[];
   format?: "text" | "json";
   scipSymbols?: string[];
 }): string {
+  const ambiguousCandidates = input.target?.ambiguousCandidates ?? [];
   if (input.format === "json") {
     return JSON.stringify({
       symbol: input.symbolName,
       target: input.target,
+      ambiguous: ambiguousCandidates.length > 0,
+      ambiguousCandidates,
       confidence: input.confidence,
       scipSymbols: input.scipSymbols,
       references: input.references,
     }, null, 2);
   }
+  const ambiguityLines = ambiguousCandidates.length > 0
+    ? [
+        `⚠ AMBIGUOUS: "${input.symbolName}" matched ${ambiguousCandidates.length} definition sites; the target below is a best guess (prefers a real definition over a same-named local variable, non-test files first), not a certainty:`,
+        ...ambiguousCandidates.map((c) => `    ${c.file}:L${c.line} [${c.kind}]`),
+        `  Pass file/line explicitly to disambiguate if this looks wrong.`,
+        "",
+      ]
+    : [];
   if (input.references.length === 0) {
-    return `No exact references found for "${input.symbolName}"${input.target ? ` from ${input.target.file}:${input.target.line}` : ""}.`;
+    return [...ambiguityLines, `No exact references found for "${input.symbolName}"${input.target ? ` from ${input.target.file}:${input.target.line}` : ""}.`].join("\n");
   }
   const lines = [
     `Exact references for "${input.symbolName}" (${input.references.length})`,
     ...(input.target ? [`Target: ${input.target.file}:${input.target.line}`] : []),
     `Confidence: ${input.confidence}`,
     "",
+    ...ambiguityLines,
   ];
   for (const ref of input.references) {
     lines.push(`${ref.file}:${ref.line}:${ref.column}${ref.isDefinition ? " [definition]" : ""}`);

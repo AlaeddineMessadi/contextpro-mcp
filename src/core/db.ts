@@ -17,6 +17,41 @@ export interface FileRow {
   symbol_count: number;
   last_indexed_at: number;
   file_size: number;
+  file_mtime_ms: number;
+}
+
+export interface ToolCallEfficiency {
+  inputTokens?: number;
+  outputTokens?: number;
+  sourceTokens?: number;
+  savedTokens?: number;
+  representedFiles?: number;
+}
+
+export interface ToolCallHistoryRow {
+  tool: string;
+  status: string;
+  durationMs: number;
+  calledAt: number;
+  inputTokens: number;
+  outputTokens: number;
+  sourceTokens: number;
+  savedTokens: number;
+  representedFiles: number;
+}
+
+export interface ToolEfficiencyAggregate {
+  tool: string;
+  calls: number;
+  errors: number;
+  avgMs: number;
+  maxMs: number;
+  lastAt: number;
+  inputTokens: number;
+  outputTokens: number;
+  sourceTokens: number;
+  savedTokens: number;
+  representedFiles: number;
 }
 
 export interface SymbolRow {
@@ -37,6 +72,8 @@ export interface ParsedSymbol {
   lineEnd?: number;
   signature?: string;
   parentSymbolId?: number;
+  /** Index into the same `symbols` array passed to upsertSymbols, resolved to a real row id at insert time. */
+  parentIndex?: number;
 }
 
 export interface EmbeddingMatch {
@@ -123,7 +160,7 @@ export interface FileTextSearchMatch {
 export type { NativeStorageDiagnostic, NativeStorageProbe } from "./db-native.js";
 export { describeNativeStorageError, probeNativeStorage } from "./db-native.js";
 
-const SCHEMA_VERSION = "4";
+const SCHEMA_VERSION = "5";
 const DECAY_LAMBDA = 0.05;
 const STALE_EDGE_THRESHOLD = 0.15;
 const STALE_NODE_DAYS = 7;
@@ -139,7 +176,8 @@ CREATE TABLE IF NOT EXISTS files (
   language TEXT,
   symbol_count INTEGER DEFAULT 0,
   last_indexed_at INTEGER NOT NULL,
-  file_size INTEGER DEFAULT 0
+  file_size INTEGER DEFAULT 0,
+  file_mtime_ms INTEGER DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS symbols (
@@ -202,7 +240,12 @@ CREATE TABLE IF NOT EXISTS tool_calls (
   tool TEXT NOT NULL,
   status TEXT NOT NULL,        -- 'ok' | 'error'
   duration_ms INTEGER NOT NULL,
-  called_at INTEGER NOT NULL   -- ms since epoch
+  called_at INTEGER NOT NULL,  -- ms since epoch
+  input_tokens_est INTEGER NOT NULL DEFAULT 0,
+  output_tokens_est INTEGER NOT NULL DEFAULT 0,
+  source_tokens_est INTEGER NOT NULL DEFAULT 0,
+  saved_tokens_est INTEGER NOT NULL DEFAULT 0,
+  represented_files INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_tool_calls_called_at ON tool_calls(called_at);
 CREATE INDEX IF NOT EXISTS idx_tool_calls_tool ON tool_calls(tool);
@@ -257,6 +300,8 @@ export class ContextPlusDB {
     this.db = new Database(dbPath);
     sqliteVec.load(this.db);
     this.db.pragma("journal_mode = WAL");
+    this.db.pragma("synchronous = NORMAL");
+    this.db.pragma("busy_timeout = 5000");
     this.db.pragma("foreign_keys = ON");
     this.db.exec(SCHEMA_SQL);
     this.initMeta();
@@ -318,6 +363,14 @@ export class ContextPlusDB {
           tokenize='porter unicode61'
         );
       `);
+    }
+    if (current < 5) {
+      if (!this.columnExists("files", "file_mtime_ms")) this.db.exec("ALTER TABLE files ADD COLUMN file_mtime_ms INTEGER DEFAULT 0");
+      if (!this.columnExists("tool_calls", "input_tokens_est")) this.db.exec("ALTER TABLE tool_calls ADD COLUMN input_tokens_est INTEGER NOT NULL DEFAULT 0");
+      if (!this.columnExists("tool_calls", "output_tokens_est")) this.db.exec("ALTER TABLE tool_calls ADD COLUMN output_tokens_est INTEGER NOT NULL DEFAULT 0");
+      if (!this.columnExists("tool_calls", "source_tokens_est")) this.db.exec("ALTER TABLE tool_calls ADD COLUMN source_tokens_est INTEGER NOT NULL DEFAULT 0");
+      if (!this.columnExists("tool_calls", "saved_tokens_est")) this.db.exec("ALTER TABLE tool_calls ADD COLUMN saved_tokens_est INTEGER NOT NULL DEFAULT 0");
+      if (!this.columnExists("tool_calls", "represented_files")) this.db.exec("ALTER TABLE tool_calls ADD COLUMN represented_files INTEGER NOT NULL DEFAULT 0");
     }
     this.db.prepare("INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', ?)").run(SCHEMA_VERSION);
   }
@@ -398,20 +451,30 @@ export class ContextPlusDB {
     return row !== undefined;
   }
 
+  private columnExists(table: string, column: string): boolean {
+    const rows = this.db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+    return rows.some((row) => row.name === column);
+  }
+
   private hasUsableEmbedding(value: number[] | undefined): value is number[] {
     return Array.isArray(value) && value.length > 0;
   }
 
-  upsertFile(path: string, hash: string, header: string | null, language: string | null, fileSize: number = 0): number {
+  upsertFile(path: string, hash: string, header: string | null, language: string | null, fileSize: number = 0, fileMtimeMs: number = 0): number {
     const existing = this.db.prepare("SELECT id FROM files WHERE path = ?").get(path) as { id: number } | undefined;
     if (existing) {
-      this.db.prepare("UPDATE files SET content_hash = ?, header = ?, language = ?, last_indexed_at = ?, file_size = ? WHERE id = ?")
-        .run(hash, header, language, Date.now(), fileSize, existing.id);
+      this.db.prepare("UPDATE files SET content_hash = ?, header = ?, language = ?, last_indexed_at = ?, file_size = ?, file_mtime_ms = ? WHERE id = ?")
+        .run(hash, header, language, Date.now(), fileSize, fileMtimeMs, existing.id);
       return existing.id;
     }
-    const result = this.db.prepare("INSERT INTO files (path, content_hash, header, language, last_indexed_at, file_size) VALUES (?, ?, ?, ?, ?, ?)")
-      .run(path, hash, header, language, Date.now(), fileSize);
+    const result = this.db.prepare("INSERT INTO files (path, content_hash, header, language, last_indexed_at, file_size, file_mtime_ms) VALUES (?, ?, ?, ?, ?, ?, ?)")
+      .run(path, hash, header, language, Date.now(), fileSize, fileMtimeMs);
     return Number(result.lastInsertRowid);
+  }
+
+  updateFileFingerprint(path: string, fileSize: number, fileMtimeMs: number): void {
+    this.db.prepare("UPDATE files SET file_size = ?, file_mtime_ms = ? WHERE path = ?")
+      .run(fileSize, fileMtimeMs, path);
   }
 
   getFile(path: string): FileRow | null {
@@ -459,9 +522,15 @@ export class ContextPlusDB {
   upsertSymbols(fileId: number, symbols: ParsedSymbol[]): void {
     this.db.prepare("DELETE FROM symbols WHERE file_id = ?").run(fileId);
     const insert = this.db.prepare("INSERT INTO symbols (file_id, name, kind, line_start, line_end, signature, parent_symbol_id) VALUES (?, ?, ?, ?, ?, ?, ?)");
+    // `parentIndex` (index into `symbols`, always < this entry's own index — parents are
+    // inserted in DFS pre-order before their children) resolves to a real row id here,
+    // once we know it. Falls back to an explicit `parentSymbolId` if the caller has one.
+    const insertedIds: number[] = [];
     const tx = this.db.transaction((syms: ParsedSymbol[]) => {
       for (const s of syms) {
-        insert.run(fileId, s.name, s.kind, s.lineStart, s.lineEnd ?? null, s.signature ?? null, s.parentSymbolId ?? null);
+        const parentId = s.parentIndex != null ? insertedIds[s.parentIndex] ?? null : s.parentSymbolId ?? null;
+        const info = insert.run(fileId, s.name, s.kind, s.lineStart, s.lineEnd ?? null, s.signature ?? null, parentId);
+        insertedIds.push(Number(info.lastInsertRowid));
       }
     });
     tx(symbols);
@@ -858,22 +927,60 @@ export class ContextPlusDB {
 
   /** Append one tool-call event. Best-effort telemetry — callers must not let a
    * failure here break the tool itself. Prunes opportunistically to a bounded size. */
-  recordToolCall(tool: string, status: "ok" | "error", durationMs: number, calledAt: number): void {
+  recordToolCall(
+    tool: string,
+    status: "ok" | "error",
+    durationMs: number,
+    calledAt: number,
+    efficiency: ToolCallEfficiency = {},
+  ): void {
     this.db.prepare(
-      "INSERT INTO tool_calls (tool, status, duration_ms, called_at) VALUES (?, ?, ?, ?)",
-    ).run(tool, status, Math.max(0, Math.round(durationMs)), calledAt);
+      `INSERT INTO tool_calls (
+         tool, status, duration_ms, called_at, input_tokens_est, output_tokens_est,
+         source_tokens_est, saved_tokens_est, represented_files
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      tool,
+      status,
+      Math.max(0, Math.round(durationMs)),
+      calledAt,
+      Math.max(0, Math.round(efficiency.inputTokens ?? 0)),
+      Math.max(0, Math.round(efficiency.outputTokens ?? 0)),
+      Math.max(0, Math.round(efficiency.sourceTokens ?? 0)),
+      Math.max(0, Math.round(efficiency.savedTokens ?? 0)),
+      Math.max(0, Math.round(efficiency.representedFiles ?? 0)),
+    );
   }
 
   /** Most-recent tool calls, newest first. */
-  getToolCallHistory(limit: number = 200): Array<{ tool: string; status: string; durationMs: number; calledAt: number }> {
+  getToolCallHistory(limit: number = 200): ToolCallHistoryRow[] {
     const rows = this.db.prepare(
-      "SELECT tool, status, duration_ms as durationMs, called_at as calledAt FROM tool_calls ORDER BY called_at DESC, id DESC LIMIT ?",
-    ).all(Math.max(1, Math.min(2000, limit))) as Array<{ tool: string; status: string; durationMs: number; calledAt: number }>;
+      `SELECT tool, status, duration_ms as durationMs, called_at as calledAt,
+              input_tokens_est as inputTokens, output_tokens_est as outputTokens,
+              source_tokens_est as sourceTokens, saved_tokens_est as savedTokens,
+              represented_files as representedFiles
+       FROM tool_calls ORDER BY called_at DESC, id DESC LIMIT ?`,
+    ).all(Math.max(1, Math.min(2000, limit))) as ToolCallHistoryRow[];
     return rows;
   }
 
+  /** Recent calls with a positive savings estimate, optionally bounded by time. */
+  getToolSavingsHistory(limit: number = 20, sinceMs?: number): ToolCallHistoryRow[] {
+    const where = sinceMs ? "WHERE saved_tokens_est > 0 AND called_at >= ?" : "WHERE saved_tokens_est > 0";
+    const stmt = this.db.prepare(
+      `SELECT tool, status, duration_ms as durationMs, called_at as calledAt,
+              input_tokens_est as inputTokens, output_tokens_est as outputTokens,
+              source_tokens_est as sourceTokens, saved_tokens_est as savedTokens,
+              represented_files as representedFiles
+       FROM tool_calls ${where}
+       ORDER BY called_at DESC, id DESC LIMIT ?`,
+    );
+    const boundedLimit = Math.max(1, Math.min(100, limit));
+    return (sinceMs ? stmt.all(sinceMs, boundedLimit) : stmt.all(boundedLimit)) as ToolCallHistoryRow[];
+  }
+
   /** Per-tool aggregates over the whole history (or since a timestamp). */
-  getToolCallAggregates(sinceMs?: number): Array<{ tool: string; calls: number; errors: number; avgMs: number; maxMs: number; lastAt: number }> {
+  getToolCallAggregates(sinceMs?: number): ToolEfficiencyAggregate[] {
     const where = sinceMs ? "WHERE called_at >= ?" : "";
     const stmt = this.db.prepare(
       `SELECT tool,
@@ -881,13 +988,37 @@ export class ContextPlusDB {
               SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END) as errors,
               AVG(duration_ms) as avgMs,
               MAX(duration_ms) as maxMs,
-              MAX(called_at) as lastAt
+              MAX(called_at) as lastAt,
+              SUM(input_tokens_est) as inputTokens,
+              SUM(output_tokens_est) as outputTokens,
+              SUM(source_tokens_est) as sourceTokens,
+              SUM(saved_tokens_est) as savedTokens,
+              SUM(represented_files) as representedFiles
        FROM tool_calls ${where}
        GROUP BY tool
        ORDER BY calls DESC`,
     );
-    const rows = (sinceMs ? stmt.all(sinceMs) : stmt.all()) as Array<{ tool: string; calls: number; errors: number; avgMs: number; maxMs: number; lastAt: number }>;
+    const rows = (sinceMs ? stmt.all(sinceMs) : stmt.all()) as ToolEfficiencyAggregate[];
     return rows.map((r) => ({ ...r, avgMs: Math.round(r.avgMs) }));
+  }
+
+  getEfficiencyTotals(sinceMs?: number): Omit<ToolEfficiencyAggregate, "tool" | "avgMs" | "maxMs"> & { avgMs: number; maxMs: number } {
+    const where = sinceMs ? "WHERE called_at >= ?" : "";
+    const stmt = this.db.prepare(
+      `SELECT COUNT(*) as calls,
+              COALESCE(SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END), 0) as errors,
+              COALESCE(AVG(duration_ms), 0) as avgMs,
+              COALESCE(MAX(duration_ms), 0) as maxMs,
+              COALESCE(MAX(called_at), 0) as lastAt,
+              COALESCE(SUM(input_tokens_est), 0) as inputTokens,
+              COALESCE(SUM(output_tokens_est), 0) as outputTokens,
+              COALESCE(SUM(source_tokens_est), 0) as sourceTokens,
+              COALESCE(SUM(saved_tokens_est), 0) as savedTokens,
+              COALESCE(SUM(represented_files), 0) as representedFiles
+       FROM tool_calls ${where}`,
+    );
+    const row = (sinceMs ? stmt.get(sinceMs) : stmt.get()) as Omit<ToolEfficiencyAggregate, "tool">;
+    return { ...row, avgMs: Math.round(row.avgMs) };
   }
 
   getToolCallTotal(): number {

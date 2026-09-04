@@ -52,7 +52,7 @@ None blocking. Two deferred items remain for 2.0:
 
 ## What's working well
 
-- **Token efficiency.** `repo_map` + `skeleton` + `explain` reduce orientation-and-discovery tokens by ~75% vs reading files directly.
+- **Token efficiency.** `repo_map` + `skeleton` + `explain` reduce orientation-and-discovery context; `efficiency_report` now exposes the conservative estimate, per-tool history, and optional price scenario instead of presenting an unauditable headline alone.
 - **Project safety.** All file-facing tools route through `resolveProjectPath` and reject path traversal. The `--root` flag is now also subject to unsafe-root checks (1.2.0).
 - **Confidence signaling.** Every agentic tool emits a freshness/trust envelope (index generation, last-indexed time, evidence kind).
 - **Reusable artifacts.** Tool outputs are content-addressed and retrievable by `artifact_list` / `artifact_read` so agents don't regenerate the same task pack twice.
@@ -61,7 +61,7 @@ None blocking. Two deferred items remain for 2.0:
 ## What to watch
 
 - **Embedding model drift.** Switching providers/models drops cached vectors. As of 1.2.0, callers see a one-cycle `embeddings stale` warning instead of silent degradation.
-- **Reindex on huge repos.** Reindex is single-process, uses an advisory lock, but a fresh index of 5k+ files still takes minutes. `quickRefresh` covers incremental updates.
+- **Reindex on huge repos.** Structural writes are single-writer and multi-process coordinated; normal reads use size/mtime probes and targeted refreshes, but a cold 5k+ file parse can still take minutes.
 - **Skill-score lint.** Default output lists every issue. For large repos consider running `lint` with a `target_path` to keep output focused. Consolidating to top-N is a v2 item.
 - **Lint targets running ContextPro itself.** Several `src/core/` files violate `max nesting 4`. The rule is advisory for now — an in-flight refactor is tracked as a v2 candidate.
 

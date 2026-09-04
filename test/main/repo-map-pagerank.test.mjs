@@ -113,4 +113,38 @@ describe("repo-map PageRank ranking", () => {
     assert.ok(scoped.files.length >= 1);
     assert.ok(all.files.length > scoped.files.length, "unscoped map should be broader");
   });
+
+  it("reseeds ranking toward focus_files for the current task (Aider-repomap-style)", async () => {
+    const mod = await import("../../build/tools/repo-map.js");
+    const baseline = await mod.getRepoMapData({ rootDir: root, maxFiles: 20 });
+    const focused = await mod.getRepoMapData({ rootDir: root, maxFiles: 20, focusFiles: ["src/a.ts"] });
+
+    const baselineLeaf = baseline.files.find((f) => f.path === "src/a.ts");
+    const focusedLeaf = focused.files.find((f) => f.path === "src/a.ts");
+    assert.ok(baselineLeaf && focusedLeaf, "leaf a.ts should be present in both maps");
+
+    // a.ts is a low-importance leaf in the unfocused baseline (it only imports, nothing
+    // imports it) — reseeding personalization toward it should visibly lift its pageRank
+    // relative to the same file's baseline score.
+    assert.ok(
+      focusedLeaf.pageRank > baselineLeaf.pageRank,
+      `focus_files should lift a.ts's pageRank (baseline ${baselineLeaf.pageRank} -> focused ${focusedLeaf.pageRank})`,
+    );
+  });
+
+  it("reseeds ranking toward files defining a focus_identifier", async () => {
+    const mod = await import("../../build/tools/repo-map.js");
+    const baseline = await mod.getRepoMapData({ rootDir: root, maxFiles: 20 });
+    const focused = await mod.getRepoMapData({ rootDir: root, maxFiles: 20, focusIdentifiers: ["coreLogic"] });
+
+    // coreLogic is defined only in core.ts — biasing toward the mentioned identifier should
+    // lift core.ts's pageRank without needing the caller to already know which file defines it.
+    const baselineCore = baseline.files.find((f) => f.path === "src/core.ts");
+    const focusedCore = focused.files.find((f) => f.path === "src/core.ts");
+    assert.ok(baselineCore && focusedCore, "core.ts should be present in both maps");
+    assert.ok(
+      focusedCore.pageRank > baselineCore.pageRank,
+      `focus_identifiers should lift core.ts's pageRank (baseline ${baselineCore.pageRank} -> focused ${focusedCore.pageRank})`,
+    );
+  });
 });

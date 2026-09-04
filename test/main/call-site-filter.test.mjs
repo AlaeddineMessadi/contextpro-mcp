@@ -53,4 +53,27 @@ describe("extractCallSites filters", () => {
     assert.ok(!callees.includes("all"));
     assert.ok(callees.includes("userFn"));
   });
+
+  it("skips occurrences inside comments and string literals", async () => {
+    const { extractCallSites } = await import("../../build/core/parser.js");
+    const source = [
+      "// fakeCall()",
+      "const message = 'anotherFake()';",
+      "/* blockFake() */",
+      "realCall();",
+      "# pythonFake()",
+    ].join("\n");
+    assert.deepEqual(extractCallSites(source, "fixture.py").map((site) => site.callee), ["realCall"]);
+  });
+
+  it("keeps executable template expressions while masking template text", async () => {
+    const { extractCallSites } = await import("../../build/core/parser.js");
+    const source = [
+      "function render() {",
+      "  return `user: ${loadUser()}`;",
+      "}",
+      "const literal = `loadUser()`;",
+    ].join("\n");
+    assert.deepEqual(extractCallSites(source, "fixture.ts").map((site) => site.callee), ["loadUser"]);
+  });
 });

@@ -11,6 +11,7 @@ import {
 } from "../core/embeddings.js";
 import { getDB, bufferToVec } from "../core/db.js";
 import { resolve } from "path";
+import { maskSourceText } from "../core/source-mask.js";
 
 const IDENTIFIER_SOURCE_TYPE = "identifier_cache";
 
@@ -112,10 +113,14 @@ interface IdentifierIndex {
   docs: IdentifierDoc[];
   vectors: number[][];
   fileLines: Map<string, string[]>;
+  fileCodeLines: Map<string, string[]>;
 }
 
 const CALLSITE_CACHE_PREFIX = "callsite:";
 const INDEX_TTL_MS = 60_000;
+const TRIVIAL_IDENTIFIER_NAMES = new Set([
+  "data", "result", "results", "score", "value", "values", "item", "items", "temp", "tmp", "index", "idx", "key", "obj", "res", "err", "i", "j", "k",
+]);
 
 let cachedRootDir: string | null = null;
 let cachedAt = 0;
@@ -294,12 +299,14 @@ async function buildIdentifierIndex(rootDir: string): Promise<IdentifierIndex> {
   const files = entries.filter((entry) => !entry.isDirectory && isSupportedFile(entry.path));
   const docs: IdentifierDoc[] = [];
   const fileLines = new Map<string, string[]>();
+  const fileCodeLines = new Map<string, string[]>();
 
   for (const file of files) {
     try {
       const content = await readFile(file.path, "utf-8");
       const sourceLines = content.split("\n");
       fileLines.set(file.relativePath, sourceLines);
+      fileCodeLines.set(file.relativePath, maskSourceText(content, file.relativePath).split("\n"));
       const analysis = await analyzeFile(file.path);
       const flat = flattenSymbols(analysis.symbols);
       const structuralRanges = flat
@@ -325,7 +332,7 @@ async function buildIdentifierIndex(rootDir: string): Promise<IdentifierIndex> {
   }
 
   if (docs.length === 0) {
-    const empty: IdentifierIndex = { docs: [], vectors: [], fileLines };
+    const empty: IdentifierIndex = { docs: [], vectors: [], fileLines, fileCodeLines };
     cachedIndex = empty;
     cachedRootDir = rootDir;
     cachedAt = Date.now();
@@ -371,7 +378,7 @@ async function buildIdentifierIndex(rootDir: string): Promise<IdentifierIndex> {
     await saveIdentifierCache(rootDir, cache, dirtyKeys);
   }
 
-  const index: IdentifierIndex = { docs, vectors, fileLines };
+  const index: IdentifierIndex = { docs, vectors, fileLines, fileCodeLines };
   cachedIndex = index;
   cachedRootDir = rootDir;
   cachedAt = Date.now();
@@ -386,6 +393,7 @@ async function rankCallSites(
   queryVec: number[],
   symbol: IdentifierDoc,
   fileLines: Map<string, string[]>,
+  fileCodeLines: Map<string, string[]>,
   limit: number,
 ): Promise<{ sites: CallSite[]; total: number }> {
   const callPattern = symbol.kind === "function" || symbol.kind === "method"
@@ -395,16 +403,18 @@ async function rankCallSites(
   const candidates: { file: string; line: number; context: string; keywordScore: number }[] = [];
 
   for (const [file, lines] of fileLines) {
+    const codeLines = fileCodeLines.get(file) ?? lines;
     for (let i = 0; i < lines.length; i++) {
       const raw = lines[i];
-      if (!callPattern.test(raw)) {
+      const code = codeLines[i] ?? "";
+      if (!callPattern.test(code)) {
         callPattern.lastIndex = 0;
         continue;
       }
       callPattern.lastIndex = 0;
 
       if (file === symbol.path && i + 1 === symbol.line) continue;
-      if (isDefinitionLine(raw, symbol.name)) continue;
+      if (isDefinitionLine(code, symbol.name)) continue;
 
       const context = raw.trim().slice(0, 220);
       const keywordScore = getKeywordCoverage(queryTerms, `${file} ${context}`);
@@ -492,6 +502,7 @@ export async function semanticIdentifierSearchResults(options: SemanticIdentifie
   }
   const queryTerms = new Set(splitTerms(options.query));
   const identifierHints = extractIdentifierHints(options.query);
+  const queryWantsTests = /\b(test|tests|spec|coverage|regression|assert|fixture)\b/i.test(options.query);
 
   const scored: RankedIdentifier[] = [];
   const minSem = options.minSemanticScore !== undefined ? (options.minSemanticScore > 1 ? options.minSemanticScore / 100 : options.minSemanticScore) : undefined;
@@ -509,7 +520,13 @@ export async function semanticIdentifierSearchResults(options: SemanticIdentifie
     const score = totalWeight > 0
       ? clamp01((semanticWeight * semanticScore + keywordWeight * keywordScore) / totalWeight)
       : semanticScore;
-    const boostedScore = clamp01(score + exactIdentifierBoost);
+    let boostedScore = clamp01(score + exactIdentifierBoost);
+    if (TRIVIAL_IDENTIFIER_NAMES.has(doc.name.toLowerCase()) && !identifierHints.has(doc.name.toLowerCase())) {
+      boostedScore *= 0.3;
+    }
+    if (!queryWantsTests && /(^|\/)(test|tests|__tests__|spec)(\/|$)|\.(test|spec)\./.test(doc.path)) {
+      boostedScore *= 0.82;
+    }
 
     // Apply hard filters consistent with the file-search side.
     if (options.requireSemanticMatch && semanticScore <= 0) continue;
@@ -543,6 +560,7 @@ export async function semanticIdentifierSearchResults(options: SemanticIdentifie
       queryVec,
       item.doc,
       index.fileLines,
+      index.fileCodeLines,
       topCalls,
     );
     results.push({
@@ -565,10 +583,9 @@ export async function semanticIdentifierSearchResults(options: SemanticIdentifie
   return { query: options.query, results };
 }
 
-export async function semanticIdentifierSearch(options: SemanticIdentifierSearchOptions): Promise<string> {
-  const { query, results } = await semanticIdentifierSearchResults(options);
+export function formatSemanticIdentifierSearchData({ query, results }: SemanticIdentifierSearchData, includeKinds?: string[]): string {
   if (results.length === 0) {
-    return options.includeKinds && options.includeKinds.length > 0
+    return includeKinds && includeKinds.length > 0
       ? "No identifiers matched the requested kind filters."
       : "No supported identifiers found for semantic identifier search.";
   }
@@ -599,6 +616,10 @@ export async function semanticIdentifierSearch(options: SemanticIdentifierSearch
   }
 
   return lines.join("\n");
+}
+
+export async function semanticIdentifierSearch(options: SemanticIdentifierSearchOptions): Promise<string> {
+  return formatSemanticIdentifierSearchData(await semanticIdentifierSearchResults(options), options.includeKinds);
 }
 
 export function invalidateIdentifierSearchCache(): void {

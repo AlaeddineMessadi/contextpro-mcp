@@ -20,14 +20,15 @@ Coding agents waste most of their context window reading whole files when they o
 | Without ContextPro | With ContextPro |
 | --- | --- |
 | `Read whole file` to find a function | `skeleton` returns signatures only — 5–10× cheaper |
-| `Grep` to find related code | `search` ranks by semantics + keywords with confidence scoring |
-| Hope the rename didn't break a caller | `blast_radius` enumerates every usage with file:line |
+| `Grep` to find related code | `search` uses RRF-ranked semantic + keyword retrieval and inlines the relevant crux |
+| Hope the rename didn't break a caller | `blast_radius` attributes calls/imports/mocks to their enclosing symbols |
 | Read three files to plan an edit | `task_pack` returns ranked files + tests + memory in one call |
 | Hope the edit doesn't break tests | `change_impact` lists affected importers and known-relevant tests |
 | Save and pray | `checkpoint` writes with a pre-write restore point — `restore` rolls back |
 | Restore blindly and lose the fix | `restore --preview` shows what changes before touching anything; every restore auto-saves an undo point |
 | "feeds" ranking buried under "fee" matches | Exact lemmatized term matching — substring collisions eliminated |
 | Recompute heavy context on every call | `task_pack` read-through cache — identical tasks served instantly from artifacts |
+| Guess whether token claims are real | `efficiency_report` shows the estimate, method, history, and optional price scenario |
 
 For orientation-and-discovery work — the half of agent tasks where most tokens go — ContextPro typically reduces context usage by **~75%**.
 
@@ -70,7 +71,8 @@ Add to your project's `.mcp.json`:
       "env": {
         "CONTEXTPRO_PROVIDER": "ollama",
         "CONTEXTPRO_EMBED_MODEL": "nomic-embed-text:latest",
-        "CONTEXTPRO_CHAT_MODEL": "gemma4:12b"
+        "CONTEXTPRO_CHAT_MODEL": "gemma4:12b",
+        "CONTEXTPRO_TOOL_PROFILE": "core"
       }
     }
   }
@@ -90,6 +92,7 @@ args = ["-y", "contextpro-mcp", "--root", "/absolute/path/to/your/project"]
 CONTEXTPRO_PROVIDER = "ollama"
 CONTEXTPRO_EMBED_MODEL = "nomic-embed-text:latest"
 CONTEXTPRO_CHAT_MODEL = "gemma4:12b"
+CONTEXTPRO_TOOL_PROFILE = "core"
 ```
 
 #### OpenCode
@@ -107,7 +110,8 @@ Add to `opencode.json`:
       "environment": {
         "CONTEXTPRO_PROVIDER": "ollama",
         "CONTEXTPRO_EMBED_MODEL": "nomic-embed-text:latest",
-        "CONTEXTPRO_CHAT_MODEL": "gemma4:12b"
+        "CONTEXTPRO_CHAT_MODEL": "gemma4:12b",
+        "CONTEXTPRO_TOOL_PROFILE": "core"
       }
     }
   }
@@ -202,27 +206,28 @@ The intended loop:
 9. memory_record_task →  persist what was learned for next session
 ```
 
-Run independent reads in parallel. Trust the confidence/freshness envelope every agentic tool returns — if it says `embeddings_stale`, run `reindex` before relying on semantic results.
+Run independent reads in parallel. Structural tools refresh changed files before reading the graph and coordinate through SQLite so concurrent agents share one refresh. If `status` says `embeddings_stale`, run `reindex` before relying on semantic ranking.
 
 ---
 
 ## Tool surface
 
-ContextPro exposes **49 MCP tools** organized into seven categories.
+ContextPro exposes **50+ MCP tools** organized into seven categories. Set `CONTEXTPRO_TOOL_PROFILE=core` to expose only the high-frequency agent workflow; `full` remains the backward-compatible default.
 
 ### Orientation
 | Tool | What it does |
 | --- | --- |
-| `status` | File counts, index state, memory stats, embedding provider, git, recent timings |
+| `status` | File counts, index state, memory stats, embedding provider, git, recent timings, and 24h efficiency estimate |
+| `efficiency_report` | Persistent estimated token savings by tool; optional model-price scenario, with no prompt/code retention |
 | `tree` | Structural tree with file headers + symbols + line ranges |
 | `repo_map` | Compact whole-repo outline ranked by importance |
-| `task_pack` | Minimum useful working set for a task |
+| `task_pack` | Minimum useful working set for a task; `max_tokens` utility-prunes low-value context while preserving the two strongest files |
 | `decision_brief` | Compressed context for a subsystem |
 
 ### Discovery
 | Tool | What it does |
 | --- | --- |
-| `search` | Hybrid (default), file, or identifier search with confidence scoring |
+| `search` | Hybrid (default), file, or identifier search; RRF fusion + ~8-line crux excerpts by default (`inline_code`) |
 | `grep` | Fast literal or regex string search (log lines, config keys, error messages) |
 | `skeleton` | Function/class signatures and line ranges, no bodies |
 | `explain` | Specific symbol body with immediate dependencies |
@@ -233,7 +238,7 @@ ContextPro exposes **49 MCP tools** organized into seven categories.
 ### Impact
 | Tool | What it does |
 | --- | --- |
-| `blast_radius` | Every usage of a symbol across the codebase |
+| `blast_radius` | Usage kinds + enclosing callers; compact `summary` by default, exhaustive `detailed` mode on demand |
 | `change_impact` | What may break if files or symbols change |
 | `related` | Imports, importers, siblings, and tests of a file |
 | `test_map` | Source-to-test mapping via import graph and naming |
@@ -274,7 +279,7 @@ ContextPro exposes **49 MCP tools** organized into seven categories.
 | `reindex` | Re-walk and re-parse files. Eagerly populates embeddings (1.2.1+) |
 | `diff` | Structured working-tree, branch, or per-file diff |
 | `health`, `doctor` | Startup health, native binding repair |
-| `graph_export` / `graph_query` | Portable project graph with confidence tags |
+| `graph_export` / `graph_query` | Portable project graph with provenance, weighted shortest paths, PageRank hotspots, structural communities, and token budgets |
 | `scip_import` / `scip_status` | Import SCIP indexes for cross-language exactness |
 
 > **Deprecated aliases (1.2.x → removed in 2.0):** `start_task` → `task_pack`, `plan_edit` → `edit_scope`, `validate` → `validate_scope`, `impact` → `change_impact`, `remember` → `memory_record_task`. The aliases still work; their tool descriptions are tagged `[deprecated, prefer …]`.
@@ -303,7 +308,7 @@ Pass `no_embed: true` (or set `CONTEXTPRO_REINDEX_NO_EMBED=true`) to skip step 2
 ┌─────────────────────────────────────────────────────────────────┐
 │                       ContextPro MCP server                     │
 │  ┌─────────────────────────────────────────────────────────┐    │
-│  │  49 tools  ·  registered via Zod schemas                │    │
+│  │  50+ tools · Zod schemas · MCP safety annotations       │    │
 │  └──────┬──────────────────────────────────────────────────┘    │
 │         │                                                       │
 │  ┌──────▼─────────┐  ┌──────────────┐  ┌──────────────────┐     │
@@ -407,8 +412,12 @@ Canonical prefix is `CONTEXTPRO_*` (since 1.2.0). Legacy `CONTEXTPLUS_*` names w
 | `CONTEXTPRO_REINDEX_NO_EMBED` | `false` | Skip eager embedding population during reindex |
 | `CONTEXTPRO_MAX_FILE_SIZE` | `5242880` | Skip source files larger than this (bytes) |
 | `CONTEXTPRO_QUICKREFRESH_MAX_FILES` | `30` | Max stale files auto-patched per search |
+| `CONTEXTPRO_AUTO_REFRESH` | `true` | Refresh changed files before structural graph reads; set `false` only for controlled benchmarks |
+| `CONTEXTPRO_REFRESH` | `stat` | `stat` uses size/mtime fast paths and hashes suspicious files; `hash` verifies every indexed source for maximum integrity |
+| `CONTEXTPRO_EFFICIENCY_FOOTER` | `true` | Append a compact estimated-savings footer when a response avoids at least 100 source tokens |
 | `CONTEXTPRO_NATIVE_AUTO_REPAIR` | `true` | Auto-rebuild native bindings on ABI drift |
 | `CONTEXTPRO_ALLOW_UNSAFE_ROOT` | `false` | Allow `/` or home-level project roots |
+| `CONTEXTPRO_TOOL_PROFILE` | `full` | `core` exposes the focused daily agent workflow; `full` exposes every specialist and setup tool |
 | `CONTEXTPRO_PROJECT_ID` | (auto) | Override project identity |
 | `CONTEXTPRO_CLIENT_ID` | (none) | Group projects under one client for cross-project memory |
 

@@ -92,6 +92,74 @@ describe("embeddings", () => {
     });
   });
 
+  describe("SearchIndex fusion", () => {
+    // Query vector fixed to match doc-x's vector exactly, so cosine similarity gives a clean,
+    // predictable semantic ranking: X (cos=1, best) > Y (cos=0.5) > Z (cos=-1, worst).
+    // Keyword coverage is arranged in the OPPOSITE order via real (unmocked) term-overlap
+    // scoring against the query "alpha beta gamma": X has none of the terms, Y has one, Z has
+    // the literal phrase — so X is best-semantic/worst-keyword and Z is the mirror image.
+    async function buildFusionIndex() {
+      const rootDir = await mkdtemp(join(tmpdir(), "contextplus-fusion-"));
+      Ollama.prototype.embed = async function ({ input }) {
+        const batch = Array.isArray(input) ? input : [input];
+        return {
+          embeddings: batch.map((text) => {
+            if (text.includes("doc-x-marker")) return [1, 0, 0];
+            if (text.includes("doc-y-marker")) return [0.5, 0.866, 0];
+            if (text.includes("doc-z-marker")) return [-1, 0, 0];
+            return [1, 0, 0]; // the query text itself
+          }),
+        };
+      };
+      const index = new SearchIndex();
+      await index.index(
+        [
+          { path: "doc-x.ts", header: "doc-x-marker", symbols: [], content: "no query terms in this document at all" },
+          { path: "doc-y.ts", header: "doc-y-marker", symbols: [], content: "mentions alpha but nothing else from the query" },
+          { path: "doc-z.ts", header: "doc-z-marker", symbols: [], content: "literal alpha beta gamma phrase match" },
+        ],
+        rootDir,
+      );
+      return { index, rootDir };
+    }
+
+    it("keeps weighted fusion as an explicit opt-out", async () => {
+      const originalEmbed = Ollama.prototype.embed;
+      try {
+        const { index, rootDir } = await buildFusionIndex();
+        const results = await index.search("alpha beta gamma", { minCombinedScore: 0, fusion: "weighted" });
+        const byPath = Object.fromEntries(results.map((r) => [r.path, r]));
+        assert.equal(results[0].path, "doc-x.ts");
+        assert.equal(byPath["doc-x.ts"].keywordScore, 0);
+        // X (semantic 100, keyword 0) and Z (semantic 0, keyword ~80) are mirror-image
+        // extremes — each best in exactly one dimension. Weighted fusion's default
+        // semantic-leaning weights (0.72/0.28) give X a large, clear lead over Z.
+        assert.ok(byPath["doc-x.ts"].score - byPath["doc-z.ts"].score > 40);
+        await rm(rootDir, { recursive: true, force: true });
+      } finally {
+        Ollama.prototype.embed = originalEmbed;
+      }
+    });
+
+    it("uses RRF by default and hard-demotes zero-semantic collisions", async () => {
+      const originalEmbed = Ollama.prototype.embed;
+      try {
+        const { index, rootDir } = await buildFusionIndex();
+        const results = await index.search("alpha beta gamma", { minCombinedScore: 0 });
+        const explicitRrf = await index.search("alpha beta gamma", { minCombinedScore: 0, fusion: "rrf" });
+        const byPath = Object.fromEntries(results.map((r) => [r.path, r]));
+        assert.deepEqual(results, explicitRrf);
+        assert.equal(byPath["doc-z.ts"].semanticScore, 0);
+        assert.ok(byPath["doc-z.ts"].score < 40);
+        assert.ok(byPath["doc-z.ts"].score < byPath["doc-x.ts"].score);
+        assert.ok(byPath["doc-z.ts"].score < byPath["doc-y.ts"].score);
+        await rm(rootDir, { recursive: true, force: true });
+      } finally {
+        Ollama.prototype.embed = originalEmbed;
+      }
+    });
+  });
+
   describe("fetchEmbedding", () => {
     it("splits failing batches and preserves embedding order", async () => {
       const originalEmbed = Ollama.prototype.embed;

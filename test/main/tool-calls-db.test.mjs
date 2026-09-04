@@ -35,7 +35,28 @@ describe("tool_calls DB persistence", () => {
     assert.equal(history[0].tool, "search");
     assert.equal(history[0].status, "error");
     assert.equal(history[0].calledAt, 3000);
+    assert.equal(history[0].savedTokens, 0);
     assert.equal(history[2].calledAt, 1000);
+  });
+
+  it("aggregates persisted efficiency estimates without storing content", async () => {
+    const { getDB } = await import("../../build/core/db.js");
+    const db = await getDB(root);
+    db.recordToolCall("repo_map", "ok", 12, 1000, {
+      inputTokens: 10,
+      outputTokens: 100,
+      sourceTokens: 1_000,
+      savedTokens: 900,
+      representedFiles: 3,
+    });
+    const totals = db.getEfficiencyTotals();
+    assert.equal(totals.savedTokens, 900);
+    assert.equal(totals.sourceTokens, 1_000);
+    assert.equal(totals.representedFiles, 3);
+    assert.deepEqual(Object.keys(db.getToolCallHistory(1)[0]).sort(), [
+      "calledAt", "durationMs", "inputTokens", "outputTokens", "representedFiles",
+      "savedTokens", "sourceTokens", "status", "tool",
+    ]);
   });
 
   it("aggregates per tool with calls/errors/avg/max", async () => {
@@ -54,6 +75,17 @@ describe("tool_calls DB persistence", () => {
     assert.equal(search.avgMs, 30); // (10+30+50)/3
     assert.equal(search.maxMs, 50);
     assert.equal(search.lastAt, 3000);
+  });
+
+  it("returns saving history without newer zero-saving calls hiding it", async () => {
+    const { getDB } = await import("../../build/core/db.js");
+    const db = await getDB(root);
+    db.recordToolCall("repo_map", "ok", 10, 1000, { savedTokens: 750 });
+    for (let i = 0; i < 20; i++) db.recordToolCall("status", "ok", 1, 2000 + i);
+    const history = db.getToolSavingsHistory(5);
+    assert.equal(history.length, 1);
+    assert.equal(history[0].tool, "repo_map");
+    assert.equal(history[0].savedTokens, 750);
   });
 
   it("filters aggregates by sinceMs", async () => {

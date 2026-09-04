@@ -71,6 +71,13 @@ export interface StatusSnapshot {
   };
   tools: {
     timings: ReturnType<typeof getToolTimingSnapshots>;
+    efficiency24h: {
+      calls: number;
+      savedTokens: number;
+      sourceTokens: number;
+      outputTokens: number;
+      representedFiles: number;
+    };
   };
   warnings: string[];
 }
@@ -128,6 +135,7 @@ export async function getStatusData(options: StatusOptions): Promise<StatusSnaps
   const lastEmbedError = db.getMeta("last_embed_error");
   const embedProvider = db.getMeta("embed_provider");
   const embedModel = db.getMeta("embed_model");
+  const efficiency24h = db.getEfficiencyTotals(Date.now() - 24 * 60 * 60_000);
   const embeddings: EmbeddingStatus = {
     ...embeddingStats,
     provider: embedProvider,
@@ -195,6 +203,13 @@ export async function getStatusData(options: StatusOptions): Promise<StatusSnaps
     git,
     tools: {
       timings: getToolTimingSnapshots(options.rootDir),
+      efficiency24h: {
+        calls: efficiency24h.calls,
+        savedTokens: efficiency24h.savedTokens,
+        sourceTokens: efficiency24h.sourceTokens,
+        outputTokens: efficiency24h.outputTokens,
+        representedFiles: efficiency24h.representedFiles,
+      },
     },
     warnings,
   };
@@ -252,6 +267,10 @@ export async function getStatus(options: StatusOptions): Promise<string> {
       lines.push(`  ${timing.tool}: avg ${timing.avgMs}ms | last ${timing.lastMs}ms | calls ${timing.calls} | errors ${timing.errors}`);
     }
   }
+  lines.push("");
+  lines.push("--- Efficiency (24h estimate) ---");
+  lines.push(`  Source tokens avoided: ~${snapshot.tools.efficiency24h.savedTokens.toLocaleString("en-US")} | calls ${snapshot.tools.efficiency24h.calls} | file references ${snapshot.tools.efficiency24h.representedFiles}`);
+  lines.push("  Use efficiency_report for methodology, history, and optional cost scenarios.");
   if (snapshot.warnings.length > 0) {
     lines.push(``);
     for (const warning of snapshot.warnings) lines.push(`⚠ ${warning}`);

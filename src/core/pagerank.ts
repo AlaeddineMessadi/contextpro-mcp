@@ -20,8 +20,14 @@ export interface PageRankOptions {
    * Nodes to bias rank toward (the "teleport" set). When provided, random jumps
    * land only on these nodes instead of uniformly — pulling rank into the subtree
    * the agent cares about (e.g. files under a target path).
+   *
+   * A plain `Set` gives every member equal teleport weight (the original behavior).
+   * A `Map<string, number>` gives each member its own relative weight, so callers
+   * can mirror Aider's repo-map trick: files explicitly in-focus for the current
+   * task get teleported to far more often than files merely inside a target
+   * subtree, without needing two separate personalization passes.
    */
-  personalization?: Set<string>;
+  personalization?: Set<string> | Map<string, number>;
 }
 
 const DEFAULT_DAMPING = 0.85;
@@ -60,14 +66,19 @@ export function computePageRank(
     outLinks[fromIdx].push(toIdx);
   }
 
-  // Teleport distribution: uniform, or restricted to the personalization set.
+  // Teleport distribution: uniform, or restricted to (optionally weighted) personalization nodes.
   const teleport = new Float64Array(n);
-  const personalIdx = options.personalization
-    ? [...options.personalization].map((node) => index.get(node)).filter((i): i is number => i !== undefined)
-    : [];
-  if (personalIdx.length > 0) {
-    const share = 1 / personalIdx.length;
-    for (const i of personalIdx) teleport[i] = share;
+  const weightedEntries: Array<[string, number]> = options.personalization instanceof Map
+    ? [...options.personalization.entries()]
+    : options.personalization
+      ? [...options.personalization].map((node) => [node, 1] as [string, number])
+      : [];
+  const personalWeights: Array<[number, number]> = weightedEntries
+    .map(([node, weight]) => [index.get(node), weight] as [number | undefined, number])
+    .filter((entry): entry is [number, number] => entry[0] !== undefined && entry[1] > 0);
+  const totalWeight = personalWeights.reduce((sum, [, weight]) => sum + weight, 0);
+  if (totalWeight > 0) {
+    for (const [i, weight] of personalWeights) teleport[i] += weight / totalWeight;
   } else {
     teleport.fill(1 / n);
   }

@@ -36,11 +36,13 @@ import { listArtifacts, readArtifact, garbageCollectArtifacts } from "../core/ar
 import { formatStartupHealthReport, runStartupHealthCheck } from "../core/startup-health.js";
 import { recordToolTiming } from "../core/tool-metrics.js";
 import { currentRoot } from "../core/request-context.js";
+import { annotationsForTool, isToolEnabled, resolveToolProfile } from "../core/tool-profile.js";
 import { garbageCollectDeadWorktrees } from "../core/worktree-gc.js";
+import { getEfficiencyReport } from "./efficiency-report.js";
 
 type ActivityWrapper = <TArgs, TResult>(
   handler: (args: TArgs) => Promise<TResult>,
-  options?: { useEmbeddingTracker?: boolean; toolName?: string; waitForIndexing?: boolean },
+  options?: { useEmbeddingTracker?: boolean; toolName?: string; waitForIndexing?: boolean; ensureFreshIndex?: boolean },
 ) => (args: TArgs) => Promise<TResult>;
 
 /** Optional per-request root override, injected into every tool schema. */
@@ -68,15 +70,66 @@ export function registerTools(
   // `root` argument without repeating it across 50+ schemas. The wrapper merges
   // `root: rootArg` into each tool's Zod shape; withRequestActivity reads and
   // strips it before the handler runs.
+  const toolProfile = resolveToolProfile(process.env.CONTEXTPRO_TOOL_PROFILE ?? process.env.CONTEXTPLUS_TOOL_PROFILE);
+  const sessionStartedAt = Date.now();
   const server = {
-    tool: (name: string, description: string, shape: Record<string, unknown>, handler: unknown) =>
-      (serverInput.tool as unknown as (...a: unknown[]) => unknown)(
+    tool: (name: string, description: string, shape: Record<string, unknown>, handler: unknown) => {
+      if (!isToolEnabled(name, toolProfile)) return undefined;
+      return (serverInput.tool as unknown as (...a: unknown[]) => unknown)(
         name,
         description,
         { ...shape, root: rootArg },
+        annotationsForTool(name),
         handler,
-      ),
+      );
+    },
   } as unknown as McpServer;
+  const registerStructuredTool = (
+    name: string,
+    description: string,
+    inputSchema: Record<string, unknown>,
+    outputSchema: unknown,
+    handler: unknown,
+  ): unknown => {
+    if (!isToolEnabled(name, toolProfile)) return undefined;
+    return (serverInput.registerTool as unknown as (...args: unknown[]) => unknown)(
+      name,
+      {
+        description,
+        inputSchema: { ...inputSchema, root: rootArg },
+        outputSchema,
+        annotations: annotationsForTool(name),
+      },
+      handler,
+    );
+  };
+
+  // Deprecated tool names (start_task, impact, plan_edit, validate, remember) delegate to
+  // their replacement's exact schema + implementation instead of re-declaring both, so the
+  // two can never silently drift apart (as `impact` had from `change_impact`, missing
+  // include_recent_churn). The alias still gets its own tool-metrics attribution so usage of
+  // deprecated names stays visible ahead of removing them in 2.0.
+  const registerDeprecatedAlias = <TArgs>(
+    aliasName: string,
+    canonicalName: string,
+    summary: string,
+    shape: Record<string, unknown>,
+    run: (args: TArgs) => Promise<string>,
+    options: { useEmbeddingTracker?: boolean; ensureFreshIndex?: boolean } = {},
+  ): void => {
+    // The handler's arg type is genuinely tied to `shape` at each call site, but `shape`'s
+    // static type here is an erased `Record<string, unknown>` (matching how `server` itself
+    // is already loosely cast above) — TS can't correlate a free `TArgs` with that, so this
+    // one call needs the same pragmatic cast the outer server wrapper already uses.
+    (server.tool as unknown as (name: string, description: string, shape: Record<string, unknown>, handler: unknown) => void)(
+      aliasName,
+      `[deprecated, prefer ${canonicalName}] ${summary}`,
+      shape,
+      withRequestActivity<TArgs, { content: Array<{ type: "text"; text: string }> }>(async (args) => ({
+        content: [{ type: "text" as const, text: await run(args) }],
+      }), { ...options, toolName: aliasName }),
+    );
+  };
 
   server.tool(
     "health",
@@ -173,8 +226,10 @@ export function registerTools(
       max_symbols_per_file: z.number().optional().describe("Maximum top-level symbols per file. Default: 8."),
       max_tokens: z.number().optional().describe("Approximate token budget for text output. Default: 2000."),
       format: z.enum(["text", "json"]).optional().describe("Return plain text or structured JSON. Default: text."),
+      focus_files: z.array(z.string()).optional().describe("Files to bias importance ranking toward for this call (e.g. files already found relevant to the current task) — reseeds PageRank per call instead of one static global ranking, Aider-repomap-style."),
+      focus_identifiers: z.array(z.string()).optional().describe("Identifiers mentioned in the current task/query — files that define one get an importance boost on top of any focus_files boost."),
     },
-    withRequestActivity(async ({ target_path, include_signatures, max_files, max_symbols_per_file, max_tokens, format }) => ({
+    withRequestActivity(async ({ target_path, include_signatures, max_files, max_symbols_per_file, max_tokens, format, focus_files, focus_identifiers }) => ({
       content: [{
         type: "text" as const,
         text: await getRepoMap({
@@ -185,9 +240,11 @@ export function registerTools(
           maxSymbolsPerFile: max_symbols_per_file,
           maxTokens: max_tokens,
           format,
+          focusFiles: focus_files,
+          focusIdentifiers: focus_identifiers,
         }),
       }],
-    }), { toolName: "repo_map" }),
+    }), { toolName: "repo_map", ensureFreshIndex: true }),
   );
 
   server.tool(
@@ -202,30 +259,54 @@ export function registerTools(
         type: "text" as const,
         text: await exportProjectGraphTool({ rootDir: rootDir(), format }),
       }],
-    }), { toolName: "graph_export" }),
+    }), { toolName: "graph_export", ensureFreshIndex: true }),
   );
 
-  server.tool(
+  registerStructuredTool(
     "graph_query",
-    "Query the indexed project graph without reading source files. Supports summary, file neighborhood, symbol neighborhood, and impact views.",
+    "Query the indexed project graph without reading source files. Supports scoped neighborhoods, transitive impact, confidence-weighted shortest paths, PageRank hotspots, and structural communities.",
     {
-      kind: z.enum(["summary", "file", "symbol", "impact"]).optional().describe("Graph view to return. Default: summary."),
+      kind: z.enum(["summary", "file", "symbol", "impact", "path", "hotspots", "communities"]).optional().describe("Graph view to return. Default: summary."),
       file: z.string().optional().describe("File path for file or impact views."),
       symbol: z.string().optional().describe("Exact symbol name for symbol views."),
+      source: z.string().optional().describe("Starting node for path view: exact node id, project-relative path, or unambiguous symbol label."),
+      target: z.string().optional().describe("Destination node for path view: exact node id, project-relative path, or unambiguous symbol label."),
+      max_hops: z.number().optional().describe("Maximum path length for path view. Default: 8, max: 20."),
       limit: z.number().optional().describe("Maximum nodes/edges to return. Default: 50, max: 200."),
+      max_tokens: z.number().optional().describe("Approximate response budget. Default: 2500, range: 256-12000."),
       format: z.enum(["text", "json"]).optional().describe("Return plain text or structured JSON. Default: text."),
     },
-    withRequestActivity(async ({ kind, file, symbol, limit, format }) => ({
-      content: [{
-        type: "text" as const,
-        text: await queryProjectGraphTool({ rootDir: rootDir(), kind, file, symbol, limit, format }),
-      }],
-    }), { toolName: "graph_query" }),
+    z.object({
+      graph: z.record(z.unknown()).optional(),
+      nodes: z.array(z.record(z.unknown())).optional(),
+      edges: z.array(z.record(z.unknown())).optional(),
+      analysis: z.record(z.unknown()).optional(),
+      fuzzyNote: z.string().nullable().optional(),
+      truncation: z.record(z.unknown()).optional(),
+      error: z.string().optional(),
+    }),
+    withRequestActivity(async (args: any) => {
+      const { kind, file, symbol, source, target, max_hops, limit, max_tokens, format } = args;
+      const options = { rootDir: rootDir(), kind, file, symbol, source, target, maxHops: max_hops, limit, maxTokens: max_tokens };
+      const jsonText = await queryProjectGraphTool({ ...options, format: "json" });
+      let structuredContent: Record<string, unknown>;
+      try {
+        structuredContent = JSON.parse(jsonText) as Record<string, unknown>;
+      } catch {
+        structuredContent = { error: jsonText };
+      }
+      const text = format === "json" ? jsonText : await queryProjectGraphTool({ ...options, format: "text" });
+      return {
+        content: [{ type: "text" as const, text }],
+        structuredContent,
+      };
+    }, { toolName: "graph_query", ensureFreshIndex: true }),
   );
 
   server.tool(
     "resolve_symbol",
-    "Resolve an identifier to the most likely definition with ambiguity scoring. Use this before explain/refactor work when a symbol name appears in multiple files.",
+    "Resolve an identifier to the most likely definition with ambiguity scoring. Use this before explain/refactor work when a symbol name appears in multiple files. " +
+    "This is a best-guess ranking (call-graph proximity + locality), not a compiler resolution — if an LSP-backed tool (e.g. Serena) is available for this language, prefer it when the ambiguity flag here is set.",
     {
       symbol_name: z.string().min(1).describe("The symbol or identifier name to resolve."),
       file_context: z.string().optional().describe("Optional current file path to bias resolution using import context and locality."),
@@ -245,12 +326,13 @@ export function registerTools(
           format,
         }),
       }],
-    }), { toolName: "resolve_symbol" }),
+    }), { toolName: "resolve_symbol", ensureFreshIndex: true }),
   );
 
   server.tool(
     "exact_references",
-    "Find exact references using the local TypeScript/JavaScript language service, Python import/call index evidence, or an imported SCIP JSON index. Use before rename/delete/refactor operations when available.",
+    "Find exact references using the local TypeScript/JavaScript language service, Python import/call index evidence, or an imported SCIP JSON index. Use before rename/delete/refactor operations when available. " +
+    "TS/JS resolution here is compiler-API-backed and trustworthy; other languages fall back to SCIP import or a heuristic index — for those, an LSP-backed tool (e.g. Serena) will generally be more precise if one is available.",
     {
       symbol_name: z.string().min(1).describe("Symbol name to resolve references for."),
       file: z.string().optional().describe("Optional file containing the symbol. If omitted, the indexed symbol table is used."),
@@ -263,7 +345,7 @@ export function registerTools(
         type: "text" as const,
         text: await exactReferencesTool({ rootDir: rootDir(), symbolName: symbol_name, file, line, limit, format }),
       }],
-    }), { toolName: "exact_references" }),
+    }), { toolName: "exact_references", ensureFreshIndex: true }),
   );
 
   server.tool(
@@ -332,13 +414,14 @@ export function registerTools(
         type: "text" as const,
         text: await getFileSkeleton({ rootDir: rootDir(), filePath: file_path }),
       }],
-    }), { toolName: "skeleton" }),
+    }), { toolName: "skeleton", ensureFreshIndex: true }),
   );
 
   server.tool(
     "search",
     "Search the codebase by MEANING. Modes: 'file' searches file headers/symbols, 'identifier' searches function/class definitions with call chains, " +
-    "'hybrid' (default) runs both and returns combined results. Uses embeddings for semantic matching plus keyword overlap scoring.",
+    "'hybrid' (default) runs both and returns combined results. Uses embeddings for semantic matching plus keyword overlap scoring. " +
+    "For an exact known symbol name in a language with a real language server available (e.g. via an LSP-backed MCP like Serena), prefer that for go-to-definition — this tool is best for meaning-based / fuzzy discovery across the whole repo.",
     {
       query: z.string().min(1).max(8000).describe("Natural language description of what you're looking for."),
       mode: z.enum(["file", "identifier", "hybrid"]).optional().describe("Search mode: 'file' for files, 'identifier' for functions/classes, 'hybrid' for both. Default: hybrid."),
@@ -354,6 +437,12 @@ export function registerTools(
       min_combined_score: z.number().optional().describe("Minimum final score filter. Accepts 0-1 or 0-100."),
       require_keyword_match: z.boolean().optional().describe("When true, only return results with keyword overlap."),
       require_semantic_match: z.boolean().optional().describe("When true, only return results with positive semantic similarity."),
+      fusion: z.enum(["weighted", "rrf"]).optional().describe(
+        "How to combine semantic + keyword scores in file mode. 'rrf' (default) fuses rank positions and is robust when signal scales differ. 'weighted' is an opt-out that blends by semantic_weight/keyword_weight.",
+      ),
+      inline_code: z.enum(["off", "crux", "full"]).optional().describe(
+        "Inline source with file matches. 'crux' (default) returns an ~8-line relevant span, 'full' returns the matched definition body, and 'off' returns pointers only.",
+      ),
     },
     withRequestActivity(async (args) => ({
       content: [{
@@ -374,6 +463,8 @@ export function registerTools(
           minCombinedScore: args.min_combined_score,
           requireKeywordMatch: args.require_keyword_match,
           requireSemanticMatch: args.require_semantic_match,
+          fusion: args.fusion,
+          inlineCode: args.inline_code,
         }),
       }],
     }), { useEmbeddingTracker: true, toolName: "search" }),
@@ -419,13 +510,14 @@ export function registerTools(
     {
       symbol_name: z.string().min(1).describe("The function, class, or variable name to trace across the codebase."),
       file_context: z.string().optional().describe("The file where the symbol is defined. Excludes the definition line from results."),
+      mode: z.enum(["summary", "detailed"]).optional().describe("Summary groups usages by containing symbol (default); detailed returns every matching line."),
     },
-    withRequestActivity(async ({ symbol_name, file_context }) => ({
+    withRequestActivity(async ({ symbol_name, file_context, mode }) => ({
       content: [{
         type: "text" as const,
-        text: await getBlastRadius({ rootDir: rootDir(), symbolName: symbol_name, fileContext: file_context }),
+        text: await getBlastRadius({ rootDir: rootDir(), symbolName: symbol_name, fileContext: file_context, mode }),
       }],
-    }), { toolName: "blast_radius" }),
+    }), { toolName: "blast_radius", ensureFreshIndex: true }),
   );
 
   server.tool(
@@ -748,6 +840,30 @@ export function registerTools(
   );
 
   server.tool(
+    "efficiency_report",
+    "Report ContextPro's persistent, auditable context-compression estimates by tool. History stores numeric metrics only—never prompts, source code, response bodies, or file paths. Token savings are estimates, not billing data.",
+    {
+      scope: z.enum(["session", "24h", "7d", "all"]).optional().describe("History window. Default: 24h."),
+      input_cost_per_million: z.number().nonnegative().optional().describe("Optional model input price in USD per million tokens. When provided, returns a clearly-labelled hypothetical cost estimate."),
+      history_limit: z.number().int().min(1).max(100).optional().describe("Maximum recent saving events to include. Default: 10."),
+      format: z.enum(["text", "json"]).optional().describe("Return plain text or JSON. Default: text."),
+    },
+    withRequestActivity(async ({ scope, input_cost_per_million, history_limit, format }) => ({
+      content: [{
+        type: "text" as const,
+        text: await getEfficiencyReport({
+          rootDir: rootDir(),
+          scope,
+          sessionStartedAt,
+          inputCostPerMillion: input_cost_per_million,
+          historyLimit: history_limit,
+          format,
+        }),
+      }],
+    }), { toolName: "efficiency_report", waitForIndexing: false }),
+  );
+
+  server.tool(
     "diff",
     "Structured git diff showing changed files, lines added/removed, and affected symbols. " +
     "Supports: working tree (default), since a commit, vs a branch, a specific file, or staged/both scopes.",
@@ -812,7 +928,7 @@ export function registerTools(
         type: "text" as const,
         text: await getRelated({ rootDir: rootDir(), file }),
       }],
-    }), { toolName: "related" }),
+    }), { toolName: "related", ensureFreshIndex: true }),
   );
 
   server.tool(
@@ -829,7 +945,7 @@ export function registerTools(
         type: "text" as const,
         text: await getTestMap({ rootDir: rootDir(), file, symbol, changed }),
       }],
-    }), { toolName: "test_map" }),
+    }), { toolName: "test_map", ensureFreshIndex: true }),
   );
 
   server.tool(
@@ -847,7 +963,7 @@ export function registerTools(
         type: "text" as const,
         text: await getTestImpact({ rootDir: rootDir(), since, format }),
       }],
-    }), { toolName: "test_impact" }),
+    }), { toolName: "test_impact", ensureFreshIndex: true }),
   );
 
   server.tool(
@@ -864,7 +980,7 @@ export function registerTools(
         type: "text" as const,
         text: await getChangedSince({ rootDir: rootDir(), since, format }),
       }],
-    }), { toolName: "changed_since" }),
+    }), { toolName: "changed_since", ensureFreshIndex: true }),
   );
 
   server.tool(
@@ -881,105 +997,90 @@ export function registerTools(
         type: "text" as const,
         text: await explain({ rootDir: rootDir(), symbol, file, depth }),
       }],
-    }), { toolName: "explain" }),
+    }), { toolName: "explain", ensureFreshIndex: true }),
   );
+
+  const TASK_PACK_SHAPE = {
+    task: z.string().min(1).describe("Task description or engineering objective."),
+    max_files: z.number().optional().describe("Maximum ranked files to include. Default: 8."),
+    max_memory: z.number().optional().describe("Maximum memory hits to include. Default: 3, max: 10."),
+    max_tokens: z.number().optional().describe("Approximate output budget with utility-aware pruning. Default: 3000, range: 512-12000."),
+    include_tests: z.boolean().optional().describe("Include nearby tests. Default: true."),
+    include_recent_diffs: z.boolean().optional().describe("Include recent file-level diffs. Default: true."),
+    include_memory: z.boolean().optional().describe("Include project memory hits. Default: true."),
+    format: z.enum(["text", "json"]).optional().describe("Return plain text or structured JSON. Default: text."),
+  };
+  type TaskPackArgs = {
+    task: string; max_files?: number; max_memory?: number; max_tokens?: number; include_tests?: boolean;
+    include_recent_diffs?: boolean; include_memory?: boolean; format?: "text" | "json";
+  };
+  const runTaskPack = ({ task, max_files, max_memory, max_tokens, include_tests, include_recent_diffs, include_memory, format }: TaskPackArgs) =>
+    buildTaskPack({
+      rootDir: rootDir(),
+      task,
+      maxFiles: max_files,
+      maxMemory: max_memory,
+      maxTokens: max_tokens,
+      includeTests: include_tests,
+      includeRecentDiffs: include_recent_diffs,
+      includeMemory: include_memory,
+      format,
+    });
 
   server.tool(
     "task_pack",
     "Assemble the minimum useful working set for a task: ranked files, nearby tests, recent diffs, memory, and risks.",
-    {
-      task: z.string().min(1).describe("Task description or engineering objective."),
-      max_files: z.number().optional().describe("Maximum ranked files to include. Default: 8."),
-      max_memory: z.number().optional().describe("Maximum memory hits to include. Default: 3, max: 10."),
-      include_tests: z.boolean().optional().describe("Include nearby tests. Default: true."),
-      include_recent_diffs: z.boolean().optional().describe("Include recent file-level diffs. Default: true."),
-      include_memory: z.boolean().optional().describe("Include project memory hits. Default: true."),
-      format: z.enum(["text", "json"]).optional().describe("Return plain text or structured JSON. Default: text."),
-    },
-    withRequestActivity(async ({ task, max_files, max_memory, include_tests, include_recent_diffs, include_memory, format }) => ({
-      content: [{
-        type: "text" as const,
-        text: await buildTaskPack({
-          rootDir: rootDir(),
-          task,
-          maxFiles: max_files,
-          maxMemory: max_memory,
-          includeTests: include_tests,
-          includeRecentDiffs: include_recent_diffs,
-          includeMemory: include_memory,
-          format,
-        }),
-      }],
-    }), { useEmbeddingTracker: true, toolName: "task_pack" }),
+    TASK_PACK_SHAPE,
+    withRequestActivity(async (args: TaskPackArgs) => ({
+      content: [{ type: "text" as const, text: await runTaskPack(args) }],
+    }), { useEmbeddingTracker: true, toolName: "task_pack", ensureFreshIndex: true }),
   );
 
-  server.tool(
+  registerDeprecatedAlias(
     "start_task",
-    "[deprecated, prefer task_pack] Primary workflow entry point. Returns a compact task packet with ranked files, tests, recent diffs, project memory, freshness, and risks.",
-    {
-      task: z.string().min(1).describe("Task description or engineering objective."),
-      max_files: z.number().optional().describe("Maximum ranked files to include. Default: 8."),
-      format: z.enum(["text", "json"]).optional().describe("Return plain text or structured JSON. Default: text."),
-    },
-    withRequestActivity(async ({ task, max_files, format }) => ({
-      content: [{
-        type: "text" as const,
-        text: await buildTaskPack({
-          rootDir: rootDir(),
-          task,
-          maxFiles: max_files,
-          format,
-        }),
-      }],
-    }), { useEmbeddingTracker: true, toolName: "start_task" }),
+    "task_pack",
+    "Primary workflow entry point. Returns a compact task packet with ranked files, tests, recent diffs, project memory, freshness, and risks.",
+    TASK_PACK_SHAPE,
+    runTaskPack,
+    { useEmbeddingTracker: true, ensureFreshIndex: true },
   );
+
+  const CHANGE_IMPACT_SHAPE = {
+    files: z.array(z.string()).optional().describe("Files to analyze for impact."),
+    symbols: z.array(z.string()).optional().describe("Symbols to analyze for impact."),
+    include_tests: z.boolean().optional().describe("Include likely impacted tests. Default: true."),
+    include_recent_churn: z.boolean().optional().describe("Include recent churn in risk scoring. Default: true."),
+    format: z.enum(["text", "json"]).optional().describe("Return plain text or structured JSON. Default: text."),
+  };
+  type ChangeImpactArgs = {
+    files?: string[]; symbols?: string[]; include_tests?: boolean; include_recent_churn?: boolean; format?: "text" | "json";
+  };
+  const runChangeImpact = ({ files, symbols, include_tests, include_recent_churn, format }: ChangeImpactArgs) =>
+    buildChangeImpact({
+      rootDir: rootDir(),
+      files,
+      symbols,
+      includeTests: include_tests,
+      includeRecentChurn: include_recent_churn,
+      format,
+    });
 
   server.tool(
     "change_impact",
     "Estimate what could break if specific files or symbols change, including related files, tests, churn, and reasons.",
-    {
-      files: z.array(z.string()).optional().describe("Files to analyze for impact."),
-      symbols: z.array(z.string()).optional().describe("Symbols to analyze for impact."),
-      include_tests: z.boolean().optional().describe("Include likely impacted tests. Default: true."),
-      include_recent_churn: z.boolean().optional().describe("Include recent churn in risk scoring. Default: true."),
-      format: z.enum(["text", "json"]).optional().describe("Return plain text or structured JSON. Default: text."),
-    },
-    withRequestActivity(async ({ files, symbols, include_tests, include_recent_churn, format }) => ({
-      content: [{
-        type: "text" as const,
-        text: await buildChangeImpact({
-          rootDir: rootDir(),
-          files,
-          symbols,
-          includeTests: include_tests,
-          includeRecentChurn: include_recent_churn,
-          format,
-        }),
-      }],
-    }), { toolName: "change_impact" }),
+    CHANGE_IMPACT_SHAPE,
+    withRequestActivity(async (args: ChangeImpactArgs) => ({
+      content: [{ type: "text" as const, text: await runChangeImpact(args) }],
+    }), { toolName: "change_impact", ensureFreshIndex: true }),
   );
 
-  server.tool(
+  registerDeprecatedAlias(
     "impact",
-    "[deprecated, prefer change_impact] Primary impact workflow. Estimates what could break for changed files or symbols, including related files, tests, churn, and reasons.",
-    {
-      files: z.array(z.string()).optional().describe("Files to analyze for impact."),
-      symbols: z.array(z.string()).optional().describe("Symbols to analyze for impact."),
-      include_tests: z.boolean().optional().describe("Include likely impacted tests. Default: true."),
-      format: z.enum(["text", "json"]).optional().describe("Return plain text or structured JSON. Default: text."),
-    },
-    withRequestActivity(async ({ files, symbols, include_tests, format }) => ({
-      content: [{
-        type: "text" as const,
-        text: await buildChangeImpact({
-          rootDir: rootDir(),
-          files,
-          symbols,
-          includeTests: include_tests,
-          format,
-        }),
-      }],
-    }), { toolName: "impact" }),
+    "change_impact",
+    "Primary impact workflow. Estimates what could break for changed files or symbols, including related files, tests, churn, and reasons.",
+    CHANGE_IMPACT_SHAPE,
+    runChangeImpact,
+    { ensureFreshIndex: true },
   );
 
   server.tool(
@@ -994,94 +1095,68 @@ export function registerTools(
         type: "text" as const,
         text: await impactDeltaTool({ rootDir: rootDir(), baselinePath: baseline_path, format }),
       }],
-    }), { toolName: "impact_delta" }),
+    }), { toolName: "impact_delta", ensureFreshIndex: true }),
   );
+
+  const EDIT_SCOPE_SHAPE = {
+    task: z.string().min(1).describe("Task description or intended change."),
+    max_files: z.number().optional().describe("Maximum files to recommend. Default: 5."),
+    prefer_smallest_scope: z.boolean().optional().describe("Bias toward the smallest safe scope. Default: true."),
+    format: z.enum(["text", "json"]).optional().describe("Return plain text or structured JSON. Default: text."),
+  };
+  type EditScopeArgs = { task: string; max_files?: number; prefer_smallest_scope?: boolean; format?: "text" | "json" };
+  const runEditScope = ({ task, max_files, prefer_smallest_scope, format }: EditScopeArgs) =>
+    buildEditScope({
+      rootDir: rootDir(),
+      task,
+      maxFiles: max_files,
+      preferSmallestScope: prefer_smallest_scope,
+      format,
+    });
 
   server.tool(
     "edit_scope",
     "Identify the smallest likely safe edit set for a task, including likely source files and nearby tests.",
-    {
-      task: z.string().min(1).describe("Task description or intended change."),
-      max_files: z.number().optional().describe("Maximum files to recommend. Default: 5."),
-      prefer_smallest_scope: z.boolean().optional().describe("Bias toward the smallest safe scope. Default: true."),
-      format: z.enum(["text", "json"]).optional().describe("Return plain text or structured JSON. Default: text."),
-    },
-    withRequestActivity(async ({ task, max_files, prefer_smallest_scope, format }) => ({
-      content: [{
-        type: "text" as const,
-        text: await buildEditScope({
-          rootDir: rootDir(),
-          task,
-          maxFiles: max_files,
-          preferSmallestScope: prefer_smallest_scope,
-          format,
-        }),
-      }],
-    }), { useEmbeddingTracker: true, toolName: "edit_scope" }),
+    EDIT_SCOPE_SHAPE,
+    withRequestActivity(async (args: EditScopeArgs) => ({
+      content: [{ type: "text" as const, text: await runEditScope(args) }],
+    }), { useEmbeddingTracker: true, toolName: "edit_scope", ensureFreshIndex: true }),
   );
 
-  server.tool(
+  registerDeprecatedAlias(
     "plan_edit",
-    "[deprecated, prefer edit_scope] Primary edit planning workflow. Finds the smallest likely safe edit set for a task before reading or changing files.",
-    {
-      task: z.string().min(1).describe("Task description or intended change."),
-      max_files: z.number().optional().describe("Maximum files to recommend. Default: 5."),
-      format: z.enum(["text", "json"]).optional().describe("Return plain text or structured JSON. Default: text."),
-    },
-    withRequestActivity(async ({ task, max_files, format }) => ({
-      content: [{
-        type: "text" as const,
-        text: await buildEditScope({
-          rootDir: rootDir(),
-          task,
-          maxFiles: max_files,
-          preferSmallestScope: true,
-          format,
-        }),
-      }],
-    }), { useEmbeddingTracker: true, toolName: "plan_edit" }),
+    "edit_scope",
+    "Primary edit planning workflow. Finds the smallest likely safe edit set for a task before reading or changing files.",
+    EDIT_SCOPE_SHAPE,
+    runEditScope,
+    { useEmbeddingTracker: true, ensureFreshIndex: true },
   );
+
+  const VALIDATE_SCOPE_SHAPE = {
+    task: z.string().min(1).describe("Task description or intended change."),
+    max_files: z.number().optional().describe("Maximum files to inspect when building validation guidance. Default: 5."),
+    format: z.enum(["text", "json"]).optional().describe("Return plain text or structured JSON. Default: text."),
+  };
+  type ValidateScopeArgs = { task: string; max_files?: number; format?: "text" | "json" };
+  const runValidateScope = ({ task, max_files, format }: ValidateScopeArgs) =>
+    buildValidateScope({ rootDir: rootDir(), task, maxFiles: max_files, format });
 
   server.tool(
     "validate_scope",
     "After edit_scope, recommend the most relevant validation checks and commands for the scoped files.",
-    {
-      task: z.string().min(1).describe("Task description or intended change."),
-      max_files: z.number().optional().describe("Maximum files to inspect when building validation guidance. Default: 5."),
-      format: z.enum(["text", "json"]).optional().describe("Return plain text or structured JSON. Default: text."),
-    },
-    withRequestActivity(async ({ task, max_files, format }) => ({
-      content: [{
-        type: "text" as const,
-        text: await buildValidateScope({
-          rootDir: rootDir(),
-          task,
-          maxFiles: max_files,
-          format,
-        }),
-      }],
-    }), { useEmbeddingTracker: true, toolName: "validate_scope" }),
+    VALIDATE_SCOPE_SHAPE,
+    withRequestActivity(async (args: ValidateScopeArgs) => ({
+      content: [{ type: "text" as const, text: await runValidateScope(args) }],
+    }), { useEmbeddingTracker: true, toolName: "validate_scope", ensureFreshIndex: true }),
   );
 
-  server.tool(
+  registerDeprecatedAlias(
     "validate",
-    "[deprecated, prefer validate_scope] Primary validation workflow. Recommends the smallest relevant checks and commands for a task's likely edit scope.",
-    {
-      task: z.string().min(1).describe("Task description or intended change."),
-      max_files: z.number().optional().describe("Maximum files to inspect when building validation guidance. Default: 5."),
-      format: z.enum(["text", "json"]).optional().describe("Return plain text or structured JSON. Default: text."),
-    },
-    withRequestActivity(async ({ task, max_files, format }) => ({
-      content: [{
-        type: "text" as const,
-        text: await buildValidateScope({
-          rootDir: rootDir(),
-          task,
-          maxFiles: max_files,
-          format,
-        }),
-      }],
-    }), { useEmbeddingTracker: true, toolName: "validate" }),
+    "validate_scope",
+    "Primary validation workflow. Recommends the smallest relevant checks and commands for a task's likely edit scope.",
+    VALIDATE_SCOPE_SHAPE,
+    runValidateScope,
+    { useEmbeddingTracker: true, ensureFreshIndex: true },
   );
 
   server.tool(
@@ -1108,65 +1183,50 @@ export function registerTools(
           format,
         }),
       }],
-    }), { useEmbeddingTracker: true, toolName: "decision_brief" }),
+    }), { useEmbeddingTracker: true, toolName: "decision_brief", ensureFreshIndex: true }),
   );
+
+  const MEMORY_RECORD_TASK_SHAPE = {
+    task: z.string().min(1).describe("Task or issue name."),
+    summary: z.string().min(1).describe("What changed or was learned."),
+    files: z.array(z.string()).optional().describe("Files touched or relevant to the task."),
+    assumptions: z.array(z.string()).optional().describe("Assumptions made during the task."),
+    evidence: z.array(z.string()).optional().describe("Evidence supporting the outcome."),
+    open_risks: z.array(z.string()).optional().describe("Risks that remain unresolved."),
+    format: z.enum(["text", "json"]).optional().describe("Return plain text or structured JSON. Default: text."),
+  };
+  type MemoryRecordTaskArgs = {
+    task: string; summary: string; files?: string[]; assumptions?: string[];
+    evidence?: string[]; open_risks?: string[]; format?: "text" | "json";
+  };
+  const runMemoryRecordTask = ({ task, summary, files, assumptions, evidence, open_risks, format }: MemoryRecordTaskArgs) =>
+    recordTaskMemory({
+      rootDir: rootDir(),
+      task,
+      summary,
+      files,
+      assumptions,
+      evidence,
+      openRisks: open_risks,
+      format,
+    });
 
   server.tool(
     "memory_record_task",
     "Persist useful task outcomes with linked files, assumptions, evidence, and open risks for future sessions.",
-    {
-      task: z.string().min(1).describe("Task or issue name."),
-      summary: z.string().min(1).describe("What changed or was learned."),
-      files: z.array(z.string()).optional().describe("Files touched or relevant to the task."),
-      assumptions: z.array(z.string()).optional().describe("Assumptions made during the task."),
-      evidence: z.array(z.string()).optional().describe("Evidence supporting the outcome."),
-      open_risks: z.array(z.string()).optional().describe("Risks that remain unresolved."),
-      format: z.enum(["text", "json"]).optional().describe("Return plain text or structured JSON. Default: text."),
-    },
-    withRequestActivity(async ({ task, summary, files, assumptions, evidence, open_risks, format }) => ({
-      content: [{
-        type: "text" as const,
-        text: await recordTaskMemory({
-          rootDir: rootDir(),
-          task,
-          summary,
-          files,
-          assumptions,
-          evidence,
-          openRisks: open_risks,
-          format,
-        }),
-      }],
+    MEMORY_RECORD_TASK_SHAPE,
+    withRequestActivity(async (args: MemoryRecordTaskArgs) => ({
+      content: [{ type: "text" as const, text: await runMemoryRecordTask(args) }],
     }), { useEmbeddingTracker: true, toolName: "memory_record_task" }),
   );
 
-  server.tool(
+  registerDeprecatedAlias(
     "remember",
-    "[deprecated, prefer memory_record_task] Primary memory workflow. Records a task outcome with linked files, assumptions, evidence, and open risks for future sessions.",
-    {
-      task: z.string().min(1).describe("Task or issue name."),
-      summary: z.string().min(1).describe("What changed or was learned."),
-      files: z.array(z.string()).optional().describe("Files touched or relevant to the task."),
-      assumptions: z.array(z.string()).optional().describe("Assumptions made during the task."),
-      evidence: z.array(z.string()).optional().describe("Evidence supporting the outcome."),
-      open_risks: z.array(z.string()).optional().describe("Risks that remain unresolved."),
-      format: z.enum(["text", "json"]).optional().describe("Return plain text or structured JSON. Default: text."),
-    },
-    withRequestActivity(async ({ task, summary, files, assumptions, evidence, open_risks, format }) => ({
-      content: [{
-        type: "text" as const,
-        text: await recordTaskMemory({
-          rootDir: rootDir(),
-          task,
-          summary,
-          files,
-          assumptions,
-          evidence,
-          openRisks: open_risks,
-          format,
-        }),
-      }],
-    }), { useEmbeddingTracker: true, toolName: "remember" }),
+    "memory_record_task",
+    "Primary memory workflow. Records a task outcome with linked files, assumptions, evidence, and open risks for future sessions.",
+    MEMORY_RECORD_TASK_SHAPE,
+    runMemoryRecordTask,
+    { useEmbeddingTracker: true },
   );
 
   server.tool(
@@ -1220,7 +1280,8 @@ export function registerTools(
     "find_symbol",
     "Find symbols (functions, classes, methods, types) by name path pattern. " +
     "A name path is a Serena-style path through the symbol tree within a file, e.g., \"ClassName/methodName\" or \"/AbsoluteRoot/Nested\". " +
-    "Returns location, signature, and optionally body and children. Use this before symbolic edits or to navigate a file's API surface.",
+    "Returns location, signature, and optionally body and children. Use this before symbolic edits or to navigate a file's API surface. " +
+    "Symbol extraction here is tree-sitter/regex-based, not a real language server — if an LSP-backed tool (e.g. Serena) is available for this language, prefer it when you need compiler-exact symbol resolution.",
     {
       name_path_pattern: z.string().min(1).describe("Name path pattern. Use \"name\" to match anywhere, \"Class/method\" for relative, \"/Class/method\" for absolute."),
       relative_path: z.string().optional().describe("Restrict search to a specific file. Omit to scan the whole project."),
@@ -1248,7 +1309,7 @@ export function registerTools(
           format,
         }),
       }],
-    }), { toolName: "find_symbol" }),
+    }), { toolName: "find_symbol", ensureFreshIndex: true }),
   );
 
   server.tool(
@@ -1310,7 +1371,8 @@ export function registerTools(
     "rename_symbol",
     "Rename a symbol in its defining file and propagate the rename to callers and importers based on the indexed graph. " +
     "Creates shadow restore points for the defining file and each updated cross-file site. " +
-    "Best-effort textual rename — does not understand scopes; always inspect blast_radius first to confirm safety.",
+    "Best-effort textual rename — does not understand scopes (though it does skip string literals and comments); always inspect blast_radius first to confirm safety. " +
+    "If an LSP-backed rename tool (e.g. Serena) is available for this language, prefer it for scope-exact renames.",
     {
       relative_path: z.string().min(1).describe("File where the symbol is defined."),
       name_path: z.string().min(1).describe("Name path of the symbol to rename."),

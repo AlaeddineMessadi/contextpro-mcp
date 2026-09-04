@@ -39,12 +39,21 @@ async function mcpGraph() {
   const mod: any = await import(/* webpackIgnore: true */ /* turbopackIgnore: true */ buildModuleUrl("core/project-graph.js"));
   return mod;
 }
+async function mcpFreshness() {
+  const mod: any = await import(/* webpackIgnore: true */ /* turbopackIgnore: true */ buildModuleUrl("core/index-freshness.js"));
+  return mod;
+}
 
 export interface ToolCall {
   tool: string;
   status: string;
   durationMs: number;
   calledAt: number;
+  inputTokens: number;
+  outputTokens: number;
+  sourceTokens: number;
+  savedTokens: number;
+  representedFiles: number;
 }
 
 export interface ToolAggregate {
@@ -54,6 +63,11 @@ export interface ToolAggregate {
   avgMs: number;
   maxMs: number;
   lastAt: number;
+  inputTokens: number;
+  outputTokens: number;
+  sourceTokens: number;
+  savedTokens: number;
+  representedFiles: number;
 }
 
 async function mcpReindex() {
@@ -199,6 +213,8 @@ export async function codeGraph(rootDir: string, maxNodes = 200): Promise<{
   edges: GraphEdge[];
   stats: Record<string, number>;
 }> {
+  const { ensureFreshIndex } = await mcpFreshness();
+  await ensureFreshIndex(rootDir);
   const { buildProjectGraph } = await mcpGraph();
   const graph = await buildProjectGraph(rootDir);
   const fileNodes = graph.nodes.filter((n: GraphNode) => n.type === "file" || n.type === "test");

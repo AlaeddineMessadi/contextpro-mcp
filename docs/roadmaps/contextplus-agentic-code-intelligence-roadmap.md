@@ -31,6 +31,26 @@ First hardening pass started on 2026-06-09:
 - [x] Added TypeScript/JavaScript language-service exact references with `LSP_RESOLVED` confidence.
 - [x] Added `exact_references` fallback to imported SCIP indexes for non-TypeScript projects.
 
+## 2026-09 Research Update
+
+ContextPro now covers most of the high-value local graph primitives exposed by [Graphify](https://github.com/Graphify-Labs/graphify), while retaining its stronger retrieval, code-editing safety, task packets, memory, and multi-workspace workflows:
+
+- [x] Confidence/evidence provenance on every graph edge, including exact SCIP/LSP, AST-extracted, heuristic, and ambiguous evidence.
+- [x] Confidence-weighted shortest paths, PageRank/degree hotspots, deterministic structural communities, and portable graph artifacts.
+- [x] Native MCP structured output and safety annotations, with a focused `core` tool profile for lower tool-selection overhead.
+- [x] Token-bounded graph responses and utility-aware task packs that preserve the highest-value files.
+- [x] In-flight graph-build sharing for concurrent agents, bounded multi-project caches, and SQLite WAL contention hardening.
+
+The next work should be evidence-gated rather than feature-count driven:
+
+1. **P0 — Retrieval benchmark harness.** Track hit@1, MRR, recall@5, precision, follow-up-read rate, tokens-to-answer, warm/cold latency, and concurrent-agent throughput. [CodeGrep](https://arxiv.org/html/2608.05886v1) is the important warning: higher retrieval precision reduced agent turns and tokens in its experiments, while low-precision retrieval could hurt outcomes.
+2. **P1 — Optional search-expand-refine.** Use high-confidence semantic/symbol anchors, bounded graph expansion, then a lightweight refinement pass, following the pattern evaluated by [RepoHYPER](https://arxiv.org/html/2403.06095). Ship only if it beats current RRF on the benchmark suite.
+3. **P1 — Symbol/block chunks with adaptive allocation.** Combine late chunking for repository-aware embeddings ([Late Code Chunking](https://aclanthology.org/2026.acl-short.64/)) with graph relevance, MMR diversity, and utility-aware budgets inspired by [RepoDistill](https://aclanthology.org/2026.findings-acl.217/).
+4. **P1 — Index-time context capsules.** Precompute compact symbol summaries, likely dependencies, and change-risk capsules so agents pay less exploration latency at inference time, based on the direction validated by [SpecAgent](https://aclanthology.org/2026.acl-long.786/).
+5. **P2 — First-class rationale nodes.** Parse `WHY`/`NOTE` comments plus ADR/RFC links into provenance-bearing rationale nodes, adapting Graphify's useful design-knowledge graph without mixing documentation guesses into exact code edges.
+6. **P2 — Richer control/data relations.** Add statement/block-level control and data-dependence edges for supported languages only after profiling graph size and retrieval lift; [GraphCoder](https://arxiv.org/abs/2406.07003) motivates the coarse-to-fine direction.
+7. **P2 — Shared service transport.** Consider an authenticated HTTP transport and shared project registry when real multi-host use cases justify the operational/security cost; local stdio remains the zero-setup default.
+
 ## Operating Principles
 
 1. Trust beats breadth: fewer reliable workflows are better than many overlapping tools.

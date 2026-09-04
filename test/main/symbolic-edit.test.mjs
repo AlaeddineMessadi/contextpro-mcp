@@ -157,6 +157,31 @@ describe("symbolic editing tools", () => {
     assert.ok(after.includes("return newName()"));
   });
 
+  it("rename_symbol updates executable template expressions but not literal text", async () => {
+    const { renameSymbol } = await import("../../build/tools/symbolic-edit.js");
+    const filePath = join(fixtureRoot, "src", "template-rename.ts");
+    await writeFile(
+      filePath,
+      [
+        "export function oldName(): string { return 'ok'; }",
+        "export function caller(): string {",
+        "  const prose = `oldName is only documentation`;",
+        "  return `value: ${oldName()}`;",
+        "}",
+        "",
+      ].join("\n"),
+    );
+    await renameSymbol({
+      rootDir: fixtureRoot,
+      relativePath: "src/template-rename.ts",
+      namePath: "oldName",
+      newName: "newName",
+    });
+    const after = await readFile(filePath, "utf-8");
+    assert.ok(after.includes("${newName()}"), "template expression should be renamed");
+    assert.ok(after.includes("`oldName is only documentation`"), "template text should remain unchanged");
+  });
+
   it("rename_symbol cross-file: short file after long file (regex state regression)", async () => {
     const { renameSymbol } = await import("../../build/tools/symbolic-edit.js");
     // Reindex so the graph picks up imports / callers

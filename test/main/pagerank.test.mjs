@@ -70,6 +70,27 @@ describe("computePageRank", () => {
     assert.ok(biased.get("b") < plain.get("b"), "non-personalized node should lose relative rank");
   });
 
+  it("weighted personalization (Map) pulls more rank toward a heavier-weighted node than an equal-weight Set would", () => {
+    const nodes = ["a", "b", "x", "y"];
+    const edges = [["a", "b"], ["x", "y"]];
+    const equalWeight = computePageRank(nodes, edges, { personalization: new Set(["x", "y"]) });
+    const xHeavy = computePageRank(nodes, edges, { personalization: new Map([["x", 50], ["y", 1]]) });
+    // With x weighted 50x over y, x's teleport share should dominate — well above the ~50/50
+    // split an unweighted Set gives it — while y drops relative to the equal-weight case.
+    assert.ok(xHeavy.get("x") > equalWeight.get("x"), "heavily-weighted x should outrank its equal-weight baseline");
+    assert.ok(xHeavy.get("y") < equalWeight.get("y"), "outweighed y should rank below its equal-weight baseline");
+  });
+
+  it("weighted personalization degrades to equal-weight when every entry has the same weight", () => {
+    const nodes = ["a", "b", "x", "y"];
+    const edges = [["a", "b"], ["x", "y"]];
+    const viaSet = computePageRank(nodes, edges, { personalization: new Set(["x", "y"]) });
+    const viaMap = computePageRank(nodes, edges, { personalization: new Map([["x", 3], ["y", 3]]) });
+    for (const node of nodes) {
+      assert.ok(Math.abs(viaSet.get(node) - viaMap.get(node)) < 1e-9, `${node} should match between equal-weight Set and equal-weight Map`);
+    }
+  });
+
   it("ignores edges referencing unknown nodes without crashing", () => {
     const ranks = computePageRank(["a", "b"], [["a", "ghost"], ["a", "b"]]);
     assert.equal(ranks.size, 2);

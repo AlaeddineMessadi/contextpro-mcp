@@ -44,6 +44,8 @@ Thumbs.db
 # Cache
 .eslintcache
 *.tsbuildinfo
+/graft/
+/.ignore
 extension.vsix
 *.mjs.bak
 # debug scripts (transient, never committed)

@@ -108,6 +108,36 @@ describe("blast-radius", async () => {
       assert.ok(result.includes("consumer.ts"));
       assert.ok(!result.includes("not used"));
     });
+
+    it("groups summary output by enclosing symbol and classifies usage kinds", async () => {
+      await writeFile(join(FIXTURE_DIR, "attributed.ts"), [
+        "import { tracedHelper } from './util';",
+        "function runTask() {",
+        "  tracedHelper();",
+        "}",
+        "// tracedHelper() is documented here",
+        "vi.mocked(tracedHelper);",
+        "",
+      ].join("\n"));
+      const result = await getBlastRadius({ rootDir: FIXTURE_DIR, symbolName: "tracedHelper" });
+      assert.match(result, /imports <- <module>/);
+      assert.match(result, /calls <- runTask/);
+      assert.match(result, /comments\/strings <- <module>/);
+      assert.match(result, /mocks\/stubs <- <module>/);
+    });
+
+    it("keeps every line in detailed mode with kind and enclosing range", async () => {
+      await writeFile(join(FIXTURE_DIR, "details.ts"), [
+        "function detailedCaller() {",
+        "  detailedTarget();",
+        "}",
+        "const note = 'detailedTarget';",
+        "",
+      ].join("\n"));
+      const result = await getBlastRadius({ rootDir: FIXTURE_DIR, symbolName: "detailedTarget", mode: "detailed" });
+      assert.match(result, /L2 \[call\] in detailedCaller \(L1-L3\)/);
+      assert.match(result, /L4 \[comment\/string\] in <module>/);
+    });
   });
 
   after(async () => {
