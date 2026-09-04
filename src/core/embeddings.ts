@@ -434,8 +434,9 @@ function resolveSearchOptions(optionsOrTopK?: number | SearchQueryOptions): Reso
  * rank position rather than raw score value, sidestepping the scale mismatch between an
  * unbounded/keyword-style score and a bounded cosine similarity. k=60 is the empirical
  * default from the original paper's TREC evaluation. Result is normalized to [0, 1] by the
- * best-possible score (rank 1 in both lists) so it composes with the existing 0-1 score
- * conventions (rounding, clamping, minCombinedScore) used by the weighted fusion path.
+ * best-possible score (rank 1 in both lists). That rank signal is subsequently
+ * calibrated with the candidate's absolute semantic/keyword evidence before it
+ * is exposed as a confidence-like combined score or compared to minCombinedScore.
  */
 const RRF_K = 60;
 function reciprocalRankFusionScores(semanticScores: number[], keywordScores: number[]): number[] {
@@ -458,6 +459,13 @@ function reciprocalRankFusionScores(semanticScores: number[], keywordScores: num
     const keyword = keywordRank[index] === null ? 0 : 1 / (RRF_K + keywordRank[index]!);
     return (semantic + keyword) / bestPossible;
   });
+}
+
+function calibrateRrfScore(rankScore: number, semanticScore: number, keywordScore: number): number {
+  // RRF says which result ranks first; it does not say whether the underlying
+  // signal is strong. Without this gate, a lone 0.16 cosine match becomes 100%.
+  const absoluteEvidence = Math.max(Math.max(semanticScore, 0), keywordScore);
+  return clamp01(rankScore * clamp01(absoluteEvidence));
 }
 
 const LOW_SEMANTIC_FLOOR = 0.15;
@@ -677,7 +685,9 @@ export class SearchIndex {
       .map((candidate, i) => ({
         ...candidate,
         score: dampLowSemanticScore(
-          rrfScores ? clamp01(rrfScores[i]) : computeCombinedScore(candidate.semanticScore, candidate.keywordScore, options),
+          rrfScores
+            ? calibrateRrfScore(rrfScores[i], candidate.semanticScore, candidate.keywordScore)
+            : computeCombinedScore(candidate.semanticScore, candidate.keywordScore, options),
           candidate.semanticScore,
           candidate.keywordScore,
           semanticAvailable,

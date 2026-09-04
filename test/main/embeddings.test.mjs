@@ -158,6 +158,34 @@ describe("embeddings", () => {
         Ollama.prototype.embed = originalEmbed;
       }
     });
+
+    it("does not let a weak lone semantic rank pass an absolute confidence threshold", async () => {
+      const originalEmbed = Ollama.prototype.embed;
+      const rootDir = await mkdtemp(join(tmpdir(), "contextplus-weak-rrf-"));
+      try {
+        Ollama.prototype.embed = async function ({ input }) {
+          const batch = Array.isArray(input) ? input : [input];
+          return {
+            embeddings: batch.map((text) => text.includes("weak-doc-marker")
+              ? [0.16, Math.sqrt(1 - 0.16 ** 2), 0]
+              : [1, 0, 0]),
+          };
+        };
+        const index = new SearchIndex();
+        await index.index([
+          { path: "weak.ts", header: "weak-doc-marker", symbols: [], content: "unrelated corpus vocabulary" },
+        ], rootDir);
+
+        const permissive = await index.search("needle query", { minCombinedScore: 0 });
+        const strict = await index.search("needle query", { minCombinedScore: 0.8 });
+        assert.equal(permissive.length, 1);
+        assert.ok(permissive[0].score < 20, `weak cosine must not display as 100%: ${permissive[0].score}`);
+        assert.deepEqual(strict, []);
+      } finally {
+        Ollama.prototype.embed = originalEmbed;
+        await rm(rootDir, { recursive: true, force: true });
+      }
+    });
   });
 
   describe("fetchEmbedding", () => {

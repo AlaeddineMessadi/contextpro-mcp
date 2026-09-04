@@ -628,8 +628,12 @@ async function quickRefreshAttempt(rootDir: string, options: QuickRefreshOptions
     const staleAfterLock = db.getStaleFiles(currentHashes);
     const indexedPathsAfterLock = new Set(db.getAllFiles().map((file) => file.path));
     const addedAfterLock = [...currentPaths].filter((path) => !indexedPathsAfterLock.has(path));
-    const changedAfterLock = [...new Set([...staleAfterLock, ...addedAfterLock])];
     const removedAfterLock = db.getRemovedFiles(currentPaths);
+    const removedPathSet = new Set(removedAfterLock);
+    // getStaleFiles also reports rows absent from currentHashes. Those paths are
+    // deletions, not readable changed files; process them only via deleteFile.
+    const changedAfterLock = [...new Set([...staleAfterLock, ...addedAfterLock])]
+      .filter((path) => !removedPathSet.has(path));
     totalStale = new Set([...changedAfterLock, ...removedAfterLock]).size;
     if (totalStale === 0) {
       for (const update of fingerprintUpdates) db.updateFileFingerprint(update.path, update.size, update.mtimeMs);
@@ -711,9 +715,12 @@ async function quickRefreshAttempt(rootDir: string, options: QuickRefreshOptions
     db.setMeta("last_reindex_duration_ms", String(Date.now() - startedAt));
 
     if (options.includeEmbeddings !== false) {
+      // Deleted paths cannot be reread structurally, but embedding refreshers use
+      // them to purge their persistent vectors and invalidate cached indexes.
+      const embeddingRefreshPaths = [...new Set([...changedAfterLock, ...removedAfterLock])];
       await Promise.all([
-        refreshFileSearchEmbeddings({ rootDir, relativePaths: changedAfterLock }).catch(() => 0),
-        refreshIdentifierEmbeddings({ rootDir, relativePaths: changedAfterLock }).catch(() => 0),
+        refreshFileSearchEmbeddings({ rootDir, relativePaths: embeddingRefreshPaths }).catch(() => 0),
+        refreshIdentifierEmbeddings({ rootDir, relativePaths: embeddingRefreshPaths }).catch(() => 0),
       ]);
     }
 

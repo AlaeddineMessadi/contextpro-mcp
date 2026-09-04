@@ -182,6 +182,52 @@ describe("symbolic editing tools", () => {
     assert.ok(after.includes("`oldName is only documentation`"), "template text should remain unchanged");
   });
 
+  it("rename_symbol keeps Rust lifetimes visible while renaming calls", async () => {
+    const { renameSymbol } = await import("../../build/tools/symbolic-edit.js");
+    const filePath = join(fixtureRoot, "src", "lifetime.rs");
+    await writeFile(
+      filePath,
+      [
+        "pub fn old_name<'a>(value: &'a str) -> &'a str { value }",
+        "pub fn caller<'a>(value: &'a str) -> &'a str {",
+        "  old_name(value)",
+        "}",
+        "",
+      ].join("\n"),
+    );
+    await renameSymbol({
+      rootDir: fixtureRoot,
+      relativePath: "src/lifetime.rs",
+      namePath: "old_name",
+      newName: "new_name",
+    });
+    const after = await readFile(filePath, "utf-8");
+    assert.ok(after.includes("new_name(value)"));
+    assert.ok(after.includes("<'a>"));
+  });
+
+  it("rename_symbol keeps Unicode Rust lifetimes visible while renaming calls", async () => {
+    const { renameSymbol } = await import("../../build/tools/symbolic-edit.js");
+    const filePath = join(fixtureRoot, "src", "unicode-lifetime.rs");
+    await writeFile(
+      filePath,
+      [
+        "pub fn old_name<'α>(value: &'α str) -> &'α str { value }",
+        "pub fn caller<'α>(value: &'α str) -> &'α str { old_name(value) }",
+        "",
+      ].join("\n"),
+    );
+    await renameSymbol({
+      rootDir: fixtureRoot,
+      relativePath: "src/unicode-lifetime.rs",
+      namePath: "old_name",
+      newName: "new_name",
+    });
+    const after = await readFile(filePath, "utf-8");
+    assert.ok(after.includes("new_name(value)"));
+    assert.ok(after.includes("<'α>"));
+  });
+
   it("rename_symbol cross-file: short file after long file (regex state regression)", async () => {
     const { renameSymbol } = await import("../../build/tools/symbolic-edit.js");
     // Reindex so the graph picks up imports / callers

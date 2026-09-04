@@ -48,12 +48,21 @@ function containsExplicitPath(text: string, path: string): boolean {
   while (offset < text.length) {
     const index = text.indexOf(path, offset);
     if (index < 0) return false;
+    const preceding = text[index - 1];
     const following = text[index + path.length];
-    // Avoid counting `src/a.ts` merely because the response named `src/a.tsx`.
-    if (!following || !/[A-Za-z0-9_.-]/.test(following)) return true;
+    // Require both sides to be path-token boundaries so `a.ts` does not match
+    // `data.ts` or `src/a.ts`.
+    if ((!preceding || !/[A-Za-z0-9_./-]/.test(preceding)) &&
+        (!following || !/[A-Za-z0-9_./-]/.test(following))) return true;
     offset = index + path.length;
   }
   return false;
+}
+
+function pathVariants(rootDir: string, relativePath: string): string[] {
+  const relative = relativePath.replace(/\\/g, "/").replace(/^\.\//, "");
+  const absolute = resolve(rootDir, relative).replace(/\\/g, "/");
+  return [relative, `./${relative}`, absolute];
 }
 
 async function indexedFiles(rootDir: string): Promise<FileRow[]> {
@@ -91,7 +100,7 @@ export async function estimateToolEfficiency(rootDir: string, args: unknown, res
   let representedFiles = 0;
   let sourceTokens = 0;
   for (const file of files) {
-    if (!containsExplicitPath(searchable, file.path.replace(/\\/g, "/"))) continue;
+    if (!pathVariants(rootDir, file.path).some((path) => containsExplicitPath(searchable, path))) continue;
     representedFiles++;
     sourceTokens += Math.ceil(Math.max(0, file.file_size) / 4);
   }

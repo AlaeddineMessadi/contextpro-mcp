@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 
 let root = "";
 let priorFooter;
@@ -42,6 +42,41 @@ describe("efficiency reporting", () => {
     assert.equal(estimate.sourceTokens, 2_000);
     assert.ok(estimate.savedTokens > 1_900);
     assert.ok(estimate.outputTokens > 0);
+  });
+
+  it("does not count paths that occur only as another path's suffix", async () => {
+    const { getDB } = await import("../../build/core/db.js");
+    const { estimateToolEfficiency } = await import("../../build/core/efficiency.js");
+    const db = await getDB(root);
+    db.upsertFile("a.ts", "hash", "A", "typescript", 8_000, Date.now());
+    db.upsertFile("index.ts", "hash", "Index", "typescript", 8_000, Date.now());
+    db.bumpIndexGeneration();
+
+    const estimate = await estimateToolEfficiency(
+      root,
+      {},
+      { content: [{ type: "text", text: "data.ts and src/index.ts are unrelated files" }] },
+    );
+    assert.equal(estimate.representedFiles, 0);
+    assert.equal(estimate.sourceTokens, 0);
+  });
+
+  it("counts equivalent dot-relative and absolute in-project path references", async () => {
+    const { getDB } = await import("../../build/core/db.js");
+    const { estimateToolEfficiency } = await import("../../build/core/efficiency.js");
+    const db = await getDB(root);
+    db.upsertFile("src/large.ts", "hash", "Large", "typescript", 8_000, Date.now());
+    db.bumpIndexGeneration();
+
+    for (const reference of ["./src/large.ts", resolve(root, "src/large.ts")]) {
+      const estimate = await estimateToolEfficiency(
+        root,
+        { file: reference },
+        { content: [{ type: "text", text: "No duplicate path needed." }] },
+      );
+      assert.equal(estimate.representedFiles, 1, `should recognize ${reference}`);
+      assert.equal(estimate.sourceTokens, 2_000);
+    }
   });
 
   it("adds a concise estimate footer and supports opting out", async () => {

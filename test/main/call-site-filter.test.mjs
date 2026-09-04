@@ -76,4 +76,28 @@ describe("extractCallSites filters", () => {
     ].join("\n");
     assert.deepEqual(extractCallSites(source, "fixture.ts").map((site) => site.callee), ["loadUser"]);
   });
+
+  it("keeps Rust lifetime and label syntax executable", async () => {
+    const { extractCallSites } = await import("../../build/core/parser.js");
+    const source = [
+      "fn wrapper<'a>(value: &'a str) -> &'a str {",
+      "  'retry: loop {",
+      "    return oldName(value);",
+      "  }",
+      "}",
+    ].join("\n");
+    assert.deepEqual(extractCallSites(source, "fixture.rs").map((site) => site.callee), ["oldName"]);
+  });
+
+  it("keeps Unicode Rust lifetime and label syntax executable", async () => {
+    const { extractCallSites } = await import("../../build/core/parser.js");
+    const source = [
+      "fn wrapper<'α>(value: &'α str) -> &'α str {",
+      "  'επανάληψη: loop {",
+      "    return oldName(value);",
+      "  }",
+      "}",
+    ].join("\n");
+    assert.deepEqual(extractCallSites(source, "fixture.rs").map((site) => site.callee), ["oldName"]);
+  });
 });

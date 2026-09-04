@@ -6,6 +6,7 @@ import { extname } from "path";
 const HASH_COMMENT_EXTENSIONS = new Set([
   ".py", ".rb", ".sh", ".bash", ".zsh", ".yaml", ".yml", ".toml", ".pl", ".r",
 ]);
+const RUST_IDENTIFIER_START = /[\p{ID_Start}_]/u;
 
 type MaskMode =
   | { kind: "code" }
@@ -15,13 +16,27 @@ type MaskMode =
   | { kind: "template" }
   | { kind: "template-expression"; braceDepth: number };
 
+/** Whether an apostrophe starts Rust lifetime or label syntax rather than a char literal. */
+function isRustLifetimeOrLabelStart(content: string, apostropheIndex: number): boolean {
+  const codePoint = content.codePointAt(apostropheIndex + 1);
+  if (codePoint === undefined) return false;
+
+  const identifierStart = String.fromCodePoint(codePoint);
+  if (!RUST_IDENTIFIER_START.test(identifierStart)) return false;
+
+  // A one-code-point literal, including a non-BMP Unicode scalar, closes here.
+  return content[apostropheIndex + 1 + identifierStart.length] !== "'";
+}
+
 /**
  * Return a same-length mask whose true positions are comments or literal text.
  * Template literal text is masked, but `${...}` expressions stay executable code.
  */
 export function sourceMaskFlags(content: string, filePath?: string): boolean[] {
   const masked = new Array<boolean>(content.length).fill(false);
-  const hashComments = filePath ? HASH_COMMENT_EXTENSIONS.has(extname(filePath).toLowerCase()) : false;
+  const extension = filePath ? extname(filePath).toLowerCase() : "";
+  const hashComments = HASH_COMMENT_EXTENSIONS.has(extension);
+  const isRust = extension === ".rs";
   const modes: MaskMode[] = [{ kind: "code" }];
   const hide = (index: number) => { masked[index] = true; };
 
@@ -105,6 +120,11 @@ export function sourceMaskFlags(content: string, filePath?: string): boolean[] {
     if (hashComments && ch === "#") {
       hide(i);
       modes.push({ kind: "line-comment" });
+      continue;
+    }
+    // Rust lifetimes (`'a`) and labels (`'retry:`) are executable syntax, not
+    // character literals. A one-character literal always closes immediately.
+    if (isRust && ch === "'" && isRustLifetimeOrLabelStart(content, i)) {
       continue;
     }
     if (ch === "\"" || ch === "'") {

@@ -3,7 +3,7 @@
 import { afterEach, beforeEach, describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, rm, stat, utimes, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, stat, unlink, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
@@ -91,6 +91,25 @@ describe("automatic index freshness", () => {
     const output = await reindex({ rootDir: root, noEmbed: true });
     assert.equal(db.getIndexGeneration(), generation);
     assert.match(output, /generation: unchanged/i);
+  });
+
+  it("incrementally removes a deleted file without reporting a degraded refresh", async () => {
+    const { getDB } = await import("../../build/core/db.js");
+    const { quickRefresh } = await import("../../build/tools/reindex.js");
+    const db = await getDB(root);
+    const generation = db.getIndexGeneration();
+    db.upsertEmbedding("file_search_cache", "src/value.ts", [1, 0, 0], "file-hash");
+    db.upsertEmbedding("identifier_cache", "id:src/value.ts:alpha", [1, 0, 0], "identifier-hash");
+    await unlink(join(root, "src", "value.ts"));
+
+    const result = await quickRefresh(root, { includeEmbeddings: true });
+
+    assert.equal(result.complete, true);
+    assert.equal(result.fullReindex, undefined);
+    assert.equal(db.getFile("src/value.ts"), null);
+    assert.equal(db.getIndexGeneration(), generation + 1);
+    assert.deepEqual(db.getEmbeddingsByType("file_search_cache"), []);
+    assert.deepEqual(db.getEmbeddingsByType("identifier_cache"), []);
   });
 
   it("coalesces concurrent in-process readers into one refresh generation", async () => {
