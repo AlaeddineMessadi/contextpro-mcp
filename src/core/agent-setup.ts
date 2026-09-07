@@ -4,10 +4,19 @@ import { resolveProjectPath } from "./path-guard.js";
 
 export const CONTEXTPRO_PROJECT_INSTRUCTIONS = `## ContextPro repository workflow
 
-Use ContextPro first for repository discovery: start with task_pack (max_tokens: 2000),
-then search/grep, skeleton, or explain for the exact detail needed. Before changing
+Use ContextPro first for unfamiliar repository discovery: task_pack (max_tokens: 2000,
+graph_hops: 1) or search (mode: "file", format: "compact", include_dependencies: true).
+For an exact name or literal, use grep or explain directly. Use skeleton
+(exported_only: true for TS/JS public APIs) for contracts. Before changing
 shared code, inspect blast_radius; after edits, call validate_scope and run the
 recommended checks. Pass root explicitly for another worktree.
+
+The default workflow catalog is deliberately small. Use discover_tools to find
+and enable expert tools such as exact_references and symbolic edits when needed.
+Prefer text or compact search output; verbose json is for diagnostics.
+Batch independent symbol reads with explain(symbols:[{symbol,file},...], depth:0)
+instead of paying for another model turn per symbol. Request dependencies only
+when needed; batch omissions are explicit and require follow-up.
 
 Prefer bounded results. Reuse previous_context_id only while you still hold that
 packet; omit it after compaction or a new agent session. Record durable decisions

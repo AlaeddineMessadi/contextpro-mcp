@@ -29,7 +29,7 @@ it('delivers bounded offline task packs and isolated final reports over MCP', { 
   transport.stderr?.on("data", chunk => { stderr += chunk.toString(); });
   try {
     await client.connect(transport);
-    assert.equal((await client.listTools()).tools.length, 12);
+    assert.equal((await client.listTools()).tools.length, 13);
     const args = { task: 'fix authenticate ' + 'requirements '.repeat(400), preset: 'keyword_only', max_tokens: 512, include_memory: false, include_recent_diffs: false, format: 'json' };
     const result = await client.callTool({ name: 'task_pack', arguments: args });
     assert.ok(!result.isError, JSON.stringify(result));
@@ -40,8 +40,9 @@ it('delivers bounded offline task packs and isolated final reports over MCP', { 
     const invalidArgs = { file_path: '../outside.ts' };
     const failure = await client.callTool({ name: 'skeleton', arguments: invalidArgs });
     assert.equal(failure.isError, true);
-    const reportResult = await client.callTool({ name: 'efficiency_report', arguments: { scope: 'session', input_cost_per_million: 5, format: 'json' } });
+    const reportResult = await client.callTool({ name: 'efficiency_report', arguments: { scope: 'session', history_limit: 0, input_cost_per_million: 5, format: 'json' } });
     const report = JSON.parse(reportResult.content.find(c => c.type === 'text').text);
+    assert.deepEqual(report.recentSavings, []);
     assert.equal(report.calls.total, 2);
     assert.equal(report.calls.errors, 1);
     assert.ok(report.estimate.requestTokens >= Math.ceil(Buffer.byteLength(JSON.stringify(args))/4) + Math.ceil(Buffer.byteLength(JSON.stringify(invalidArgs))/4));

@@ -14,6 +14,8 @@ export interface ExplainOptions {
   symbol?: string;
   file?: string;
   depth?: number;
+  symbols?: Array<{ symbol: string; file?: string }>;
+  maxTokens?: number;
 }
 
 interface SymbolBody {
@@ -246,6 +248,26 @@ function findSiblingSymbols(symbols: ReturnType<typeof flattenSymbols>, targetNa
 }
 
 export async function explain(options: ExplainOptions): Promise<string> {
+  if (options.symbols) {
+    if (options.symbol || options.file) throw new Error("Use symbols or symbol/file, not both.");
+    if (!options.symbols.length || options.symbols.length > 6) throw new Error("Batch explain accepts one to six symbols.");
+    const budget = options.maxTokens ?? 4000;
+    if (!Number.isInteger(budget) || budget < 512 || budget > 12000) throw new Error("max_tokens must be an integer from 512 to 12000.");
+    const results = await Promise.all(options.symbols.map(item => explain({ rootDir: options.rootDir, ...item, depth: options.depth ?? 0 })));
+    const sections: string[] = [];
+    const omitted: Array<{ symbol: string; file?: string }> = [];
+    // Reserve room for explicit omitted targets; never return a truncated function body.
+    const allowance = budget * 4 - Buffer.byteLength(JSON.stringify(options.symbols)) - 100;
+    if (allowance < 100) throw new Error("Batch target descriptions exceed the response budget; use fewer targets or a larger max_tokens.");
+    let bytes = 0;
+    for (let i = 0; i < results.length; i++) {
+      const size = Buffer.byteLength(results[i]) + 2;
+      if (bytes + size > allowance) { omitted.push(options.symbols[i]); continue; }
+      sections.push(results[i]); bytes += size;
+    }
+    if (omitted.length) sections.push(`Omitted to fit response budget; request these separately: ${JSON.stringify(omitted)}`);
+    return sections.join("\n\n");
+  }
   const depth = options.depth ?? 1;
 
   if (options.file && !options.symbol) {

@@ -4,9 +4,17 @@ All notable changes to this project are recorded here. The project follows [Sema
 
 ## [Unreleased]
 
+### Added — Measured context workflows
+
+- A 13-tool default catalog with on-demand expert discovery/enabling. Explicit full/core profiles remain supported.
+- Compact structured search, bounded supporting-import pointers, and opt-in phase timings. Lexical ranking ignores common prose terms, weights discriminating terms, and reuses generation-keyed indexes across semantic/lexical calls.
+- TypeScript/JavaScript skeletons preserve multiline signatures and interface contracts, with an exported-only view. Batch `explain` reads up to six symbols without splitting bodies when its output budget is exceeded.
+- Small unchanged-context acknowledgements and deduplicated concurrent WASM grammar initialization/loading.
+- Frozen-corpus retrieval measurements with reference-tokenizer counts, plus fresh configured-model Codex trials recording provider usage, cache input, elapsed time and correctness evidence. Unknown billing stays null; negative savings remain visible.
+
 ### Added — Reliable agent workflows (2026-09-07)
 
-- Twelve-tool `workflow` profile; init installs managed agent-first rules and preserves customized servers and user instructions.
+- Focused `workflow` profile; init installs managed agent-first rules and preserves customized servers and user instructions.
 - Immutable task-context snapshots, explicit added/changed/removed deltas, full recovery, and optional bounded import-graph expansion.
 - Offline retrieval benchmark against rg/read, plus a schema for importing paired real-agent success, provider-token usage and cost records. No universal savings percentage is claimed.
 - Isolated session efficiency history (schema v6), one credit per represented file revision, request/response/catalog overhead, an end-of-task summary and optional user-priced dollar scenarios. Actual billing savings stay unknown.

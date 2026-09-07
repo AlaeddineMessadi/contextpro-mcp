@@ -1,5 +1,1 @@
-Use ContextPro first: task_pack/search → skeleton/explain → blast_radius →
-validate_scope. Pass root for another worktree. At completion call
-efficiency_report(scope:"session") and include its estimated savings once;
-money is a scenario only with a known price. Fall back when unavailable.
-Guide: contextpro://instructions.
+Use ContextPro first: task_pack/search → skeleton/explain. Batch explain(symbols:[...]) reads. discover_tools enables experts. Before edits: blast_radius; after: validate_scope. Pass root for another worktree. Finish with efficiency_report(scope:"session"); savings are estimates, money requires a known rate. Fall back when needed. Guide: contextpro://instructions.

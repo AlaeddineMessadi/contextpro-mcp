@@ -2,9 +2,9 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 
 describe("tool profiles and MCP annotations", () => {
-  it("defaults to full and recognizes the focused core profile", async () => {
+  it("defaults to workflow and recognizes explicit expert profiles", async () => {
     const { resolveToolProfile, isToolEnabled } = await import("../../build/core/tool-profile.js");
-    assert.equal(resolveToolProfile(), "full");
+    assert.equal(resolveToolProfile(), "workflow");
     assert.equal(resolveToolProfile("CORE"), "core");
     assert.equal(resolveToolProfile("unexpected"), "full");
     assert.equal(isToolEnabled("search", "core"), true);
@@ -48,7 +48,7 @@ describe("tool profiles and MCP annotations", () => {
       const registered = server._registeredTools;
       assert.ok(registered.search);
       assert.ok(registered.graph_query);
-      assert.equal(registered.memory_bulk, undefined);
+      assert.equal(registered.memory_bulk.enabled, false);
       assert.equal(registered.search.annotations.readOnlyHint, true);
       assert.equal(registered.restore.annotations.destructiveHint, true);
       assert.ok(registered.graph_query.outputSchema, "graph_query should advertise structured output");
@@ -60,7 +60,7 @@ describe("tool profiles and MCP annotations", () => {
 });
 
 describe('workflow profile budget', () => {
-  it('exposes twelve useful tools and a substantially smaller protocol catalog', async () => {
+  it('exposes thirteen tools and enables experts on demand', async () => {
     const { McpServer } = await import('@modelcontextprotocol/sdk/server/mcp.js');
     const { Client } = await import('@modelcontextprotocol/sdk/client/index.js');
     const { InMemoryTransport } = await import('@modelcontextprotocol/sdk/inMemory.js');
@@ -78,9 +78,17 @@ describe('workflow profile budget', () => {
         const catalog = await client.listTools();
         sizes[profile] = Buffer.byteLength(JSON.stringify(catalog));
         if (profile === 'workflow') {
-          assert.equal(catalog.tools.length, 12);
+          assert.equal(catalog.tools.length, 13);
           for (const name of ['task_pack', 'efficiency_report', 'reindex', 'artifact_read']) assert.ok(catalog.tools.some(t => t.name === name));
           assert.ok(!catalog.tools.some(t => t.name === 'rename_symbol'));
+          const enabled = await client.callTool({ name: 'discover_tools', arguments: { enable: ['exact_references', 'rename_symbol'] } });
+          assert.equal(enabled.isError, undefined);
+          const expanded = await client.listTools();
+          assert.ok(expanded.tools.some(t => t.name === 'rename_symbol'));
+          assert.ok(expanded.tools.some(t => t.name === 'exact_references'));
+          assert.equal(expanded.tools.length, 15);
+          const rejected = await client.callTool({ name: 'discover_tools', arguments: { enable: ['made_up'] } });
+          assert.equal(rejected.isError, true);
         }
         await client.close(); await server.close();
       }

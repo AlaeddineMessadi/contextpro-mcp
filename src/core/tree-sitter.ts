@@ -112,30 +112,43 @@ const DEFINITION_TYPES: Record<string, Record<string, string>> = {
 
 let ParserClass: any = null;
 const grammarCache = new Map<string, TSLanguage>();
+let parserInitialization: Promise<any> | null = null;
+const grammarLoads = new Map<string, Promise<TSLanguage | null>>();
 
 async function initParser(): Promise<typeof ParserClass> {
   if (ParserClass) return ParserClass;
 
-  const mod = await import("web-tree-sitter");
-  const Parser = mod.default ?? mod;
-  await Parser.init();
-  ParserClass = Parser;
-  return Parser;
+  if (!parserInitialization) {
+    parserInitialization = (async () => {
+      const mod = await import("web-tree-sitter");
+      const Parser = mod.default ?? mod;
+      await Parser.init();
+      ParserClass = Parser;
+      return Parser;
+    })().catch((error) => { parserInitialization = null; throw error; });
+  }
+  return parserInitialization;
 }
 
 async function loadGrammar(grammarName: string): Promise<TSLanguage | null> {
   if (grammarCache.has(grammarName)) return grammarCache.get(grammarName)!;
-
-  try {
-    const Parser = await initParser();
-    const wasmPath = join(GRAMMAR_DIR, `tree-sitter-${grammarName}.wasm`);
-    await readFile(wasmPath);
-    const lang = await Parser.Language.load(wasmPath);
-    grammarCache.set(grammarName, lang);
-    return lang;
-  } catch {
-    return null;
-  }
+  if (grammarLoads.has(grammarName)) return grammarLoads.get(grammarName)!;
+  const loading = (async () => {
+    try {
+      const Parser = await initParser();
+      const wasmPath = join(GRAMMAR_DIR, `tree-sitter-${grammarName}.wasm`);
+      await readFile(wasmPath);
+      const lang = await Parser.Language.load(wasmPath);
+      grammarCache.set(grammarName, lang);
+      return lang;
+    } catch {
+      return null;
+    } finally {
+      grammarLoads.delete(grammarName);
+    }
+  })();
+  grammarLoads.set(grammarName, loading);
+  return loading;
 }
 
 function extractName(node: TSNode, _kind: string): string {

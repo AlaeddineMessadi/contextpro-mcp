@@ -70,8 +70,7 @@ const rootArg = z
   .string()
   .optional()
   .describe(
-    "Absolute path of the git worktree to target. Omit to use the server's project root. " +
-    "Set this to route a request to a specific worktree when one MCP server serves several.",
+    "Absolute worktree root. Omit for the server's project.",
   );
 
 export function registerTools(
@@ -92,24 +91,30 @@ export function registerTools(
   // strips it before the handler runs.
   const toolProfile = resolveToolProfile(process.env.CONTEXTPRO_TOOL_PROFILE ?? process.env.CONTEXTPLUS_TOOL_PROFILE);
   const sessionStartedAt = runtimeSessionStartedAt;
-  const catalog: unknown[] = [];
+  const catalog = new Map<string, { name: string; description: string; inputSchema: unknown; annotations: unknown; outputSchema?: unknown }>();
+  const active = new Set<string>();
+  const handles = new Map<string, { enable?: () => void; disable?: () => void }>();
+  const refreshCatalogCost = (): void => setToolSchemaTokens(Buffer.byteLength(JSON.stringify({ tools: [...catalog.values()].filter(tool => active.has(tool.name)) }), "utf8") / 4);
   const noteSchema = (name: string, description: string, shape: Record<string, unknown>, output?: unknown): void => {
     const entry = { name, description, inputSchema: toJsonSchemaCompat(z.object({ ...shape, root: rootArg } as z.ZodRawShape)), annotations: annotationsForTool(name),
       ...(output ? { outputSchema: toJsonSchemaCompat(output as z.AnyZodObject) } : {}) };
-    catalog.push(entry);
-    setToolSchemaTokens(Buffer.byteLength(JSON.stringify({ tools: catalog }), "utf8") / 4);
+    catalog.set(name, entry);
+    refreshCatalogCost();
   };
   const server = {
     tool: (name: string, description: string, shape: Record<string, unknown>, handler: unknown) => {
-      if (!isToolEnabled(name, toolProfile)) return undefined;
+      if (isToolEnabled(name, toolProfile)) active.add(name);
       noteSchema(name, description, shape);
-      return (serverInput.tool as unknown as (...a: unknown[]) => unknown)(
+      const registered = (serverInput.tool as unknown as (...a: unknown[]) => { enable?: () => void; disable?: () => void })(
         name,
         description,
         { ...shape, root: rootArg },
         annotationsForTool(name),
         handler,
       );
+      if (registered) handles.set(name, registered);
+      if (!active.has(name)) registered?.disable?.();
+      return registered;
     },
   } as unknown as McpServer;
   const registerStructuredTool = (
@@ -119,9 +124,9 @@ export function registerTools(
     outputSchema: unknown,
     handler: unknown,
   ): unknown => {
-    if (!isToolEnabled(name, toolProfile)) return undefined;
+    if (isToolEnabled(name, toolProfile)) active.add(name);
     noteSchema(name, description, inputSchema, outputSchema);
-    return (serverInput.registerTool as unknown as (...args: unknown[]) => unknown)(
+    const registered = (serverInput.registerTool as unknown as (...args: unknown[]) => { enable?: () => void; disable?: () => void })(
       name,
       {
         description,
@@ -131,7 +136,29 @@ export function registerTools(
       },
       handler,
     );
+    if (registered) handles.set(name, registered);
+    if (!active.has(name)) registered?.disable?.();
+    return registered;
   };
+
+  server.tool("discover_tools", "Find expert tools by purpose, or enable named tools for this session. Enabling exposes their schemas; it does not execute them.", {
+    query: z.string().max(500).optional().describe("Purpose, e.g. exact references, rename, tests, or memory."),
+    enable: z.array(z.string()).max(6).optional().describe("Exact tool names to add to this session's catalog."),
+    limit: z.number().int().min(1).max(10).optional().describe("Maximum discovery matches; default 5."),
+  }, withRequestActivity(async ({ query, enable, limit }) => {
+    const unknown = (enable ?? []).filter(name => !catalog.has(name));
+    if (unknown.length) return { isError: true, content: [{ type: "text" as const, text: `Unknown tools: ${unknown.join(", ")}. Search by query first.` }] };
+    for (const name of enable ?? []) {
+      handles.get(name)?.enable?.();
+      active.add(name);
+    }
+    refreshCatalogCost();
+    const terms = (query ?? "").toLowerCase().split(/[\s_]+/).filter(Boolean);
+    const found = [...catalog.values()].map(tool => ({ tool, score: terms.reduce((n, term) => n + (tool.name.includes(term) ? 3 : 0) + (tool.description.toLowerCase().includes(term) ? 1 : 0), 0) }))
+      .filter(({ score }) => !terms.length || score > 0).sort((a, b) => b.score - a.score || a.tool.name.localeCompare(b.tool.name))
+      .slice(0, limit ?? 5).map(({ tool }) => ({ name: tool.name, description: tool.description.slice(0, 180), enabled: active.has(tool.name) }));
+    return { content: [{ type: "text" as const, text: JSON.stringify({ enabled: enable ?? [], matches: found, next: "Call discover_tools with enable:[name], then call that tool normally." }) }] };
+  }, { toolName: "discover_tools" }));
 
   // Deprecated tool names (start_task, impact, plan_edit, validate, remember) delegate to
   // their replacement's exact schema + implementation instead of re-declaring both, so the
@@ -441,11 +468,12 @@ export function registerTools(
     "Shows the API surface: function names, parameters, return types, and line ranges. Perfect for understanding how to use code without loading it all.",
     {
       file_path: z.string().min(1).describe("Path to the file to inspect (relative to project root)."),
+      exported_only: z.boolean().optional().describe("Only public declarations (TS/JS). Default: false."),
     },
-    withRequestActivity(async ({ file_path }) => ({
+    withRequestActivity(async ({ file_path, exported_only }) => ({
       content: [{
         type: "text" as const,
-        text: await getFileSkeleton({ rootDir: rootDir(), filePath: file_path }),
+        text: await getFileSkeleton({ rootDir: rootDir(), filePath: file_path, exportedOnly: exported_only }),
       }],
     }), { toolName: "skeleton", ensureFreshIndex: true }),
   );
@@ -457,9 +485,11 @@ export function registerTools(
     "For an exact known symbol name in a language with a real language server available (e.g. via an LSP-backed MCP like Serena), prefer that for go-to-definition — this tool is best for meaning-based / fuzzy discovery across the whole repo.",
     {
       query: z.string().min(1).max(8000).describe("Natural language description of what you're looking for."),
+      profile: z.boolean().optional().describe("Include phase timings in JSON/compact output for diagnosis."),
+      include_dependencies: z.boolean().optional().describe("Add up to three import pointers from the top two file matches to check supporting code."),
       mode: z.enum(["file", "identifier", "hybrid"]).optional().describe("Search mode: 'file' for files, 'identifier' for functions/classes, 'hybrid' for both. Default: hybrid."),
       preset: z.enum(["fast", "balanced", "exhaustive", "semantic_only", "keyword_only"]).optional().describe("Ranking preset. fast favors cheap lexical recall, balanced is default, exhaustive returns a wider set, semantic_only ignores keyword overlap (pure embedding similarity), keyword_only ignores embedding similarity (pure lexical match)."),
-      format: z.enum(["text", "json"]).optional().describe("Return plain text or structured JSON. Default: text."),
+      format: z.enum(["text", "json", "compact"]).optional().describe("text (default), compact JSON for agents, or verbose json for diagnostics."),
       top_k: z.number().optional().describe("Number of matches to return. Default: 5."),
       top_calls_per_identifier: z.number().optional().describe("How many ranked call sites per identifier (identifier/hybrid mode). Default: 10."),
       include_kinds: z.array(z.string()).optional().describe("Filter identifier kinds, e.g. [\"function\", \"method\"]. Only for identifier/hybrid mode."),
@@ -483,6 +513,8 @@ export function registerTools(
         text: await unifiedSearch({
           rootDir: rootDir(),
           query: args.query,
+          profile: args.profile,
+          includeDependencies: args.include_dependencies,
           mode: args.mode,
           preset: args.preset,
           format: args.format,
@@ -880,7 +912,7 @@ export function registerTools(
       scope: z.enum(["session", "24h", "7d", "all"]).optional().describe("History window. Default: this MCP session. Call at task completion and quote finalSummary."),
       input_cost_per_million: z.number().nonnegative().optional().describe("Optional model input price in USD per million tokens. When provided, returns a clearly-labelled hypothetical cost estimate."),
       contextpro_cost_usd: z.number().nonnegative().optional().describe("Optional known ContextPro operating cost for this window; deducted only when supplied. Never guess."),
-      history_limit: z.number().int().min(1).max(100).optional().describe("Maximum recent saving events to include. Default: 10."),
+      history_limit: z.number().int().min(0).max(100).optional().describe("Maximum recent saving events. Use 0 for totals only; default 10."),
       format: z.enum(["text", "json"]).optional().describe("Return plain text or JSON. Default: text."),
     },
     withRequestActivity(async ({ scope, input_cost_per_million, contextpro_cost_usd, history_limit, format }) => ({
@@ -1026,13 +1058,15 @@ export function registerTools(
     "Provide symbol name to get its code + called functions. Provide file path for a structural overview.",
     {
       symbol: z.string().optional().describe("Function, class, or variable name to explain."),
+      symbols: z.array(z.object({ symbol: z.string().min(1).max(200), file: z.string().max(1000).optional() })).min(1).max(6).optional().describe("Batch independent symbols in one call, instead of repeated reads. Use instead of symbol/file."),
+      max_tokens: z.number().int().min(512).max(12000).optional().describe("Batch response byte/4 budget; default 4000. Whole omitted bodies are reported."),
       file: z.string().optional().describe("File to explain (overview mode if no symbol given)."),
       depth: z.number().optional().describe("How many levels of called functions to include. Default: 1. Use 0 for just the symbol."),
     },
-    withRequestActivity(async ({ symbol, file, depth }) => ({
+    withRequestActivity(async ({ symbol, symbols, max_tokens, file, depth }) => ({
       content: [{
         type: "text" as const,
-        text: await explain({ rootDir: rootDir(), symbol, file, depth }),
+        text: await explain({ rootDir: rootDir(), symbol, symbols, maxTokens: max_tokens, file, depth }),
       }],
     }), { toolName: "explain", ensureFreshIndex: true }),
   );

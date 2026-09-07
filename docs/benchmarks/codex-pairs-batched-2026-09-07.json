@@ -1,0 +1,250 @@
+[
+  {
+    "taskId": "native-cache-contract",
+    "variant": "baseline",
+    "model": "gpt-6-astra",
+    "reasoningEffort": "high",
+    "success": true,
+    "wallTimeMs": 37893.477292,
+    "usage": {
+      "input_tokens": 64915,
+      "cached_input_tokens": 38784,
+      "cache_write_input_tokens": 0,
+      "output_tokens": 728,
+      "reasoning_output_tokens": 225
+    },
+    "answer": {
+      "identityFields": [
+        "abi",
+        "platform",
+        "arch",
+        "libc"
+      ],
+      "dependencyVersionsInKey": true,
+      "repairsSharedNodeModules": false,
+      "evidence": [
+        {
+          "file": "src/core/native-runtime.ts:15",
+          "symbol": "nativeRuntimeIdentity: ABI = process.versions.modules; platform = process.platform; arch = process.arch; libc = glibc/musl on Linux, none elsewhere."
+        },
+        {
+          "file": "src/core/native-runtime.ts:25",
+          "symbol": "getNativeRuntime: includes exact better-sqlite3 and sqlite-vec versions, preferring installed package versions; falls back to root dependency declarations with leading ^/~ removed. Hashes JSON.stringify({ identity, dependencies }) using SHA-256, truncated to 24 hex characters, prefixed v1-."
+        },
+        {
+          "file": "src/core/native-repair.ts:117",
+          "symbol": "attemptNativeAutoRepair: calls repairNativeDependencies."
+        },
+        {
+          "file": "src/core/native-repair.ts:95",
+          "symbol": "repairNativeDependencies: runs npm install in an isolated staging directory, validates it, then renames it into the runtime cache. Shared project node_modules is not rebuilt in place."
+        }
+      ]
+    },
+    "toolCalls": 4,
+    "toolNames": [
+      "command_execution",
+      "command_execution",
+      "command_execution",
+      "command_execution"
+    ]
+  },
+  {
+    "taskId": "native-cache-contract",
+    "variant": "contextpro",
+    "model": "gpt-6-astra",
+    "reasoningEffort": "high",
+    "success": true,
+    "wallTimeMs": 99293.807917,
+    "usage": {
+      "input_tokens": 187437,
+      "cached_input_tokens": 155776,
+      "cache_write_input_tokens": 0,
+      "output_tokens": 1104,
+      "reasoning_output_tokens": 251
+    },
+    "answer": {
+      "identityFields": [
+        "abi: process.versions.modules, falling back to 'unknown'",
+        "platform: process.platform",
+        "arch: process.arch",
+        "libc: Linux glibc or musl; otherwise 'none'"
+      ],
+      "dependencyVersionsInKey": true,
+      "repairsSharedNodeModules": false,
+      "evidence": [
+        {
+          "file": "src/core/native-runtime.ts:15",
+          "symbol": "nativeRuntimeIdentity"
+        },
+        {
+          "file": "src/core/native-runtime.ts:25",
+          "symbol": "getNativeRuntime: includes exact better-sqlite3 and sqlite-vec versions, resolved from installed package.json or root dependency declarations with leading ~ or ^ removed. Key is v1- plus the first 24 hexadecimal characters of SHA-256(JSON.stringify({ identity, dependencies }))."
+        },
+        {
+          "file": "src/core/native-repair.ts:117",
+          "symbol": "attemptNativeAutoRepair: invokes repairNativeDependencies"
+        },
+        {
+          "file": "src/core/native-repair.ts:95",
+          "symbol": "repairNativeDependencies: installs and validates dependencies in an isolated staging directory, then renames it into the cache; does not rebuild shared project node_modules."
+        },
+        {
+          "file": "src/core/native-repair.ts:25",
+          "symbol": "runCommand: uses the supplied staging directory as cwd"
+        }
+      ]
+    },
+    "toolCalls": 4,
+    "toolNames": [
+      "search",
+      "explain",
+      "explain",
+      "efficiency_report"
+    ]
+  },
+  {
+    "taskId": "source-mutation-contract",
+    "variant": "contextpro",
+    "model": "gpt-6-astra",
+    "reasoningEffort": "high",
+    "success": true,
+    "wallTimeMs": 91289.699166,
+    "usage": {
+      "input_tokens": 180694,
+      "cached_input_tokens": 147968,
+      "cache_write_input_tokens": 0,
+      "output_tokens": 1105,
+      "reasoning_output_tokens": 23
+    },
+    "answer": {
+      "symlinkEscapeBlocked": true,
+      "staleWriteRejected": true,
+      "serializesWrites": true,
+      "evidence": [
+        {
+          "file": "src/core/path-guard.ts:27",
+          "symbol": "resolveProjectPath"
+        },
+        {
+          "file": "src/core/source-mutation.ts:90",
+          "symbol": "assertMutationPath"
+        },
+        {
+          "file": "src/core/source-mutation.ts:113",
+          "symbol": "captureSource"
+        },
+        {
+          "file": "src/core/source-mutation.ts:129",
+          "symbol": "assertSourceUnchanged"
+        },
+        {
+          "file": "src/core/source-mutation.ts:137",
+          "symbol": "publishSource"
+        },
+        {
+          "file": "src/core/source-mutation.ts:16",
+          "symbol": "withSourceMutation"
+        },
+        {
+          "file": "src/tools/propose-commit.ts:135",
+          "symbol": "proposeCommit"
+        },
+        {
+          "file": "src/tools/propose-commit.ts:139",
+          "symbol": "proposeCommitLocked"
+        }
+      ]
+    },
+    "toolCalls": 6,
+    "toolNames": [
+      "search",
+      "explain",
+      "grep",
+      "explain",
+      "explain",
+      "efficiency_report"
+    ]
+  },
+  {
+    "taskId": "source-mutation-contract",
+    "variant": "baseline",
+    "model": "gpt-6-astra",
+    "reasoningEffort": "high",
+    "success": true,
+    "wallTimeMs": 36943.31574999998,
+    "usage": {
+      "input_tokens": 96049,
+      "cached_input_tokens": 65536,
+      "cache_write_input_tokens": 0,
+      "output_tokens": 589,
+      "reasoning_output_tokens": 0
+    },
+    "answer": {
+      "symlinkEscapeBlocked": true,
+      "staleWriteRejected": true,
+      "serializesWrites": true,
+      "evidence": [
+        {
+          "file": "src/core/path-guard.ts:27",
+          "symbol": "resolveProjectPath"
+        },
+        {
+          "file": "src/core/source-mutation.ts:90",
+          "symbol": "assertMutationPath"
+        },
+        {
+          "file": "src/core/source-mutation.ts:113",
+          "symbol": "captureSource"
+        },
+        {
+          "file": "src/core/source-mutation.ts:129",
+          "symbol": "assertSourceUnchanged"
+        },
+        {
+          "file": "src/core/source-mutation.ts:137",
+          "symbol": "publishSource"
+        },
+        {
+          "file": "src/core/source-mutation.ts:16",
+          "symbol": "withSourceMutation"
+        },
+        {
+          "file": "src/tools/propose-commit.ts:135",
+          "symbol": "proposeCommit"
+        },
+        {
+          "file": "src/tools/propose-commit.ts:139",
+          "symbol": "proposeCommitLocked"
+        },
+        {
+          "file": "src/tools/symbolic-edit.ts:368",
+          "symbol": "replaceSymbolBody"
+        },
+        {
+          "file": "src/tools/symbolic-edit.ts:426",
+          "symbol": "insertAroundSymbol"
+        },
+        {
+          "file": "src/tools/symbolic-edit.ts:489",
+          "symbol": "renameSymbol"
+        },
+        {
+          "file": "src/git/shadow.ts:250",
+          "symbol": "restorePoint"
+        },
+        {
+          "file": "src/git/shadow.ts:259",
+          "symbol": "restorePointLocked"
+        }
+      ]
+    },
+    "toolCalls": 4,
+    "toolNames": [
+      "command_execution",
+      "command_execution",
+      "command_execution",
+      "command_execution"
+    ]
+  }
+]

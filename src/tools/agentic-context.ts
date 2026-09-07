@@ -696,6 +696,7 @@ async function finishTaskPack(options: TaskPackOptions, payload: TaskPackPayload
     const removed = Object.keys(before).filter((id) => !(id in entries));
     context.mode = "delta";
     context.previousId = options.previousContextId;
+    context.unchanged = added.length === 0 && changed.length === 0 && removed.length === 0;
     delivery = { ...delivery, files: [], relatedFiles: [], tests: [], memory: [], recentDiffs: [], risks: [], delta: { added, changed, removed } };
   } else if (options.previousContextId) {
     context.fallbackReason = previous ? "unrelated_or_incomplete_baseline" : "baseline_not_found";
@@ -710,6 +711,19 @@ async function finishTaskPack(options: TaskPackOptions, payload: TaskPackPayload
 }
 
 function renderTaskPack(format: OutputFormat | undefined, payload: TaskPackPayload & { budget: TaskPackBudgetReport }): string {
+  const context = payload.context as Record<string, unknown> | undefined;
+  if (context?.unchanged) {
+    const freshness = payload.freshness as { indexState?: string; warning?: string | null } | undefined;
+    const compact = {
+      context: { id: context.id, previousId: context.previousId, mode: "delta", unchanged: true, indexGeneration: context.indexGeneration, memoryRevision: context.memoryRevision },
+      freshness: { state: freshness?.indexState, warning: freshness?.warning ?? null },
+      delta: payload.delta,
+      files: [], relatedFiles: [], tests: [], memory: [], recentDiffs: [], risks: [],
+      budget: payload.budget,
+    };
+    if (format === "json") return JSON.stringify(compact);
+    return `Context unchanged: ${context.id} (previous: ${context.previousId}; generation: ${context.indexGeneration}). Keep the previous packet.\nFreshness: ${freshness?.indexState ?? "unknown"}${freshness?.warning ? `; ${freshness.warning}` : ""}`;
+  }
   if (format === "json") return JSON.stringify(payload);
   const lines = ["Task Pack", `Summary: ${payload.summary}`,
     `Budget: ~${payload.budget.estimatedTokens}/${payload.budget.maxTokens} tokens (UTF-8 bytes / 4 estimate)${payload.budget.truncated ? " (truncated; read full context artifact)" : ""}`,

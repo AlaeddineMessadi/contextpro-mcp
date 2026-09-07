@@ -391,12 +391,18 @@ function cosine(a: number[], b: number[]): number {
   return denom === 0 ? 0 : dot / denom;
 }
 
+const SEARCH_STOPWORDS = new Set("a an the and or but for from to of in on at by with without that this these those is are was were be been being as it its after before using use how which when then than into through".split(" "));
+
+export function searchTerms(text: string): string[] {
+  return splitCamelCase(text).filter(term => !SEARCH_STOPWORDS.has(term));
+}
+
 function splitCamelCase(text: string): string[] {
   return text
     .replace(/([a-z])([A-Z])/g, "$1 $2")
     .replace(/([A-Z])([A-Z][a-z])/g, "$1 $2")
     .toLowerCase()
-    .split(/[\s_-]+/)
+    .split(/[^a-z0-9]+/)
     .filter((t) => t.length > 1);
 }
 
@@ -502,15 +508,24 @@ function getMatchedSymbols(symbols: string[], queryTerms: Set<string>): string[]
   return symbols.filter((symbol) => splitCamelCase(symbol).some((term) => queryTerms.has(term)));
 }
 
-function computeKeywordScore(query: string, queryTerms: Set<string>, doc: SearchDocument, matchedSymbols: string[]): number {
+function computeKeywordScore(query: string, queryTerms: Set<string>, doc: SearchDocument, matchedSymbols: string[], preparedTerms?: Set<string>, weights?: Map<string, number>): number {
   if (queryTerms.size === 0) return 0;
   const docText = `${doc.path} ${doc.header} ${doc.symbols.join(" ")} ${doc.content}`;
-  const docTerms = new Set(splitCamelCase(docText));
+  const docTerms = preparedTerms ?? new Set(searchTerms(docText));
   const queryLower = query.trim().toLowerCase();
   const phraseBoost = queryLower.length > 0 && docText.toLowerCase().includes(queryLower) ? 0.15 : 0;
   const symbolTerms = new Set(splitCamelCase(matchedSymbols.join(" ")));
-  const termCoverage = getTermCoverage(queryTerms, docTerms);
-  const symbolCoverage = getTermCoverage(queryTerms, symbolTerms);
+  const coverage = (terms: Set<string>): number => {
+    let total = 0, matched = 0;
+    for (const term of queryTerms) {
+      const weight = weights?.get(term) ?? 1;
+      total += weight;
+      if (terms.has(term)) matched += weight;
+    }
+    return total ? matched / total : 0;
+  };
+  const termCoverage = coverage(docTerms);
+  const symbolCoverage = coverage(symbolTerms);
   return clamp01(termCoverage * 0.65 + symbolCoverage * 0.2 + phraseBoost);
 }
 
@@ -605,8 +620,14 @@ export function matchesSearchConstraints(result: Pick<SearchResult, "semanticSco
 export class SearchIndex {
   private documents: SearchDocument[] = [];
   private vectors: number[][] = [];
+  private lexicalDocuments: Set<string>[] = [];
+  private inverseFrequency = new Map<string, number>();
   async index(docs: SearchDocument[], rootDir: string, skipEmbeddings = false): Promise<void> {
     this.documents = docs;
+    this.lexicalDocuments = docs.map(doc => new Set(searchTerms(`${doc.path} ${doc.header} ${doc.symbols.join(" ")} ${doc.content}`)));
+    const frequencies = new Map<string, number>();
+    for (const terms of this.lexicalDocuments) for (const term of terms) frequencies.set(term, (frequencies.get(term) ?? 0) + 1);
+    this.inverseFrequency = new Map([...frequencies].map(([term, count]) => [term, Math.log(1 + (docs.length + 1) / (count + 1))]));
     if (skipEmbeddings) { this.vectors = new Array(docs.length); return; }
     const cache = await loadCache(rootDir);
     const uncached: { idx: number; text: string; hash: string }[] = [];
@@ -680,7 +701,7 @@ export class SearchIndex {
       process.stderr.write(`[contextpro/embeddings] degraded: query embed failed (${message}); using keyword-only ranking\n`);
       queryVec = [];
     }
-    const queryTerms = new Set(splitCamelCase(query));
+    const queryTerms = new Set(searchTerms(query));
     const candidates: {
       idx: number;
       semanticScore: number;
@@ -697,7 +718,7 @@ export class SearchIndex {
         ? matchedEntries.map((entry) => entry.name)
         : getMatchedSymbols(doc.symbols, queryTerms);
       const matchedSymbolLocations = matchedEntries.map((entry) => `${entry.name}@${formatLineRange(entry.line, entry.endLine)}`);
-      const keywordScore = computeKeywordScore(query, queryTerms, doc, matchedSymbols);
+      const keywordScore = computeKeywordScore(query, queryTerms, doc, matchedSymbols, this.lexicalDocuments[i], this.inverseFrequency);
 
       if (options.requireSemanticMatch && semanticScore <= 0) continue;
       if (options.requireKeywordMatch && keywordScore <= 0) continue;

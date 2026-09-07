@@ -1,17 +1,18 @@
 # ContextPro MCP — Agent Workflow Guide
 
-Use ContextPro as the first interface for understanding a repository. It returns
+Use ContextPro as the first interface for understanding an unfamiliar repository. It returns
 ranked, bounded context; fall back to native file/search tools only when a
 ContextPro tool cannot provide the exact detail you need.
 
 ## Fast workflow
 
-1. Start with `task_pack` for a task-specific context bundle, or `status` when
+1. Start with `task_pack(max_tokens:2000, graph_hops:1)` for a task-specific context bundle, or `status` when
    diagnosing index health.
-2. Use `search` (`hybrid` for behavior, `identifier` for a known name) to locate
-   code. Its default crux excerpt often avoids a second read.
+2. Use `search(mode:"file", format:"compact", include_dependencies:true)` to locate
+   unfamiliar code and supporting imports. Use `grep` or `explain` directly for a known literal/name.
+   The default crux excerpt often avoids a second read; verbose `json` is for diagnostics.
 3. Use `skeleton` before reading a large file; use `explain` for one symbol body
-   and its immediate dependencies.
+   and its immediate dependencies. `exported_only:true` gives a TS/JS public API view.
 4. Before changing or deleting a symbol, call `blast_radius`. Use
    `exact_references` for compiler-resolved TS/JS references and `change_impact`
    or `test_impact` to plan validation.
@@ -20,6 +21,20 @@ ContextPro tool cannot provide the exact detail you need.
 
 Run independent ContextPro reads in parallel. Prefer bounded outputs (`top_k`,
 `max_tokens`, summary modes) and expand only when needed.
+For several known symbols, prefer one `explain(symbols:[{symbol,file},...], depth:0)`
+call. It accepts up to six targets and reports any whole bodies omitted by its
+response budget. Batch requests reduce model turns and repeated input history.
+
+The default catalog exposes 13 workflow tools. Call `discover_tools(query:"exact references")`
+to find an expert tool, then `discover_tools(enable:["exact_references"])` to expose its
+schema for this session. Enabling does not execute the tool. Clients without dynamic
+catalog support can configure `CONTEXTPRO_TOOL_PROFILE=full` before startup.
+
+Do not repeat the entire workflow for a one-line lookup. Check supporting import
+pointers before trusting a top result as the complete edit scope. If a packet says
+`context.unchanged:true`, retain the previous packet; after losing context, omit the
+previous ID to recover a full response. `search(profile:true, format:"compact")` exposes
+phase timings for performance diagnosis.
 
 ## Routing and freshness
 

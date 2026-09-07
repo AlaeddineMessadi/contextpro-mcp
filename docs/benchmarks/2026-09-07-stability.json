@@ -1,0 +1,11 @@
+{
+  "durationMs": 6349,
+  "result": {
+    "content": [
+      {
+        "type": "text",
+        "text": "Reindex complete in 6102ms\n  Files: 265 total, 235 indexed, 30 skipped, 0 removed\n  Symbols: 7387 extracted\n  Imports: 1369 resolved\n  Auto hubs: 0\n  Embeddings: skipped (noEmbed=true or CONTEXTPRO_REINDEX_NO_EMBED set)\n  Mode: force (all files re-processed)"
+      }
+    ]
+  }
+}

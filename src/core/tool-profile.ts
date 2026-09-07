@@ -11,6 +11,7 @@ export interface ContextProToolAnnotations {
 }
 
 const CORE_TOOLS = new Set([
+  "discover_tools",
   "health",
   "status",
   "efficiency_report",
@@ -51,6 +52,7 @@ const CORE_TOOLS = new Set([
 ]);
 
 const WORKFLOW_TOOLS = new Set([
+  "discover_tools",
   "status", "task_pack", "search", "grep", "skeleton", "explain",
   "blast_radius", "validate_scope", "memory_record_task", "efficiency_report",
   "artifact_read", "reindex",
@@ -88,7 +90,7 @@ const DESTRUCTIVE_TOOLS = new Set([
 
 export function resolveToolProfile(value?: string): ToolProfile {
   const name = value?.trim().toLowerCase();
-  return name === "workflow" ? "workflow" : name === "core" ? "core" : "full";
+  return !name || name === "workflow" ? "workflow" : name === "core" ? "core" : "full";
 }
 
 export function isToolEnabled(name: string, profile: ToolProfile): boolean {

@@ -5,6 +5,7 @@ import { walkDirectory } from "../core/walker.js";
 import { analyzeContent, analyzeFile, flattenSymbols, isSupportedFile } from "../core/parser.js";
 import {
   fetchEmbedding,
+  searchTerms,
   matchesSearchConstraints,
   getEmbeddingBatchSize,
   deleteFileSearchEmbedding,
@@ -41,10 +42,7 @@ export interface SemanticCodeSearchData {
   results: SearchResult[];
 }
 
-let cachedIndex: SearchIndex | null = null;
-let cachedLexicalOnly = false;
-let cachedRootDir: string | null = null;
-let lastIndexTime = 0;
+const indexCache = new Map<string, { index: SearchIndex; at: number }>();
 
 const INDEX_TTL_MS = 60000;
 const TEXT_INDEX_EXTENSIONS = new Set([
@@ -245,9 +243,10 @@ async function buildSearchDocumentsFromDB(rootDir: string): Promise<SearchDocume
 }
 
 async function buildIndex(rootDir: string, skipEmbeddings = false): Promise<SearchIndex> {
-  if (cachedIndex && cachedRootDir === rootDir && cachedLexicalOnly === skipEmbeddings && Date.now() - lastIndexTime < INDEX_TTL_MS) {
-    return cachedIndex;
-  }
+  const db = await getDB(rootDir);
+  const key = JSON.stringify([rootDir, db.getIndexGeneration(), skipEmbeddings, process.env.CONTEXTPRO_EMBED_MODEL, process.env.CONTEXTPRO_PROVIDER]);
+  const cached = indexCache.get(key);
+  if (cached && Date.now() - cached.at < INDEX_TTL_MS) return cached.index;
 
   let docs = await buildSearchDocumentsFromDB(rootDir);
   if (docs.length === 0) {
@@ -262,16 +261,14 @@ async function buildIndex(rootDir: string, skipEmbeddings = false): Promise<Sear
 
   const index = new SearchIndex();
   await index.index(docs, rootDir, skipEmbeddings);
-  cachedLexicalOnly = skipEmbeddings;
-  cachedIndex = index;
-  cachedRootDir = rootDir;
-  lastIndexTime = Date.now();
+  indexCache.set(key, { index, at: Date.now() });
+  while (indexCache.size > 8) indexCache.delete(indexCache.keys().next().value!);
 
   return index;
 }
 
 function queryTerms(query: string): string[] {
-  return (query.match(/[A-Za-z0-9_]+/g) ?? []).map((term) => term.toLowerCase()).filter((term) => term.length > 1);
+  return searchTerms(query);
 }
 
 function hasTestIntent(query: string): boolean {
@@ -302,7 +299,8 @@ function rankSearchResults(query: string, results: SearchResult[], topK: number 
 async function fuseFtsMatches(rootDir: string, query: string, results: SearchResult[], topK: number | undefined, options: SemanticSearchOptions): Promise<SearchResult[]> {
   if (options.requireSemanticMatch) return results;
   const db = await getDB(rootDir);
-  const ftsMatches = db.searchFileText(query, Math.max((topK ?? 5) * 4, 20));
+  const ftsQuery = /^[A-Za-z_$][\w$]*$/.test(query.trim()) ? query : queryTerms(query).join(" ");
+  const ftsMatches = db.searchFileText(ftsQuery, Math.max((topK ?? 5) * 4, 20));
   if (ftsMatches.length === 0) return results;
   const terms = queryTerms(query);
   const byPath = new Map(results.map((result) => [result.path, result]));
@@ -456,7 +454,7 @@ export async function semanticCodeSearchResults(options: SemanticSearchOptions):
     requireSemanticMatch: resolvedOptions.requireSemanticMatch,
     fusion: resolvedOptions.fusion,
   };
-  const rawResults = await index.search(options.query, searchOptions);
+  const rawResults = await index.search(options.query, { ...searchOptions, topK: Math.max((searchOptions.topK ?? 5) * 4, 20) });
   const fusedResults = await fuseFtsMatches(options.rootDir, options.query, rawResults, Math.max((searchOptions.topK ?? 5) * 2, 10), resolvedOptions);
   const rankedResults = rankSearchResults(options.query, fusedResults, fusedResults.length)
     .filter((result) => matchesSearchConstraints(result, resolvedOptions))
@@ -497,9 +495,7 @@ export async function semanticCodeSearch(options: SemanticSearchOptions): Promis
 }
 
 export function invalidateSearchCache(): void {
-  cachedIndex = null;
-  cachedRootDir = null;
-  lastIndexTime = 0;
+  indexCache.clear();
 }
 
 export async function refreshFileSearchEmbeddings(options: { rootDir: string; relativePaths: string[] }): Promise<number> {

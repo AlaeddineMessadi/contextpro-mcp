@@ -213,7 +213,9 @@ Run independent reads in parallel. Structural tools refresh changed files before
 
 ## Tool surface
 
-ContextPro offers three tool profiles: **workflow (12 tools)** for everyday discovery and validation, **core (37)** with editing and graph operations, and **full (59)** for all capabilities. `init` selects `workflow`; existing installations keep their profile, and an unset profile retains the backward-compatible `full` default.
+ContextPro defaults to **workflow (13 tools)** for everyday discovery and validation. `discover_tools` finds and enables expert tools for the current session without running them. Explicit **core** and **full** profiles remain available; an unset profile now selects workflow. Clients that require every tool up front can set `CONTEXTPRO_TOOL_PROFILE=full`.
+
+Use `search(format:"compact")` for concise JSON with code locations and freshness warnings; `json` retains the verbose diagnostic format. `include_dependencies:true` adds at most three import pointers from the two strongest file matches. `profile:true` reports freshness, retrieval/ranking and artifact timings in JSON/compact responses. `skeleton(exported_only:true)` limits TypeScript/JavaScript output to public declarations and preserves multiline signatures and interface contracts. Unchanged task-packet deltas return a small acknowledgement with recovery IDs instead of repeating the packet metadata.
 
 ### Orientation
 | Tool | What it does |

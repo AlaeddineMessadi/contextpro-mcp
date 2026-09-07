@@ -52,5 +52,12 @@ describe("retrieval benchmark", () => {
     assert.throws(() => summarizePairedAgentRuns([baseline, { ...contextpro, tokenSource: "estimated" }]), /measured provider usage/);
     assert.throws(() => summarizePairedAgentRuns([baseline, { ...contextpro, model: "different" }]), /pair/);
     assert.throws(() => summarizePairedAgentRuns([baseline, baseline, contextpro]), /Duplicate/);
+    const unpriced = [{ ...baseline, costUsd: null, costSource: 'unavailable', cachedInputTokens: 40, wallTimeMs: 10 }, { ...contextpro, costUsd: null, costSource: 'unavailable', cachedInputTokens: 70, wallTimeMs: 30 }];
+    const measured = summarizePairedAgentRuns(unpriced);
+    assert.equal(measured.costDifferenceUsd, null);
+    assert.equal(measured.cachedInputTokenDifference, -30);
+    assert.equal(measured.wallTimeDifferenceMs, -20);
+    assert.throws(() => summarizePairedAgentRuns([{ ...unpriced[0], cachedInputTokens: 101 }, unpriced[1]]), /Invalid/);
+    assert.throws(() => summarizePairedAgentRuns([{ ...unpriced[0], cachedInputTokens: 1.5 }, unpriced[1]]), /Invalid/);
   });
 });
