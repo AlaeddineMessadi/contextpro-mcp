@@ -34,8 +34,9 @@ needed. Do not automatically call status, reindex, report or memory on each task
    The default crux excerpt often avoids a second read; verbose `json` is for diagnostics.
 3. Use `skeleton` before reading a large file; use `explain` for one symbol body
    and its immediate dependencies. `exported_only:true` gives a TS/JS public API view.
-4. Before changing or deleting a symbol, call `blast_radius`. Use
-   `exact_references` for compiler-resolved TS/JS references and `change_impact`
+4. Before changing a symbol, use `blast_radius` for textual scope; `kind:"call"`
+   filters call-containing lines and explicit kind counts avoid manual recounts.
+   Use `exact_references` for compiler-resolved TS/JS rename checks and `change_impact`
    or `test_impact` to plan validation.
 5. After edits, use `validate_scope` or `lint`, then record durable findings with
    `memory_record_task` when they will help a later session.
@@ -135,3 +136,14 @@ targets or parents. Source replacements use exact spans or reject ambiguity.
 Multi-file edits are not a filesystem transaction: partial failures identify
 completed/pending files and recovery points. Handle a conflict by reading current
 context and retrying deliberately.
+
+
+## Parser availability
+
+WASM parsing runs in a reusable child process with baseline compilation, bounded
+queue/source sizes, a 15-second request deadline and a short recovery cooldown.
+A fatal parser exit cannot terminate the MCP process. Structural reads fall back
+to regex parsing when unavailable; this is reduced precision, not exact semantic
+analysis. Supported-language syntax validation fails closed on parser failure.
+`health` reports the executable path and parser backend so a client using an old
+cached launch command is visible. Restart the client to reload changed MCP config.

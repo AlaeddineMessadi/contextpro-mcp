@@ -36,6 +36,8 @@ export interface StartupHealthReport {
   rootDir: string;
   runtime: {
     nodeVersion: string;
+    execPath: string;
+    parserBackend: string;
     nodeAbi: string;
     pid: number;
     serverVersion: string;
@@ -122,6 +124,8 @@ export async function runStartupHealthCheck(rootDir: string, options: { autoRepa
     rootDir,
     runtime: {
       nodeVersion: process.version,
+      execPath: process.execPath,
+      parserBackend: "isolated-process/liftoff",
       nodeAbi: process.versions.modules ?? "unknown",
       pid: process.pid,
       serverVersion: readServerVersion(),
@@ -140,6 +144,7 @@ export function formatStartupHealthReport(report: StartupHealthReport): string {
     `[contextpro/startup] status=${report.status} root=${report.rootDir}`,
     `[contextpro/startup] version=${report.runtime.serverVersion} build=${report.runtime.buildStamp}`,
     `[contextpro/startup] runtime node=${report.runtime.nodeVersion} abi=${report.runtime.nodeAbi} pid=${report.runtime.pid}`,
+    `[contextpro/startup] executable=${report.runtime.execPath} parser=${report.runtime.parserBackend}`,
     `[contextpro/startup] project ok=${report.project.ok} projectId=${report.project.projectId ?? "unknown"} gitRoot=${report.project.gitRoot ?? "unknown"} fingerprint=${report.project.fingerprint ?? "unknown"}`,
     `[contextpro/startup] storage ok=${report.storage.ok} dbOpen=${report.storage.databaseOpen.ok}`,
   ];

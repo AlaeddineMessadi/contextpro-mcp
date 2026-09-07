@@ -579,17 +579,17 @@ export function registerTools(
 
   server.tool(
     "blast_radius",
-    "Before deleting or modifying code, check the BLAST RADIUS. Traces every file and line where a specific symbol " +
-    "(function, class, variable) is imported or used. Prevents orphaned code. Also warns if usage count is low (candidate for inlining).",
+    "Find textual usage candidates with counts by kind. Use kind:call for call-containing lines. Includes same-name symbols; use exact_references for binding-resolved TS/JS rename checks.",
     {
       symbol_name: z.string().min(1).describe("The function, class, or variable name to trace across the codebase."),
       file_context: z.string().optional().describe("The file where the symbol is defined. Excludes the definition line from results."),
       mode: z.enum(["summary", "detailed"]).optional().describe("Summary groups usages by containing symbol (default); detailed returns every matching line."),
+      kind: z.enum(["call", "import", "type-reference", "mock/stub", "comment/string"]).optional().describe("Return only this usage kind; totals still show all kinds."),
     },
-    withRequestActivity(async ({ symbol_name, file_context, mode }) => ({
+    withRequestActivity(async ({ symbol_name, file_context, mode, kind }) => ({
       content: [{
         type: "text" as const,
-        text: await getBlastRadius({ rootDir: rootDir(), symbolName: symbol_name, fileContext: file_context, mode }),
+        text: await getBlastRadius({ rootDir: rootDir(), symbolName: symbol_name, fileContext: file_context, mode, kind }),
       }],
     }), { toolName: "blast_radius", ensureFreshIndex: true }),
   );

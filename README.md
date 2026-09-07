@@ -144,7 +144,7 @@ Prefer a hosted API (OpenAI, OpenRouter, Groq, …) or a different local runtime
 
 ContextPro does **not** use, proxy, or consume the coding agent's own model context. It has an independent, optional model connection for two narrow jobs: **embeddings** power semantic `search`, while a **chat model** can improve cluster labels, hub names, and ambiguous planning reranks. Everything else is pure AST/graph work with no model.
 
-The recommended first install configures embeddings only. Leave `CONTEXTPRO_CHAT_MODEL` unset unless you explicitly want those optional chat-assisted refinements; setting it can make network calls or use local compute. See [why a separate model exists](INSTALL.md#why-contextpro-has-model-settings) for the precise behavior and privacy/cost implications.
+The recommended first install configures embeddings only. Leave `CONTEXTPRO_CHAT_MODEL` unset unless you explicitly want those optional chat-assisted refinements; setting it can make network calls or use local compute. Planning reranks additionally require `CONTEXTPRO_CHAT_RERANK=true`; they cancel after 1.5 seconds and retain deterministic ranking on failure. See [why a separate model exists](INSTALL.md#why-contextpro-has-model-settings) for the precise behavior and privacy/cost implications.
 
 You configure all of it with **five short keys** — same names for every provider:
 
@@ -298,6 +298,12 @@ Use `search(format:"compact")` for concise JSON with code locations and freshnes
 2. **Vector embeddings** — file-search and identifier embeddings via your provider. **Eagerly populated by default in 1.2.1+** so the first `search` call doesn't pay the cold cost.
 
 Pass `no_embed: true` (or set `CONTEXTPRO_REINDEX_NO_EMBED=true`) to skip step 2 — useful when the embedding provider is unreachable or you want to defer the cost. Search will fall back to keyword ranking until you reindex without the flag. If embedding fails mid-reindex, the structural index still completes and `status` surfaces the actual error.
+
+Interactive searches load existing vectors and never rebuild corpus embeddings. Missing vectors use lexical ranking; semantic-only requests still require semantic matches. Query embedding work shares a 1.5-second request budget (`CONTEXTPRO_QUERY_EMBED_TIMEOUT_MS`, bounded to 100–10000 ms), including actual HTTP cancellation for Ollama. Unchanged identifier definitions reuse content-verified persisted symbols.
+
+WASM parsing runs in a reusable child process with optimizing WASM compilation disabled. A parser crash or timeout rejects pending parses and allows structural read fallbacks while MCP stays connected; syntax-checked edits fail closed if validation is unavailable. The child restarts on a later request after a short cooldown. `health` and startup logs identify the runtime executable and parser backend. Restart the coding client after changing its saved Node command; reconnecting can reuse a cached command.
+
+See the [app-a incident audit](docs/benchmarks/2026-09-07-app-a-incident.md) for the observed crash, benchmark limitations, and direct regression replay.
 
 ---
 

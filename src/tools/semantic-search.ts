@@ -260,7 +260,9 @@ async function buildIndex(rootDir: string, skipEmbeddings = false): Promise<Sear
   }
 
   const index = new SearchIndex();
-  await index.index(docs, rootDir, skipEmbeddings);
+  // Reads consume existing vectors. Missing/model-mismatched vectors must not
+  // turn an interactive lookup into an unbounded corpus embedding job.
+  await index.index(docs, rootDir, skipEmbeddings, true);
   indexCache.set(key, { index, at: Date.now() });
   while (indexCache.size > 8) indexCache.delete(indexCache.keys().next().value!);
 

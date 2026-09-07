@@ -33,7 +33,7 @@ it('shares one WASM grammar load across concurrent first-use parses', async () =
   let loads = 0;
   Parser.Language.load = async function (...args) { loads++; return original.apply(this, args); };
   try {
-    const { parseWithTreeSitter } = await import('../../build/core/tree-sitter.js');
+    const { parseWithTreeSitter } = await import('../../build/core/tree-sitter-runtime.js');
     const results = await Promise.all(Array.from({ length: 20 }, (_, index) => parseWithTreeSitter(`package main\nfunc Action${index}() {}`, '.go')));
     assert.equal(loads, 1);
     for (let i = 0; i < results.length; i++) assert.ok(results[i]?.some(symbol => symbol.name === `Action${i}`));

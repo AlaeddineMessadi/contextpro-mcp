@@ -117,11 +117,16 @@ const MAX_EMBED_CHUNK_CHARS = 8000;
 
 type OllamaEmbedClient = { embed: (params: Record<string, unknown>) => Promise<{ embeddings: number[][] }> };
 let ollamaClient: OllamaEmbedClient | null = null;
+const ollamaSignals = new AsyncLocalStorage<AbortSignal>();
 
 async function getOllamaClient(): Promise<OllamaEmbedClient> {
   if (!ollamaClient) {
     const { Ollama } = await import("ollama");
-    ollamaClient = new Ollama({ host: process.env.OLLAMA_HOST }) as unknown as OllamaEmbedClient;
+    // Ollama embed() serializes its request body; a `signal` property there does
+    // not cancel HTTP. Install the signal on the actual fetch instead.
+    ollamaClient = new Ollama({ host: process.env.OLLAMA_HOST,
+      fetch: (input, init) => fetch(input, { ...init, signal: ollamaSignals.getStore() ?? init?.signal }),
+    }) as unknown as OllamaEmbedClient;
   }
   return ollamaClient;
 }
@@ -129,10 +134,10 @@ async function getOllamaClient(): Promise<OllamaEmbedClient> {
 async function callOllamaEmbed(input: string[], signal: AbortSignal): Promise<number[][]> {
   const client = await getOllamaClient();
   const options = getEmbedRuntimeOptions();
-  const request: Record<string, unknown> = { model: EMBED_MODEL, input, signal };
+  const request: Record<string, unknown> = { model: EMBED_MODEL, input };
   if (options) request.options = options;
   try {
-    const response = await client.embed(request);
+    const response = await ollamaSignals.run(signal, () => client.embed(request));
     return response.embeddings;
   } catch (error) {
     throw new Error(formatOllamaModelError(error, "embedding", EMBED_MODEL));
@@ -161,6 +166,8 @@ async function callOpenAIEmbed(input: string[], signal: AbortSignal): Promise<nu
 }
 
 async function callProviderEmbed(input: string[], signal: AbortSignal): Promise<number[][]> {
+  signal = AbortSignal.any([signal, ...(queryDeadline.getStore() ? [queryDeadline.getStore()!] : [])]);
+  signal.throwIfAborted();
   if (EMBED_PROVIDER === "openai") {
     return callOpenAIEmbed(input, signal);
   }
@@ -594,14 +601,17 @@ function getMatchedSymbolEntries(symbols: SymbolSearchEntry[], queryTerms: Set<s
 
 // Query vectors are shared only inside one retrieval request, never across projects or turns.
 const queryEmbeddings = new AsyncLocalStorage<Map<string, Promise<number[]>>>();
+const queryDeadline = new AsyncLocalStorage<AbortSignal>();
 export function withQueryEmbeddingCache<T>(fn: () => Promise<T>): Promise<T> {
-  return queryEmbeddings.getStore() ? fn() : queryEmbeddings.run(new Map(), fn);
+  const configured = Number(process.env.CONTEXTPRO_QUERY_EMBED_TIMEOUT_MS ?? 1500);
+  const timeout = Number.isFinite(configured) ? Math.max(100, Math.min(10000, Math.trunc(configured))) : 1500;
+  return queryEmbeddings.getStore() ? fn() : queryDeadline.run(AbortSignal.timeout(timeout), () => queryEmbeddings.run(new Map(), fn));
 }
 export function fetchQueryEmbedding(query: string): Promise<number[]> {
   const cache = queryEmbeddings.getStore();
   let pending = cache?.get(query);
   if (!pending) {
-    pending = fetchEmbedding(query).then(([vector]) => vector ?? []);
+    pending = withQueryEmbeddingCache(() => fetchEmbedding(query).then(([vector]) => vector ?? []));
     cache?.set(query, pending);
   }
   return pending;
@@ -622,7 +632,7 @@ export class SearchIndex {
   private vectors: number[][] = [];
   private lexicalDocuments: Set<string>[] = [];
   private inverseFrequency = new Map<string, number>();
-  async index(docs: SearchDocument[], rootDir: string, skipEmbeddings = false): Promise<void> {
+  async index(docs: SearchDocument[], rootDir: string, skipEmbeddings = false, cacheOnly = false): Promise<void> {
     this.documents = docs;
     this.lexicalDocuments = docs.map(doc => new Set(searchTerms(`${doc.path} ${doc.header} ${doc.symbols.join(" ")} ${doc.content}`)));
     const frequencies = new Map<string, number>();
@@ -647,7 +657,7 @@ export class SearchIndex {
       }
     }
 
-    if (uncached.length > 0) {
+    if (!cacheOnly && uncached.length > 0) {
       const batchSize = getEmbeddingBatchSize();
       const batches: { idx: number; text: string; hash: string }[][] = [];
       for (let b = 0; b < uncached.length; b += batchSize) {
@@ -695,7 +705,7 @@ export class SearchIndex {
     const options = resolveSearchOptions(optionsOrTopK);
     let queryVec: number[];
     try {
-      queryVec = options.semanticWeight === 0 ? [] : await fetchQueryEmbedding(query);
+      queryVec = options.semanticWeight === 0 || !this.vectors.some(vector => vector?.length) ? [] : await fetchQueryEmbedding(query);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       process.stderr.write(`[contextpro/embeddings] degraded: query embed failed (${message}); using keyword-only ranking\n`);

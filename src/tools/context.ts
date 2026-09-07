@@ -40,6 +40,7 @@ export async function getContext(options: ContextOptions): Promise<string> {
       mode: "file", preset: exact ? "keyword_only" : "balanced", topK: 4,
       inlineCode: "off", includeDependencies: true, persistArtifact: false });
     if (found.freshness.warning) notices.push(found.freshness.warning);
+    if (!exact && found.trust.ambiguities.some(warning => warning.includes("keyword-only"))) notices.push("Discovery used lexical fallback; semantic vectors unavailable or weak. Reindex if semantic retrieval is needed.");
     if (found.freshness.indexState !== "fresh") notices.push(`Discovery index: ${found.freshness.indexState}; verify scope with native search if incomplete.`);
     const primary = found.files?.results.map(item => ({ file: item.path })) ?? [];
     targets = [...primary.slice(0, 2), ...found.dependencies?.slice(0, 2).map(item => ({ file: item.path })) ?? [], ...primary.slice(2)];

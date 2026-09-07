@@ -1,0 +1,86 @@
+import {it} from 'node:test';
+import assert from 'node:assert/strict';
+import {createServer} from 'node:http';
+import {mkdtemp,writeFile,rm} from 'node:fs/promises';
+import {join} from 'node:path';
+import {tmpdir} from 'node:os';
+
+it('does not embed a corpus during search, and really aborts a stalled Ollama query',async()=>{
+ let requests=0;
+ const server=createServer((_req,_res)=>{requests++;});
+ await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+ const root=await mkdtemp(join(tmpdir(),'contextpro-offline-search-'));
+ const old=Object.fromEntries(['OLLAMA_HOST','CONTEXTPRO_QUERY_EMBED_TIMEOUT_MS','CONTEXTPRO_PROVIDER'].map(k=>[k,process.env[k]]));
+ process.env.OLLAMA_HOST=`http://127.0.0.1:${server.address().port}`;
+ process.env.CONTEXTPRO_QUERY_EMBED_TIMEOUT_MS='150';
+ process.env.CONTEXTPRO_PROVIDER='ollama';
+ try {
+  const {reindex}=await import('../../build/tools/reindex.js');
+  const {unifiedSearch}=await import('../../build/tools/search.js');
+  const {fetchQueryEmbedding}=await import('../../build/core/embeddings.js');
+  await writeFile(join(root,'api.ts'),'export function protectChallenge() { return true; }');
+  await reindex({rootDir:root,noEmbed:true,autoHubs:false});
+  const result=JSON.parse(await unifiedSearch({rootDir:root,query:'protectChallenge',mode:'hybrid',format:'compact'}));
+  assert.ok(result.files.some(item=>item.path==='api.ts'));
+  assert.equal(requests,0,'missing corpus vectors must cause lexical fallback, not an embedding rebuild');
+  const start=performance.now();
+  await assert.rejects(fetchQueryEmbedding('a stalled query'),/abort|timeout|failed/i);
+  assert.equal(requests,1);assert.ok(performance.now()-start<3000,'query must not wait for the old 60-second timeout');
+  (await import('../../build/core/db.js')).closeDB(root);
+ }finally{
+  for(const [key,value]of Object.entries(old)){if(value===undefined)delete process.env[key];else process.env[key]=value;}
+  server.closeAllConnections();await new Promise(resolve=>server.close(resolve));
+  await rm(root,{recursive:true,force:true});
+ }
+});
+
+it('reuses content-verified indexed symbols, but parses changed source',async()=>{
+ const root=await mkdtemp(join(tmpdir(),'contextpro-cached-symbols-'));
+ const {reindex}=await import('../../build/tools/reindex.js');
+ const {semanticIdentifierSearchResults,invalidateIdentifierSearchCache}=await import('../../build/tools/semantic-identifiers.js');
+ const {IsolatedParser}=await import('../../build/core/parser-process.js');
+ const original=IsolatedParser.prototype.request;let parses=0;
+ try{
+  await writeFile(join(root,'api.ts'),'export function protectChallenge() { return true; }');
+  await reindex({rootDir:root,noEmbed:true,autoHubs:false});
+  IsolatedParser.prototype.request=function(...args){parses++;return original.apply(this,args);};
+  const options={rootDir:root,query:'protectChallenge',preset:'keyword_only',expandCallers:false};
+  const first=await semanticIdentifierSearchResults(options);
+  assert.ok(first.results.some(item=>item.name==='protectChallenge'));
+  assert.equal(parses,0,'fresh persisted symbols should avoid WASM parsing');
+  await writeFile(join(root,'api.ts'),'export function protectUpdatedChallenge() { return false; }');
+  invalidateIdentifierSearchCache();
+  const changed=await semanticIdentifierSearchResults({...options,query:'protectUpdatedChallenge'});
+  assert.ok(changed.results.some(item=>item.name==='protectUpdatedChallenge'));
+  assert.ok(parses>0,'a content hash mismatch must bypass persisted symbols');
+ }finally{
+  IsolatedParser.prototype.request=original;invalidateIdentifierSearchCache();
+  (await import('../../build/core/db.js')).closeDB(root);
+  await rm(root,{recursive:true,force:true});
+ }
+});
+
+it('keeps chat reranking opt-in and aborts an opted-in stalled provider',async()=>{
+ let requests=0;
+ const server=createServer((_req,_res)=>{requests++;});
+ await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+ const root=await mkdtemp(join(tmpdir(),'contextpro-rerank-'));
+ const keys=['OLLAMA_HOST','CONTEXTPRO_CHAT_PROVIDER','CONTEXTPRO_CHAT_MODEL','CONTEXTPRO_CHAT_RERANK'];
+ const old=Object.fromEntries(keys.map(k=>[k,process.env[k]]));
+ Object.assign(process.env,{OLLAMA_HOST:`http://127.0.0.1:${server.address().port}`,CONTEXTPRO_CHAT_PROVIDER:'ollama',CONTEXTPRO_CHAT_MODEL:'test'});
+ const candidates=['src/a.ts','src/b.ts','src/c.ts'].map(path=>({path,score:0.7,reason:'candidate',symbols:[]}));
+ try{
+  const {maybeChatRerankPlanningFiles}=await import('../../build/tools/planning-helpers.js');
+  delete process.env.CONTEXTPRO_CHAT_RERANK;
+  assert.deepEqual(await maybeChatRerankPlanningFiles(root,'fix gating',candidates),candidates);
+  assert.equal(requests,0,'a configured provider must not silently enable chat reranking');
+  process.env.CONTEXTPRO_CHAT_RERANK='true';
+  const start=performance.now();
+  assert.deepEqual(await maybeChatRerankPlanningFiles(root,'fix gating',candidates),candidates);
+  assert.equal(requests,1);assert.ok(performance.now()-start<5000);
+ }finally{
+  for(const [key,value]of Object.entries(old)){if(value===undefined)delete process.env[key];else process.env[key]=value;}
+  server.closeAllConnections();await new Promise(resolve=>server.close(resolve));
+  await rm(root,{recursive:true,force:true});
+ }
+});

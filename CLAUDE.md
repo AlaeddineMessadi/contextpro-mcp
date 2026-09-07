@@ -8,7 +8,8 @@ For the workflow profile, use task_pack (max_tokens: 2000,
 graph_hops: 1) or search (mode: "file", format: "compact", include_dependencies: true).
 For an exact name or literal, use grep or explain directly. Use skeleton
 (exported_only: true for TS/JS public APIs) for contracts. Before changing
-shared code, inspect blast_radius; after edits, call validate_scope and run the
+shared code, inspect blast_radius (textual candidates). For TS/JS renames use
+exact_references for binding-resolved results. After edits, call validate_scope and run the
 recommended checks. Pass root explicitly for another worktree.
 
 The default workflow catalog is deliberately small. Use discover_tools to find

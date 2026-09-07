@@ -3,14 +3,14 @@
 
 import { readFile } from "fs/promises";
 import { walkDirectory } from "../core/walker.js";
-import { analyzeFile, flattenSymbols, isSupportedFile } from "../core/parser.js";
+import { analyzeFile, analyzeContent, flattenSymbols, isSupportedFile } from "../core/parser.js";
 import {
   fetchEmbedding,
   fetchQueryEmbedding,
   getEmbeddingBatchSize,
   type EmbeddingCache,
 } from "../core/embeddings.js";
-import { getDB, bufferToVec } from "../core/db.js";
+import { getDB, bufferToVec, hashContent as hashSource } from "../core/db.js";
 import { resolve } from "path";
 import { maskSourceText } from "../core/source-mask.js";
 
@@ -127,6 +127,7 @@ const TRIVIAL_IDENTIFIER_NAMES = new Set([
 
 let cachedRootDir: string | null = null;
 let cachedAt = 0;
+let cachedGeneration = -1;
 let cachedLexicalOnly = false;
 let cachedIndex: IdentifierIndex | null = null;
 
@@ -295,7 +296,9 @@ async function buildIdentifierDocsForFile(rootDir: string, relativePath: string)
 }
 
 async function buildIdentifierIndex(rootDir: string, skipEmbeddings = false): Promise<IdentifierIndex> {
-  if (cachedIndex && cachedRootDir === rootDir && cachedLexicalOnly === skipEmbeddings && Date.now() - cachedAt < INDEX_TTL_MS) {
+  const db = await getDB(rootDir);
+  const generation = db.getIndexGeneration();
+  if (cachedIndex && cachedRootDir === rootDir && cachedGeneration === generation && cachedLexicalOnly === skipEmbeddings && Date.now() - cachedAt < INDEX_TTL_MS) {
     return cachedIndex;
   }
 
@@ -311,8 +314,18 @@ async function buildIdentifierIndex(rootDir: string, skipEmbeddings = false): Pr
       const sourceLines = content.split("\n");
       fileLines.set(file.relativePath, sourceLines);
       fileCodeLines.set(file.relativePath, maskSourceText(content, file.relativePath).split("\n"));
-      const analysis = await analyzeFile(file.path);
-      const flat = flattenSymbols(analysis.symbols);
+      // Reuse persisted syntax only when it describes the exact source just read.
+      // A cold search should not reparse every unchanged file in the repository.
+      const indexed = db.getFile(file.relativePath);
+      const rows = indexed?.content_hash === hashSource(content) ? db.getSymbolsByFile(indexed.id) : null;
+      const names = new Map(rows?.map(row => [row.id, row.name]));
+      const analysis = rows ? null : await analyzeContent(file.path, content);
+      const header = indexed && rows ? indexed.header ?? "" : analysis!.header;
+      const flat = rows ? rows.map(row => ({
+        name: row.name, kind: row.kind, line: row.line_start,
+        endLine: row.line_end ?? row.line_start, signature: row.signature ?? "",
+        parentName: row.parent_symbol_id === null ? undefined : names.get(row.parent_symbol_id),
+      })) : flattenSymbols(analysis!.symbols);
       const structuralRanges = flat
         .filter((symbol) => STRUCTURAL_KINDS.has(symbol.kind))
         .map((symbol) => ({ start: symbol.line, end: symbol.endLine }));
@@ -321,14 +334,14 @@ async function buildIdentifierIndex(rootDir: string, skipEmbeddings = false): Pr
         docs.push({
           id: `${file.relativePath}:${symbol.name}:${symbol.line}`,
           path: file.relativePath,
-          header: analysis.header,
+          header,
           name: symbol.name,
           kind: symbol.kind,
           line: symbol.line,
           endLine: symbol.endLine,
           signature: symbol.signature,
           parentName: symbol.parentName,
-          text: `${symbol.name} ${symbol.kind} ${symbol.signature} ${file.relativePath} ${analysis.header} ${symbol.parentName ?? ""}`,
+          text: `${symbol.name} ${symbol.kind} ${symbol.signature} ${file.relativePath} ${header} ${symbol.parentName ?? ""}`,
         });
       }
     } catch {
@@ -341,13 +354,12 @@ async function buildIdentifierIndex(rootDir: string, skipEmbeddings = false): Pr
     cachedIndex = empty;
     cachedRootDir = rootDir;
     cachedAt = Date.now();
+    cachedGeneration = generation;
     return empty;
   }
 
   const cache = await loadIdentifierCache(rootDir);
   const vectors: number[][] = new Array(docs.length);
-  const uncached: { idx: number; key: string; hash: string; text: string }[] = [];
-  const dirtyKeys = new Set<string>();
 
   for (let i = 0; i < docs.length; i++) {
     const text = docs[i].text;
@@ -355,46 +367,22 @@ async function buildIdentifierIndex(rootDir: string, skipEmbeddings = false): Pr
     const key = `id:${docs[i].id}`;
     if (cache[key]?.hash === hash) {
       vectors[i] = cache[key].vector;
-    } else {
-      uncached.push({ idx: i, key, hash, text });
     }
   }
 
-  if (!skipEmbeddings && uncached.length > 0) {
-    const batchSize = getEmbeddingBatchSize();
-    const batches: typeof uncached[] = [];
-    for (let i = 0; i < uncached.length; i += batchSize) {
-      batches.push(uncached.slice(i, i + batchSize));
-    }
-    const pLimit = (await import("p-limit")).default;
-    const limit = pLimit(4);
-    await Promise.all(batches.map((batch) => limit(async () => {
-      try {
-        const embeddings = await fetchEmbedding(batch.map((entry) => entry.text));
-        for (let j = 0; j < batch.length; j++) {
-          vectors[batch[j].idx] = embeddings[j];
-          cache[batch[j].key] = { hash: batch[j].hash, vector: embeddings[j] };
-          dirtyKeys.add(batch[j].key);
-        }
-      } catch {
-        // Embedding provider unavailable — leave vectors sparse; keyword search still works.
-      }
-    })));
-    await saveIdentifierCache(rootDir, cache, dirtyKeys);
-  }
+  // Interactive reads use cached vectors only; reindex/refresh builds missing vectors.
 
   const index: IdentifierIndex = { docs, vectors, fileLines, fileCodeLines };
   cachedLexicalOnly = skipEmbeddings;
   cachedIndex = index;
   cachedRootDir = rootDir;
   cachedAt = Date.now();
+  cachedGeneration = generation;
   return index;
 }
 
 async function rankCallSites(
-  rootDir: string,
   cache: EmbeddingCache,
-  dirtyKeys: Set<string>,
   queryTerms: Set<string>,
   queryVec: number[],
   symbol: IdentifierDoc,
@@ -441,7 +429,6 @@ async function rankCallSites(
     .sort((a, b) => b.keywordScore - a.keywordScore)
     .slice(0, Math.min(embedBudget, candidates.length));
 
-  const uncached: { key: string; hash: string; text: string }[] = [];
   const keyedCandidates: { candidate: (typeof sampled)[number]; key: string; hash: string }[] = [];
 
   for (const candidate of sampled) {
@@ -449,29 +436,12 @@ async function rankCallSites(
     const text = `${candidate.file} ${candidate.context}`;
     const hash = hashContent(text);
     keyedCandidates.push({ candidate, key, hash });
-    if (cache[key]?.hash !== hash) {
-      uncached.push({ key, hash, text });
-    }
   }
 
-  if (queryVec.length > 0 && uncached.length > 0) {
-    const batchSize = getEmbeddingBatchSize();
-    for (let i = 0; i < uncached.length; i += batchSize) {
-      const batch = uncached.slice(i, i + batchSize);
-      try {
-        const embeddings = await fetchEmbedding(batch.map((item) => item.text));
-        for (let j = 0; j < batch.length; j++) {
-          cache[batch[j].key] = { hash: batch[j].hash, vector: embeddings[j] };
-          dirtyKeys.add(batch[j].key);
-        }
-      } catch {
-        // Embedding provider unavailable — call sites will rank by keyword score only.
-      }
-    }
-  }
+  // Caller previews also avoid embedding work on the read path.
 
-  const ranked: CallSite[] = keyedCandidates.map(({ candidate, key }) => {
-    const vector = cache[key]?.vector;
+  const ranked: CallSite[] = keyedCandidates.map(({ candidate, key, hash }) => {
+    const vector = cache[key]?.hash === hash ? cache[key].vector : undefined;
     const semanticScore = vector && queryVec.length > 0 ? Math.max(cosine(queryVec, vector), 0) : 0;
     const score = clamp01(semanticScore * 0.82 + candidate.keywordScore * 0.18);
     return {
@@ -502,7 +472,7 @@ export async function semanticIdentifierSearchResults(options: SemanticIdentifie
 
   let queryVec: number[];
   try {
-    queryVec = semanticWeight === 0 ? [] : await fetchQueryEmbedding(options.query);
+    queryVec = semanticWeight === 0 || !index.vectors.some(vector => vector?.length) ? [] : await fetchQueryEmbedding(options.query);
   } catch {
     queryVec = [];
   }
@@ -553,15 +523,12 @@ export async function semanticIdentifierSearchResults(options: SemanticIdentifie
 
   const top = scored.sort((a, b) => b.score - a.score).slice(0, topK);
   const cache = await loadIdentifierCache(options.rootDir);
-  const dirtyKeys = new Set<string>();
   const results: SemanticIdentifierHit[] = [];
 
   for (let i = 0; i < top.length; i++) {
     const item = top[i];
     const calls = options.expandCallers === false ? { sites: [], total: 0 } : await rankCallSites(
-      options.rootDir,
       cache,
-      dirtyKeys,
       queryTerms,
       queryVec,
       item.doc,
@@ -585,7 +552,6 @@ export async function semanticIdentifierSearchResults(options: SemanticIdentifie
     });
   }
 
-  await saveIdentifierCache(options.rootDir, cache, dirtyKeys);
   return { query: options.query, results };
 }
 

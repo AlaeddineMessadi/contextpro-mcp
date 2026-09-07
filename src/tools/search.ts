@@ -255,7 +255,7 @@ export function unifiedSearchData(options: UnifiedSearchOptions): Promise<Unifie
 async function unifiedSearchDataUncached(options: UnifiedSearchOptions): Promise<UnifiedSearchData> {
   const started = performance.now();
   options = { ...options, ...applySearchPreset(options) };
-  const refreshState = await quickRefresh(options.rootDir, { includeEmbeddings: options.preset !== "keyword_only" }).catch(() => ({ staleCount: 0, refreshed: false, indexingTimedOut: false }));
+  const refreshState = await quickRefresh(options.rootDir, { includeEmbeddings: false }).catch(() => ({ staleCount: 0, refreshed: false, indexingTimedOut: false }));
   const { staleCount, refreshed } = refreshState;
   const refreshedAt = performance.now();
   const mode = options.mode ?? "hybrid";

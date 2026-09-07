@@ -213,6 +213,8 @@ export async function maybeChatRerankPlanningFiles(
   query: string,
   candidates: PlanningFileCandidate[],
 ): Promise<PlanningFileCandidate[]> {
+  // Configuring a chat provider must not silently add model calls to retrieval.
+  if (process.env.CONTEXTPRO_CHAT_RERANK !== "true") return candidates;
   if (!shouldUseChatRerank(candidates, query)) return candidates;
   if (!(await hasConfiguredChatModel(rootDir))) return candidates;
 
@@ -228,7 +230,7 @@ export async function maybeChatRerankPlanningFiles(
   ].join("\n");
 
   try {
-    const raw = await chatCompletion(rootDir, prompt);
+    const raw = await chatCompletion(rootDir, prompt, { timeoutMs: 1500 });
     const json = extractJsonBlock(raw);
     if (!json) return candidates;
     const parsed = JSON.parse(json) as { ranked_paths?: string[] };
