@@ -1,10 +1,31 @@
 # ContextPro MCP — Agent Workflow Guide
 
 Use ContextPro as the first interface for understanding an unfamiliar repository. It returns
-ranked, bounded context; fall back to native file/search tools only when a
-ContextPro tool cannot provide the exact detail you need.
+ranked, bounded context. Use native file/search tools when they are cheaper for a
+known exact target or when retrieved context is incomplete.
 
-## Fast workflow
+## Lean workflow (opt-in)
+
+Set `CONTEXTPRO_TOOL_PROFILE=lean` for two advertised tools: `context` and
+`discover_tools`. Start with `context(query:"your repository question")`: search,
+source reading and deduplication run together on the server. Known targets use
+`context(targets:[{file:"src/api.ts",symbol:"create"},{file:"src/types.ts"}])`
+without search, index waits or embeddings. Short forwarding functions can include
+up to two possible same-file helpers, one level deep, within the same budget.
+These are candidates from source names, not compiler-resolved call-graph claims. Optional `start`/`end` are inclusive,
+one-based line numbers, mutually exclusive with `symbol`.
+
+The response budget defaults to 4000 estimated tokens (UTF-8 bytes/4). Omissions
+are explicit; request narrower targets or raise the budget if evidence is missing.
+Exact identifier queries use lexical search; natural-language queries retain
+hybrid ranking. Large discovered files use bounded whole declarations selected
+by query-term coverage per byte. This is an extractive heuristic, not a trained
+retrieval policy or a guarantee that all relevant code was found.
+
+Use `discover_tools` to enable editing, graph, validation or diagnostics only when
+needed. Do not automatically call status, reindex, report or memory on each task.
+
+## Existing workflow
 
 1. Start with `task_pack(max_tokens:2000, graph_hops:1)` for a task-specific context bundle, or `status` when
    diagnosing index health.
@@ -63,8 +84,9 @@ tool. Prefer canonical names; deprecated aliases remain only for compatibility.
 
 ## End-of-task reporting
 
-Before your final answer, call `efficiency_report` with `scope: "session"` and
-`format: "json"`. Include its `finalSummary` once. This report isolates the MCP
+Metrics are recorded automatically. Only when asked for a usage report, call
+`efficiency_report(scope:"session", format:"json")` and label its `finalSummary`
+as an estimate. Do not add a model turn solely to produce an estimated footer. This report isolates the MCP
 process session from concurrent agents using the same project database. It is
 cumulative for that server session, not necessarily a single chat task: label it
 as session usage when a client keeps the server alive across tasks.
@@ -84,7 +106,7 @@ The report covers completed calls before the report request itself.
 
 Per-call footers are off by default to avoid repeating the same explanation.
 `CONTEXTPRO_EFFICIENCY_FOOTER=true` enables legacy per-call estimates; use the
-net session report for the final answer, not a sum of positive footers.
+net session report when requested, not a sum of positive footers.
 
 ## Incremental packets and optional graph context
 

@@ -16,6 +16,7 @@ export interface ExplainOptions {
   depth?: number;
   symbols?: Array<{ symbol: string; file?: string }>;
   maxTokens?: number;
+  format?: "full" | "source";
 }
 
 interface SymbolBody {
@@ -253,7 +254,7 @@ export async function explain(options: ExplainOptions): Promise<string> {
     if (!options.symbols.length || options.symbols.length > 6) throw new Error("Batch explain accepts one to six symbols.");
     const budget = options.maxTokens ?? 4000;
     if (!Number.isInteger(budget) || budget < 512 || budget > 12000) throw new Error("max_tokens must be an integer from 512 to 12000.");
-    const results = await Promise.all(options.symbols.map(item => explain({ rootDir: options.rootDir, ...item, depth: options.depth ?? 0 })));
+    const results = await Promise.all(options.symbols.map(item => explain({ rootDir: options.rootDir, ...item, depth: options.depth ?? 0, format: options.format })));
     const sections: string[] = [];
     const omitted: Array<{ symbol: string; file?: string }> = [];
     // Reserve room for explicit omitted targets; never return a truncated function body.
@@ -307,6 +308,8 @@ export async function explain(options: ExplainOptions): Promise<string> {
   if (!symbolBody) {
     return `Symbol "${options.symbol}" not found${options.file ? ` in ${options.file}` : " in the project"}.`;
   }
+
+  if (options.format === "source") return `${symbolBody.file}:${symbolBody.lineStart}-${symbolBody.lineEnd}\n${symbolBody.body}`;
 
   const doc = extractDocComment(symbolBody.body);
   const callerSummary = await summarizeCallers(options.rootDir, symbolBody.name, symbolBody.file);

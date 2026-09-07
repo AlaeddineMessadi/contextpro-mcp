@@ -7,7 +7,7 @@ describe("agent instructions", () => {
   it("keeps manifest instructions tiny because clients may repeat them per tool", async () => {
     const manifest = await readFile(join(process.cwd(), "agent-instructions.md"), "utf8");
     assert.ok(Buffer.byteLength(manifest) <= 400);
-    for (const required of ["task_pack", "search", "skeleton", "blast_radius", "root", "contextpro://instructions"]) {
+    for (const required of ["context", "search", "explain", "discover_tools", "root", "contextpro://instructions"]) {
       assert.match(manifest, new RegExp(`\\b${required}\\b`));
     }
   });

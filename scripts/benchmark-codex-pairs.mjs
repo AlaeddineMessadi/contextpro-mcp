@@ -12,6 +12,8 @@ import { summarizePairedAgentRuns } from './benchmark-retrieval.mjs';
 const exec = promisify(execFile);
 const source = resolve(process.argv[2] || '.');
 const output = resolve(process.argv[3] || '.contextpro/codex-pairs');
+const profile = process.env.CONTEXTPRO_BENCH_PROFILE || 'workflow';
+if (!['workflow', 'lean'].includes(profile)) throw new Error('Benchmark profile must be workflow or lean.');
 await mkdir(output, { recursive: true });
 const config = JSON.parse((await exec('python3', ['-c', 'import pathlib,tomllib,json; c=tomllib.loads((pathlib.Path.home()/".codex/config.toml").read_text()); print(json.dumps({k:c.get(k) for k in ("model","model_reasoning_effort","model_provider","mcp_servers")}))'])).stdout);
 if (!config.model) throw new Error('Set an explicit configured model before measuring paired runs.');
@@ -24,9 +26,12 @@ const tasks = [
   { id:'source-mutation-contract', prompt:'Investigate the actual source mutation path. Does it prevent symlink escapes from the repository, reject stale content at publication, and serialize concurrent writes? Return these three facts and precise file/symbol evidence for the implementation, not just tests or documentation.', properties:{ symlinkEscapeBlocked:{type:'boolean'}, staleWriteRejected:{type:'boolean'}, serializesWrites:{type:'boolean'}, evidence },
     check: answer => answer.symlinkEscapeBlocked === true && answer.staleWriteRejected === true && answer.serializesWrites === true && ['src/core/path-guard.ts','src/core/source-mutation.ts'].every(path=>answer.evidence?.some(e=>e.file.replace(/:\d+(?:-\d+)?$/, '').endsWith(path) && e.symbol)) },
 ];
+const requestedTask = process.env.CONTEXTPRO_BENCH_TASK;
+if (requestedTask && !tasks.some(task => task.id === requestedTask)) throw new Error('Unknown benchmark task.');
 const rows = [];
 for (let taskIndex = 0; taskIndex < tasks.length; taskIndex++) {
   const task = tasks[taskIndex];
+  if (requestedTask && task.id !== requestedTask) continue;
   for (const variant of taskIndex % 2 ? ['contextpro','baseline'] : ['baseline','contextpro']) {
     const runId = `${task.id}-${variant}`;
     const root = await mkdtemp(join(tmpdir(), 'contextpro-codex-pair-'));
@@ -49,9 +54,12 @@ for (let taskIndex = 0; taskIndex < tasks.length; taskIndex++) {
     if (config.model_reasoning_effort) overrides.push('model_reasoning_effort='+JSON.stringify(config.model_reasoning_effort));
     if (variant === 'contextpro') {
       overrides.push('mcp_servers.contextpro.command='+JSON.stringify(mcp.command),'mcp_servers.contextpro.args='+JSON.stringify(mcp.args));
-      for (const [key,value] of Object.entries({...mcp.env, CONTEXTPRO_TOOL_PROFILE:'workflow'})) overrides.push(`mcp_servers.contextpro.env.${key}=${JSON.stringify(value)}`);
+      for (const [key,value] of Object.entries({...mcp.env, CONTEXTPRO_TOOL_PROFILE:profile})) overrides.push(`mcp_servers.contextpro.env.${key}=${JSON.stringify(value)}`);
     }
-    const prompt = `${task.prompt}\n\nThis is a read-only repository comprehension benchmark. Do not edit files, delegate, browse the web, or inspect any files outside this repository. Use source evidence; stop once the requested facts are verified. ${variant === 'contextpro' ? 'Use ContextPro first for discovery, preferring compact/text results and bounded import context. Batch independent symbol reads with explain(symbols:[{symbol,file},...],depth:0) rather than repeated calls. Native tools remain available if needed. Call efficiency_report once at completion, but do not substitute its estimates for provider usage.' : 'Use ordinary local shell search and file reads.'}`;
+    const guidance = profile === 'lean'
+      ? 'Use ContextPro context(query:...) to find and read evidence together. If necessary, batch further file/symbol/line reads with context(targets:[{file,symbol?},...]). Native tools remain available if needed.'
+      : 'Use ContextPro first for discovery, preferring compact/text results and bounded import context. Batch independent symbol reads with explain(symbols:[{symbol,file},...],depth:0,format:"source") rather than repeated calls. Native tools remain available if needed.';
+    const prompt = `${task.prompt}\n\nThis is a read-only repository comprehension benchmark. Do not edit files, delegate, browse the web, or inspect any files outside this repository. Use source evidence; stop once the requested facts are verified. ${variant === 'contextpro' ? guidance : 'Use ordinary local shell search and file reads.'}`;
     const args = ['exec','--ignore-user-config','--ephemeral','--json','--sandbox','workspace-write','-C',root,'--output-schema',schema,'--output-last-message',answerPath,...overrides.flatMap(value=>['-c',value]),prompt];
     console.log(`START ${runId} ${config.model} ${config.model_reasoning_effort ?? 'default effort'}`);
     const started = performance.now();
@@ -71,7 +79,7 @@ for (let taskIndex = 0; taskIndex < tasks.length; taskIndex++) {
     let answer=null;
     try{answer=JSON.parse(await readFile(answerPath,'utf8'));}catch{}
     const success=exitCode===0 && !!answer && task.check(answer);
-    rows.push({taskId:task.id,pairId:'1',variant,model:config.model,reasoningEffort:config.model_reasoning_effort,sourceCommit:(await exec('git',['rev-parse','HEAD'],{cwd:source})).stdout.trim(),preparationMs,wallTimeMs,exitCode,timedOut,success,usage,tokenSource:usage?'provider_usage':null,costUsd:null,costSource:null,answer,acceptanceEvidence:'Typed source-contract facts plus required implementation-file evidence; one deterministic comprehension check, not patch correctness.',contextproCalls:events.filter(e=>e.item?.type==='mcp_tool_call').map(e=>({type:e.type,server:e.item.server,tool:e.item.tool})),root});
+    rows.push({taskId:task.id,pairId:'1',variant,profile,prompt,model:config.model,reasoningEffort:config.model_reasoning_effort,sourceCommit:(await exec('git',['rev-parse','HEAD'],{cwd:source})).stdout.trim(),preparationMs,wallTimeMs,exitCode,timedOut,success,usage,tokenSource:usage?'provider_usage':null,costUsd:null,costSource:null,answer,acceptanceEvidence:'Typed source-contract facts plus required implementation-file evidence; one deterministic comprehension check, not patch correctness.',contextproCalls:events.filter(e=>e.type==='item.completed' && e.item?.type==='mcp_tool_call').map(e=>({type:e.type,server:e.item.server,tool:e.item.tool,status:e.item.status,isError:e.item.result?.isError ?? e.item.result?.content?.some(c=>c.text?.startsWith("MCP error")) ?? false})),root});
     await writeFile(join(output,'runs.json'),JSON.stringify(rows,null,2));
     console.log(`END ${runId}: success=${success} ${Math.round(wallTimeMs)}ms usage=${JSON.stringify(usage)}`);
   }

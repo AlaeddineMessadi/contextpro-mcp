@@ -1,0 +1,62 @@
+[
+  {
+    "taskId": "native-cache-contract",
+    "pairId": "1",
+    "model": "gpt-6-astra",
+    "variant": "baseline",
+    "success": true,
+    "inputTokens": 63365,
+    "outputTokens": 629,
+    "cachedInputTokens": 38912,
+    "wallTimeMs": 33826.093667,
+    "tokenSource": "provider_usage",
+    "costUsd": null,
+    "costSource": "unavailable",
+    "acceptanceEvidence": "Typed source-contract facts plus required implementation-file evidence; one deterministic comprehension check, not patch correctness."
+  },
+  {
+    "taskId": "native-cache-contract",
+    "pairId": "1",
+    "model": "gpt-6-astra",
+    "variant": "contextpro",
+    "success": true,
+    "inputTokens": 67609,
+    "outputTokens": 634,
+    "cachedInputTokens": 51584,
+    "wallTimeMs": 40823.593542,
+    "tokenSource": "provider_usage",
+    "costUsd": null,
+    "costSource": "unavailable",
+    "acceptanceEvidence": "Typed source-contract facts plus required implementation-file evidence; one deterministic comprehension check, not patch correctness."
+  },
+  {
+    "taskId": "source-mutation-contract",
+    "pairId": "1",
+    "model": "gpt-6-astra",
+    "variant": "contextpro",
+    "success": true,
+    "inputTokens": 131212,
+    "outputTokens": 674,
+    "cachedInputTokens": 97664,
+    "wallTimeMs": 57222.809041,
+    "tokenSource": "provider_usage",
+    "costUsd": null,
+    "costSource": "unavailable",
+    "acceptanceEvidence": "Typed source-contract facts plus required implementation-file evidence; one deterministic comprehension check, not patch correctness."
+  },
+  {
+    "taskId": "source-mutation-contract",
+    "pairId": "1",
+    "model": "gpt-6-astra",
+    "variant": "baseline",
+    "success": true,
+    "inputTokens": 97264,
+    "outputTokens": 625,
+    "cachedInputTokens": 65152,
+    "wallTimeMs": 48447.219625,
+    "tokenSource": "provider_usage",
+    "costUsd": null,
+    "costSource": "unavailable",
+    "acceptanceEvidence": "Typed source-contract facts plus required implementation-file evidence; one deterministic comprehension check, not patch correctness."
+  }
+]

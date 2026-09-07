@@ -58,3 +58,9 @@ Structured agent evidence: `codex-pairs-2026-09-07.json` and `codex-pairs-batche
 The build and 614-test suite passed after the main implementation. Tests cover actual MCP tool discovery/enabling, unknown-tool rejection, complete multiline declarations, exported-only filtering, compact-vs-verbose content equivalence, bounded import expansion, one grammar load across 20 concurrent first-use parses, complete-body batch omissions, offline retrieval regressions, and unavailable-cost/negative-difference accounting.
 
 The next performance target is fewer agent turns and less repeated client context, not another unsupported savings percentage. Larger held-out coding tasks with patch acceptance tests are needed to establish when ContextPro actually outperforms a competent shell workflow. Until then, agent guidance makes it the default for unfamiliar discovery while retaining direct exact lookups and fallbacks. Universal “always cheaper/faster” claims would contradict the measured agent runs.
+
+
+Follow-up audit: the saved batched traces also contain a rejected seven-symbol
+request against a six-target schema, in addition to the reporting validation error.
+See [the token-overhead investigation](2026-09-07-token-overhead.md) for the complete
+error accounting, lean retrieval changes and subsequent paired measurements.

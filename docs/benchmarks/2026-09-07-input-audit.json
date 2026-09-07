@@ -1,0 +1,112 @@
+{
+  "tokenizer": "o200k_base (reference, not asserted billing tokenizer)",
+  "catalogs": {
+    "catalog-workflow": {
+      "tools": 13,
+      "tokens": 4140,
+      "bytes": 18409
+    },
+    "catalog-lean": {
+      "tools": 2,
+      "tokens": 486,
+      "bytes": 2068
+    },
+    "catalog-full": {
+      "tools": 61,
+      "tokens": 16186,
+      "bytes": 71764
+    }
+  },
+  "calls": [
+    {
+      "task": "source-mutation-contract",
+      "tool": "search",
+      "textTokens": 1829,
+      "status": "completed",
+      "failed": false
+    },
+    {
+      "task": "source-mutation-contract",
+      "tool": "explain",
+      "textTokens": 83,
+      "status": "failed",
+      "failed": true
+    },
+    {
+      "task": "source-mutation-contract",
+      "tool": "grep",
+      "textTokens": 629,
+      "status": "completed",
+      "failed": false
+    },
+    {
+      "task": "source-mutation-contract",
+      "tool": "explain",
+      "textTokens": 1572,
+      "status": "completed",
+      "failed": false,
+      "bodyBlocks": 4,
+      "sourceWithLocationsTokens": 848,
+      "removablePresentationTokens": 724
+    },
+    {
+      "task": "source-mutation-contract",
+      "tool": "explain",
+      "textTokens": 2318,
+      "status": "completed",
+      "failed": false,
+      "bodyBlocks": 5,
+      "sourceWithLocationsTokens": 1562,
+      "removablePresentationTokens": 756
+    },
+    {
+      "task": "source-mutation-contract",
+      "tool": "efficiency_report",
+      "textTokens": 210,
+      "status": "completed",
+      "failed": false
+    },
+    {
+      "task": "native-cache-contract",
+      "tool": "search",
+      "textTokens": 1924,
+      "status": "completed",
+      "failed": false
+    },
+    {
+      "task": "native-cache-contract",
+      "tool": "explain",
+      "textTokens": 1732,
+      "status": "completed",
+      "failed": false,
+      "bodyBlocks": 5,
+      "sourceWithLocationsTokens": 1069,
+      "removablePresentationTokens": 663
+    },
+    {
+      "task": "native-cache-contract",
+      "tool": "explain",
+      "textTokens": 636,
+      "status": "completed",
+      "failed": false,
+      "bodyBlocks": 2,
+      "sourceWithLocationsTokens": 425,
+      "removablePresentationTokens": 211
+    },
+    {
+      "task": "native-cache-contract",
+      "tool": "efficiency_report",
+      "textTokens": 86,
+      "status": "failed",
+      "failed": true
+    }
+  ],
+  "native": {
+    "tokens": 3686,
+    "bytes": 15025
+  },
+  "safety": {
+    "tokens": 3612,
+    "bytes": 15216
+  }
+}

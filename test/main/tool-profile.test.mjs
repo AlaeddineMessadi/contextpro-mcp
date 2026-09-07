@@ -68,7 +68,7 @@ describe('workflow profile budget', () => {
     const old = process.env.CONTEXTPRO_TOOL_PROFILE;
     const sizes = {};
     try {
-      for (const profile of ['workflow', 'core', 'full']) {
+      for (const profile of ['lean', 'workflow', 'core', 'full']) {
         process.env.CONTEXTPRO_TOOL_PROFILE = profile;
         const server = new McpServer({ name: 'profile', version: '0' });
         registerTools(server, process.cwd(), handler => handler, () => {});
@@ -77,6 +77,12 @@ describe('workflow profile budget', () => {
         await Promise.all([server.connect(a), client.connect(b)]);
         const catalog = await client.listTools();
         sizes[profile] = Buffer.byteLength(JSON.stringify(catalog));
+        if (profile === 'lean') {
+          assert.deepEqual(catalog.tools.map(t => t.name).sort(), ['context', 'discover_tools']);
+          const enabled = await client.callTool({ name: 'discover_tools', arguments: { enable: ['status'] } });
+          assert.equal(enabled.isError, undefined);
+          assert.deepEqual((await client.listTools()).tools.map(t => t.name).sort(), ['context', 'discover_tools', 'status']);
+        }
         if (profile === 'workflow') {
           assert.equal(catalog.tools.length, 13);
           for (const name of ['task_pack', 'efficiency_report', 'reindex', 'artifact_read']) assert.ok(catalog.tools.some(t => t.name === name));
@@ -92,6 +98,7 @@ describe('workflow profile budget', () => {
         }
         await client.close(); await server.close();
       }
+      assert.ok(sizes.lean < sizes.workflow * .25);
       assert.ok(sizes.workflow < sizes.core * .6);
       assert.ok(sizes.workflow < 24000, `catalog grew to ${sizes.workflow} bytes`);
     } finally {

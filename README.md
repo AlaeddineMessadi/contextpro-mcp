@@ -213,7 +213,7 @@ Run independent reads in parallel. Structural tools refresh changed files before
 
 ## Tool surface
 
-ContextPro defaults to **workflow (13 tools)** for everyday discovery and validation. `discover_tools` finds and enables expert tools for the current session without running them. Explicit **core** and **full** profiles remain available; an unset profile now selects workflow. Clients that require every tool up front can set `CONTEXTPRO_TOOL_PROFILE=full`.
+ContextPro defaults to **workflow (13 tools)** for everyday discovery and validation. `discover_tools` finds and enables expert tools for the current session without running them. Opt-in **lean** exposes only `context` and `discover_tools`: one-call source retrieval plus expert discovery. Explicit **core** and **full** profiles remain available; an unset profile now selects workflow. Clients that require every tool up front can set `CONTEXTPRO_TOOL_PROFILE=full`.
 
 Use `search(format:"compact")` for concise JSON with code locations and freshness warnings; `json` retains the verbose diagnostic format. `include_dependencies:true` adds at most three import pointers from the two strongest file matches. `profile:true` reports freshness, retrieval/ranking and artifact timings in JSON/compact responses. `skeleton(exported_only:true)` limits TypeScript/JavaScript output to public declarations and preserves multiline signatures and interface contracts. Unchanged task-packet deltas return a small acknowledgement with recovery IDs instead of repeating the packet metadata.
 
@@ -221,6 +221,7 @@ Use `search(format:"compact")` for concise JSON with code locations and freshnes
 | Tool | What it does |
 | --- | --- |
 | `status` | File counts, index state, memory stats, embedding provider, git, recent timings, and 24h efficiency estimate |
+| `context` (lean/full) | Find and read bounded, deduplicated source in one call; exact targets bypass search and embeddings |
 | `efficiency_report` | Persistent estimated token savings by tool; optional model-price scenario, with no prompt/code retention |
 | `tree` | Structural tree with file headers + symbols + line ranges |
 | `repo_map` | Compact whole-repo outline ranked by importance |
@@ -419,7 +420,7 @@ Canonical prefix is `CONTEXTPRO_*` (since 1.2.0). Legacy `CONTEXTPLUS_*` names w
 | `CONTEXTPRO_NATIVE_AUTO_REPAIR` | `true` | Repair native bindings in an isolated ABI/version cache |
 | `CONTEXTPRO_NATIVE_CACHE_DIR` | `~/.cache/contextpro/native` | Shared cache of separate native runtimes |
 | `CONTEXTPRO_ALLOW_UNSAFE_ROOT` | `false` | Allow `/` or home-level project roots |
-| `CONTEXTPRO_TOOL_PROFILE` | `full` | `workflow` has 12 daily tools; `core` adds editing/graphs; `full` exposes all tools |
+| `CONTEXTPRO_TOOL_PROFILE` | `workflow` | `lean`: 2 tools; `workflow`: 13; `core`: editing/graphs; `full`: all tools |
 | `CONTEXTPRO_PROJECT_ID` | (auto) | Override project identity |
 | `CONTEXTPRO_CLIENT_ID` | (none) | Group projects under one client for cross-project memory |
 

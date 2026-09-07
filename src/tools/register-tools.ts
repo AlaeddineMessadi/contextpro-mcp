@@ -25,6 +25,7 @@ import { getChangedSince } from "./changed-since.js";
 import { getRelated } from "./related.js";
 import { getTestMap } from "./test-map.js";
 import { explain } from "./explain.js";
+import { getContext } from "./context.js";
 import { getRepoMap } from "./repo-map.js";
 import { resolveSymbol } from "./resolve-symbol.js";
 import { grepProject } from "./grep.js";
@@ -140,6 +141,14 @@ export function registerTools(
     if (!active.has(name)) registered?.disable?.();
     return registered;
   };
+
+  server.tool("context", "Find and read source evidence in one call. Query for discovery; targets for batched exact file/symbol/line reads without search. Returns deduplicated source ranges with explicit omissions. Prefer this for repository questions; stop when evidence suffices.", {
+    query: z.string().max(2000).optional(),
+    targets: z.array(z.object({ file: z.string().max(240), symbol: z.string().max(200).optional(), start: z.number().int().min(1).optional(), end: z.number().int().min(1).optional() })).min(1).max(6).optional(),
+    max_tokens: z.number().int().min(512).max(12000).optional().describe("Response budget, UTF-8 bytes/4; default 4000. Raise or narrow targets if omitted."),
+  }, withRequestActivity(async ({ query, targets, max_tokens }) => ({
+    content: [{ type: "text" as const, text: await getContext({ rootDir: rootDir(), query, targets, maxTokens: max_tokens }) }],
+  }), { toolName: "context", waitForIndexing: false }));
 
   server.tool("discover_tools", "Find expert tools by purpose, or enable named tools for this session. Enabling exposes their schemas; it does not execute them.", {
     query: z.string().max(500).optional().describe("Purpose, e.g. exact references, rename, tests, or memory."),
@@ -1062,11 +1071,12 @@ export function registerTools(
       max_tokens: z.number().int().min(512).max(12000).optional().describe("Batch response byte/4 budget; default 4000. Whole omitted bodies are reported."),
       file: z.string().optional().describe("File to explain (overview mode if no symbol given)."),
       depth: z.number().optional().describe("How many levels of called functions to include. Default: 1. Use 0 for just the symbol."),
+      format: z.enum(["source", "full"]).optional().describe("source: body and location only, no callers/tests/dependencies. Default full."),
     },
-    withRequestActivity(async ({ symbol, symbols, max_tokens, file, depth }) => ({
+    withRequestActivity(async ({ symbol, symbols, max_tokens, file, depth, format }) => ({
       content: [{
         type: "text" as const,
-        text: await explain({ rootDir: rootDir(), symbol, symbols, maxTokens: max_tokens, file, depth }),
+        text: await explain({ rootDir: rootDir(), symbol, symbols, maxTokens: max_tokens, file, depth, format }),
       }],
     }), { toolName: "explain", ensureFreshIndex: true }),
   );
