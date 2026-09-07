@@ -2,7 +2,7 @@
 // FEATURE: Reindex — persistent file/symbol/import graph population
 
 import { walkDirectory } from "../core/walker.js";
-import { analyzeFile, flattenSymbols, isSupportedFile, extractImports, extractCallSites } from "../core/parser.js";
+import { analyzeContent, flattenSymbols, isSupportedFile, extractImports, extractCallSites } from "../core/parser.js";
 import { getDB, hashContent, type ContextPlusDB } from "../core/db.js";
 import { readFile, stat } from "fs/promises";
 import { resolve, extname, dirname, relative } from "path";
@@ -12,6 +12,7 @@ import { autoGenerateHubData } from "./feature-hub.js";
 import { refreshMemoryEmbeddings, toolUpsertMemoryNode } from "./memory-tools.js";
 import { resolveProjectPath } from "../core/path-guard.js";
 import { getEmbedProvider, getEmbedModel } from "../core/embeddings.js";
+import { matchesFileFingerprint, readSourceSnapshot } from "../core/file-fingerprint.js";
 import { getExtractorStamp } from "../core/extractor-stamp.js";
 
 export interface ReindexOptions {
@@ -399,7 +400,8 @@ export async function reindex(options: ReindexOptions): Promise<string> {
         // compiled binaries renamed with a supported extension would otherwise crash readFile
         // and leave currentHashes without an entry — making the file look "removed" on next
         // reindex even though it still exists on disk.
-        const buf = await readFile(file.path);
+        const snapshot = await readSourceSnapshot(file.path);
+        const buf = Buffer.from(snapshot.content, "utf8");
         const sniff = buf.subarray(0, Math.min(buf.length, 8192));
         let looksBinary = false;
         for (let i = 0; i < sniff.length; i++) {
@@ -418,21 +420,22 @@ export async function reindex(options: ReindexOptions): Promise<string> {
 
         const existing = db.getFile(file.relativePath);
         if (existing && existing.content_hash === hash && !force) {
+          db.updateFileFingerprint(file.relativePath, snapshot.stats.size, snapshot.stats.mtimeMs, snapshot.stats.ctimeMs, hash);
           totalImports += db.getImportsFrom(existing.id).length;
           skipped++;
           continue;
         }
 
-        const analysis = await analyzeFile(file.path);
+        const analysis = await analyzeContent(file.path, content);
         const flatSymbols = flattenSymbols(analysis.symbols);
         const lang = detectLanguage(file.path);
-        const fileSize = fileStats?.size ?? buf.length;
-        const fileMtimeMs = fileStats ? Math.trunc(fileStats.mtimeMs) : 0;
+        const fileSize = snapshot.stats.size;
+        const fileMtimeMs = snapshot.stats.mtimeMs;
 
         const imports = extractImports(content, file.path);
         const callSites = extractCallSites(content, file.relativePath);
         const fileId = db.transaction(() => {
-          const fileId = db.upsertFile(file.relativePath, hash, analysis.header, lang, fileSize, fileMtimeMs);
+          const fileId = db.upsertFile(file.relativePath, hash, analysis.header, lang, fileSize, fileMtimeMs, snapshot.stats.ctimeMs);
           db.upsertSymbols(fileId, flatSymbols.map((s) => ({
             name: s.name,
             kind: s.kind,
@@ -627,23 +630,21 @@ async function quickRefreshAttempt(rootDir: string, options: QuickRefreshOptions
   const indexedByPath = new Map(indexedBefore.map((file) => [file.path, file] as const));
   const hashMode = (process.env.CONTEXTPRO_REFRESH ?? process.env.CONTEXTPLUS_REFRESH ?? "").trim().toLowerCase() === "hash";
   const currentHashes = new Map<string, string>();
-  const fingerprintUpdates: Array<{ path: string; size: number; mtimeMs: number }> = [];
+  const fingerprintUpdates: Array<{ path: string; size: number; mtimeMs: number; ctimeMs: number; hash: string }> = [];
   for (const file of files) {
     try {
       const fileStats = await stat(file.path);
-      const mtimeMs = Math.trunc(fileStats.mtimeMs);
       const existing = indexedByPath.get(file.relativePath);
-      if (!hashMode && existing && existing.file_mtime_ms > 0
-        && existing.file_size === fileStats.size && existing.file_mtime_ms === mtimeMs) {
+      if (!hashMode && existing && matchesFileFingerprint(existing, fileStats)) {
         currentHashes.set(file.relativePath, existing.content_hash);
         continue;
       }
-      const content = await readFile(file.path, "utf-8");
-      const hash = hashContent(content);
+      const snapshot = await readSourceSnapshot(file.path);
+      const hash = hashContent(snapshot.content);
       currentHashes.set(file.relativePath, hash);
       if (existing?.content_hash === hash
-        && (existing.file_size !== fileStats.size || existing.file_mtime_ms !== mtimeMs)) {
-        fingerprintUpdates.push({ path: file.relativePath, size: fileStats.size, mtimeMs });
+        && !matchesFileFingerprint(existing, snapshot.stats)) {
+        fingerprintUpdates.push({ path: file.relativePath, size: snapshot.stats.size, mtimeMs: snapshot.stats.mtimeMs, ctimeMs: snapshot.stats.ctimeMs, hash });
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -658,7 +659,7 @@ async function quickRefreshAttempt(rootDir: string, options: QuickRefreshOptions
   let totalStale = new Set([...stale, ...added, ...removed]).size;
 
   if (totalStale === 0) {
-    for (const update of fingerprintUpdates) db.updateFileFingerprint(update.path, update.size, update.mtimeMs);
+    for (const update of fingerprintUpdates) db.updateFileFingerprint(update.path, update.size, update.mtimeMs, update.ctimeMs, update.hash);
     return { staleCount: 0, remainingStaleCount: 0, refreshed: false, complete: true, waitedForIndexing: waitState.waited, indexingTimedOut: false };
   }
 
@@ -686,7 +687,7 @@ async function quickRefreshAttempt(rootDir: string, options: QuickRefreshOptions
       .filter((path) => !removedPathSet.has(path));
     totalStale = new Set([...changedAfterLock, ...removedAfterLock]).size;
     if (totalStale === 0) {
-      for (const update of fingerprintUpdates) db.updateFileFingerprint(update.path, update.size, update.mtimeMs);
+      for (const update of fingerprintUpdates) db.updateFileFingerprint(update.path, update.size, update.mtimeMs, update.ctimeMs, update.hash);
       return { staleCount: 0, remainingStaleCount: 0, refreshed: false, complete: true, waitedForIndexing: true, indexingTimedOut: false };
     }
 
@@ -699,14 +700,15 @@ async function quickRefreshAttempt(rootDir: string, options: QuickRefreshOptions
       for (const path of changedAfterLock) {
         try {
         const fullPath = resolveProjectPath(rootDir, path, "indexed file");
-        const content = await readFile(fullPath, "utf-8");
+        const snapshot = await readSourceSnapshot(fullPath);
+        const content = snapshot.content;
         const hash = hashContent(content);
-        const analysis = await analyzeFile(fullPath);
+        const analysis = await analyzeContent(fullPath, content);
         const flatSymbols = flattenSymbols(analysis.symbols);
         const lang = detectLanguage(fullPath);
-        const fileStats = await stat(fullPath);
+        const fileStats = snapshot.stats;
         const fileSize = fileStats.size;
-        const fileMtimeMs = Math.trunc(fileStats.mtimeMs);
+        const fileMtimeMs = fileStats.mtimeMs;
 
         const existingFile = db.getFile(path);
         const oldSymbolNames = existingFile ? new Set(db.getSymbolsByFile(existingFile.id).map((s) => s.name)) : new Set<string>();
@@ -714,7 +716,7 @@ async function quickRefreshAttempt(rootDir: string, options: QuickRefreshOptions
         const imports = extractImports(content, fullPath);
         const callSites = extractCallSites(content, path);
         const fileId = db.transaction(() => {
-          const fileId = db.upsertFile(path, hash, analysis.header, lang, fileSize, fileMtimeMs);
+          const fileId = db.upsertFile(path, hash, analysis.header, lang, fileSize, fileMtimeMs, snapshot.stats.ctimeMs);
           db.upsertSymbols(fileId, flatSymbols.map((s) => ({
             name: s.name, kind: s.kind, lineStart: s.line, lineEnd: s.endLine, signature: s.signature, parentIndex: s.parentIndex,
           })));
@@ -871,14 +873,15 @@ export async function refreshFilesStructural(
     if (++processed % 16 === 0) await new Promise((resolve) => setImmediate(resolve));
     try {
       const fullPath = resolveProjectPath(rootDir, path, "indexed file");
-      const content = await readFile(fullPath, "utf-8");
+      const snapshot = await readSourceSnapshot(fullPath);
+      const content = snapshot.content;
       const hash = hashContent(content);
-      const analysis = await analyzeFile(fullPath);
+      const analysis = await analyzeContent(fullPath, content);
       const flatSymbols = flattenSymbols(analysis.symbols);
       const lang = detectLanguage(fullPath);
-      const fileStats = await stat(fullPath);
+      const fileStats = snapshot.stats;
       const fileSize = fileStats.size;
-      const fileMtimeMs = Math.trunc(fileStats.mtimeMs);
+      const fileMtimeMs = fileStats.mtimeMs;
 
       const existingFile = db.getFile(path);
       const oldSymbolNames = existingFile ? new Set(db.getSymbolsByFile(existingFile.id).map((s) => s.name)) : new Set<string>();
@@ -886,7 +889,7 @@ export async function refreshFilesStructural(
       const imports = extractImports(content, fullPath);
       const callSites = extractCallSites(content, path);
       const fileId = db.transaction(() => {
-        const fileId = db.upsertFile(path, hash, analysis.header, lang, fileSize, fileMtimeMs);
+        const fileId = db.upsertFile(path, hash, analysis.header, lang, fileSize, fileMtimeMs, snapshot.stats.ctimeMs);
         db.upsertSymbols(fileId, flatSymbols.map((s) => ({
           name: s.name, kind: s.kind, lineStart: s.line, lineEnd: s.endLine, signature: s.signature, parentIndex: s.parentIndex,
         })));

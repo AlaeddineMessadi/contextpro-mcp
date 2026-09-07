@@ -1,7 +1,9 @@
 // Shared repo, freshness, and trust metadata for agent-facing JSON responses
 // FEATURE: Trust envelope — explicit index state, evidence, and confidence
 
-import { getDB } from "./db.js";
+import { getDB, hashContent } from "./db.js";
+import { stat } from "node:fs/promises";
+import { matchesFileFingerprint, readSourceSnapshot } from "./file-fingerprint.js";
 import type { ArtifactReference } from "./artifacts.js";
 import { walkDirectory } from "./walker.js";
 import { isSupportedFile } from "./parser.js";
@@ -12,6 +14,7 @@ export interface IndexState {
   sourceFiles: number;
   missingIndexedFiles: number;
   removedIndexedFiles: number;
+  changedIndexedFiles?: number;
   lastIndexedAt: string | null;
   lastReindexAt: string | null;
   lastReindexDurationMs: number | null;
@@ -66,13 +69,23 @@ export async function getIndexState(rootDir: string): Promise<IndexState> {
   const sourcePaths = new Set(sourceEntries.map((entry) => entry.relativePath));
   const missingIndexedFiles = sourceEntries.filter((entry) => !indexedPaths.has(entry.relativePath)).length;
   const removedIndexedFiles = db.getRemovedFiles(sourcePaths).length;
+  const indexedByPath = new Map(indexedSourceFiles.map(file => [file.path, file]));
+  let changedIndexedFiles = 0;
+  for (const entry of sourceEntries) {
+    const indexed = indexedByPath.get(entry.relativePath);
+    if (!indexed) continue;
+    try {
+      if (matchesFileFingerprint(indexed, await stat(entry.path))) continue;
+      if (hashContent((await readSourceSnapshot(entry.path)).content) !== indexed.content_hash) changedIndexedFiles++;
+    } catch { changedIndexedFiles++; }
+  }
   const generation = db.getIndexGeneration();
   const activeStatus = db.getMeta("index_status");
   const state = indexedFiles === 0
     ? "empty"
     : activeStatus === "indexing"
       ? "indexing"
-      : db.getMeta("index_repair_required") === "1" || generation === 0 || missingIndexedFiles > 0 || removedIndexedFiles > 0 || sourceEntries.length !== indexedFiles
+      : db.getMeta("index_repair_required") === "1" || generation === 0 || changedIndexedFiles > 0 || missingIndexedFiles > 0 || removedIndexedFiles > 0 || sourceEntries.length !== indexedFiles
         ? "stale"
         : "fresh";
   return {
@@ -81,6 +94,7 @@ export async function getIndexState(rootDir: string): Promise<IndexState> {
     sourceFiles: sourceEntries.length,
     missingIndexedFiles,
     removedIndexedFiles,
+    changedIndexedFiles,
     lastIndexedAt: toIso(latestIndexedAt),
     lastReindexAt: toIso(parseNumber(db.getMeta("last_reindex_at"))),
     lastReindexDurationMs: parseNumber(db.getMeta("last_reindex_duration_ms")),
@@ -92,13 +106,15 @@ export async function getIndexState(rootDir: string): Promise<IndexState> {
 
 export function buildFreshnessMetadata(
   indexState: IndexState,
-  input: { staleCount: number; refreshed: boolean; warning: string | null },
+  input: { staleCount: number; refreshed: boolean; warning: string | null; complete?: boolean; remainingStaleCount?: number },
 ): FreshnessMetadata {
   const indexStateLabel = indexState.state === "empty"
     ? "empty"
     : indexState.state === "indexing"
       ? "indexing"
-      : input.staleCount > 0 || indexState.state === "stale"
+      : input.complete === false || (input.remainingStaleCount ?? 0) > 0 || indexState.state === "stale"
+        ? "stale"
+        : input.staleCount > 0
         ? input.refreshed ? "refreshed" : "stale"
         : "fresh";
   return {

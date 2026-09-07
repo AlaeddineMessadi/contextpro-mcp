@@ -69,6 +69,41 @@ describe("automatic index freshness", () => {
     assert.ok(db.getSymbolsByFile(file.id).some((symbol) => symbol.name === "omega"));
   });
 
+  it("default refresh and status detect a same-size edit with restored mtime", async () => {
+    delete process.env.CONTEXTPRO_REFRESH;
+    const source = join(root, "src", "value.ts");
+    const original = await stat(source);
+    await writeFile(source, "export function omega() { return 2; }\n");
+    await utimes(source, original.atime, original.mtime);
+    const { getIndexState } = await import("../../build/core/context-metadata.js");
+    const { quickRefresh } = await import("../../build/tools/reindex.js");
+    const { getDB } = await import("../../build/core/db.js");
+    assert.equal((await getIndexState(root)).state, "stale");
+    const result = await quickRefresh(root, { includeEmbeddings: false });
+    assert.equal(result.complete, true);
+    assert.equal(result.staleCount, 1);
+    assert.ok((await getDB(root)).searchSymbolsByName("omega").length > 0);
+    assert.equal((await getIndexState(root)).state, "fresh");
+  });
+
+  it("does not warn that successfully refreshed files still need reindexing", async () => {
+    for (let i = 0; i < 16; i++) await writeFile(join(root, "src", `new-${i}.ts`), `export const unique${i} = ${i};\n`);
+    const { unifiedSearchData } = await import("../../build/tools/search.js");
+    const result = await unifiedSearchData({ rootDir: root, query: "unique0", mode: "file", preset: "keyword_only" });
+    assert.equal(result.freshness.refreshed, true);
+    assert.equal(result.freshness.warning, null);
+    assert.notEqual(result.freshness.indexState, "stale");
+  });
+
+  it("reports the remaining backlog when the quick refresh cap is exceeded", async () => {
+    process.env.CONTEXTPRO_QUICKREFRESH_MAX_FILES = "1";
+    for (let i = 0; i < 2; i++) await writeFile(join(root, "src", `new-${i}.ts`), `export const unique${i} = ${i};\n`);
+    const { unifiedSearchData } = await import("../../build/tools/search.js");
+    const result = await unifiedSearchData({ rootDir: root, query: "alpha", mode: "file", preset: "keyword_only" });
+    assert.equal(result.freshness.indexState, "stale");
+    assert.match(result.freshness.warning, /2 files remain stale/);
+  });
+
   it("invalidates every structural row when the extractor identity changes", async () => {
     const { getDB } = await import("../../build/core/db.js");
     const { getExtractorStamp } = await import("../../build/core/extractor-stamp.js");

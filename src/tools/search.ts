@@ -255,17 +255,21 @@ export function unifiedSearchData(options: UnifiedSearchOptions): Promise<Unifie
 async function unifiedSearchDataUncached(options: UnifiedSearchOptions): Promise<UnifiedSearchData> {
   const started = performance.now();
   options = { ...options, ...applySearchPreset(options) };
-  const refreshState = await quickRefresh(options.rootDir, { includeEmbeddings: false }).catch(() => ({ staleCount: 0, refreshed: false, indexingTimedOut: false }));
+  let refreshError: string | null = null;
+  const refreshState = await quickRefresh(options.rootDir, { includeEmbeddings: false }).catch((error) => {
+    refreshError = error instanceof Error ? error.message : String(error);
+    return { staleCount: 0, refreshed: false, complete: false, remainingStaleCount: undefined, indexingTimedOut: false };
+  });
   const { staleCount, refreshed } = refreshState;
   const refreshedAt = performance.now();
   const mode = options.mode ?? "hybrid";
   let staleWarning: string | null = null;
-  if (refreshState.indexingTimedOut) {
+  if (refreshError) {
+    staleWarning = `Index refresh failed: ${refreshError}. Results may be incomplete.`;
+  } else if (refreshState.indexingTimedOut) {
     staleWarning = "Indexing is still in progress. Wait for it to finish before trusting search results.";
-  } else if (staleCount > 15) {
-    staleWarning = `${staleCount} files changed since last index. Run reindex for accurate results.`;
-  } else if (refreshed && staleCount > 0) {
-    staleWarning = `Auto-refreshed ${staleCount} stale files.`;
+  } else if (!refreshState.complete) {
+    staleWarning = `${refreshState.remainingStaleCount ?? staleCount} files remain stale. Run reindex for accurate results.`;
   }
 
   const [config, indexState] = await Promise.all([
@@ -276,6 +280,8 @@ async function unifiedSearchDataUncached(options: UnifiedSearchOptions): Promise
     staleCount,
     refreshed,
     warning: staleWarning,
+    complete: refreshState.complete,
+    remainingStaleCount: refreshState.remainingStaleCount,
   });
   const repo = {
     root: options.rootDir,

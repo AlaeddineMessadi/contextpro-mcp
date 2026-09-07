@@ -23,6 +23,7 @@ interface ExactReference {
   context: string;
   isDefinition: boolean;
   confidence: "LSP_RESOLVED" | "SCIP_RESOLVED" | "PYTHON_INDEX_RESOLVED";
+  kind?: "definition" | "import" | "call" | "reference";
 }
 
 function isTypeScriptLike(path: string): boolean {
@@ -31,15 +32,6 @@ function isTypeScriptLike(path: string): boolean {
 
 function isPython(path: string): boolean {
   return extname(path).toLowerCase() === ".py";
-}
-
-function offsetAtLineSymbol(content: string, line: number, symbolName: string): number {
-  const lines = content.split("\n");
-  const targetLine = Math.max(1, line) - 1;
-  const before = lines.slice(0, targetLine).reduce((sum, item) => sum + item.length + 1, 0);
-  const lineText = lines[targetLine] ?? "";
-  const index = lineText.indexOf(symbolName);
-  return before + Math.max(0, index);
 }
 
 interface ResolvedTarget {
@@ -111,8 +103,16 @@ function formatReferencePayload(input: {
   references: ExactReference[];
   format?: "text" | "json";
   scipSymbols?: string[];
+  total?: number;
+  warnings?: string[];
+  scope?: unknown;
+  counts?: Record<string, number>;
 }): string {
   const ambiguousCandidates = input.target?.ambiguousCandidates ?? [];
+  const total = input.total ?? input.references.length;
+  const truncated = total > input.references.length;
+  const warnings = [...(input.warnings ?? []), ...(truncated ? ["Only the first results are shown; raise limit up to 500, or verify the remaining matches with native tools."] : [])];
+  const scope = input.scope ?? { kind: "indexed_candidates", completeness: "not_guaranteed" };
   if (input.format === "json") {
     return JSON.stringify({
       symbol: input.symbolName,
@@ -122,6 +122,7 @@ function formatReferencePayload(input: {
       confidence: input.confidence,
       scipSymbols: input.scipSymbols,
       references: input.references,
+      total, returned: input.references.length, truncated, counts: input.counts, scope, warnings,
     }, null, 2);
   }
   const ambiguityLines = ambiguousCandidates.length > 0
@@ -133,12 +134,14 @@ function formatReferencePayload(input: {
       ]
     : [];
   if (input.references.length === 0) {
-    return [...ambiguityLines, `No exact references found for "${input.symbolName}"${input.target ? ` from ${input.target.file}:${input.target.line}` : ""}.`].join("\n");
+    return [...ambiguityLines, ...warnings.map(w => `Warning: ${w}`), `No exact references found for "${input.symbolName}"${input.target ? ` from ${input.target.file}:${input.target.line}` : ""}.`].join("\n");
   }
   const lines = [
-    `Exact references for "${input.symbolName}" (${input.references.length})`,
+    `Exact references for "${input.symbolName}": ${input.references.length} returned of ${total} matched occurrences${truncated ? " (TRUNCATED)" : ""}`,
     ...(input.target ? [`Target: ${input.target.file}:${input.target.line}`] : []),
-    `Confidence: ${input.confidence}`,
+    `Evidence: ${input.confidence}; scope is limited to indexed files, not all possible runtime references.`,
+    ...(input.counts ? [`Occurrences: ${Object.entries(input.counts).map(([kind, count]) => `${kind}=${count}`).join(", ")}`] : []),
+    ...warnings.map(w => `Warning: ${w}`),
     "",
     ...ambiguityLines,
   ];
@@ -172,6 +175,7 @@ async function formatScipFallback(options: ExactReferencesOptions, target?: { fi
     })),
     format: options.format,
     scipSymbols: scip.symbols,
+    total: scip.total,
   });
 }
 
@@ -263,6 +267,7 @@ async function pythonIndexReferences(options: ExactReferencesOptions, target: { 
 
   const unique = new Map<string, ExactReference>();
   for (const ref of references) unique.set(`${ref.file}:${ref.line}:${ref.column}:${ref.isDefinition}`, ref);
+  const total = unique.size;
   const limited = [...unique.values()]
     .sort((a, b) => Number(b.isDefinition) - Number(a.isDefinition) || a.file.localeCompare(b.file) || a.line - b.line || a.column - b.column)
     .slice(0, Math.max(1, Math.min(options.limit ?? 100, 500)));
@@ -272,6 +277,8 @@ async function pythonIndexReferences(options: ExactReferencesOptions, target: { 
     symbolName: options.symbolName,
     target,
     confidence: "PYTHON_INDEX_RESOLVED",
+    total,
+    warnings: ["Python import/call candidates are heuristic; this is not binding-resolved or exhaustive."],
     references: limited,
     format: options.format,
   });
@@ -294,81 +301,20 @@ export async function exactReferencesTool(options: ExactReferencesOptions): Prom
     return `Exact references require TypeScript/JavaScript language-service support, Python import/call index evidence, or an imported SCIP JSON index. Target file: ${target.file}`;
   }
 
-  const ts = await import("typescript");
+  const { queryTypeScriptReferences } = await import("../core/typescript-reference-process.js");
   const db = await getDB(options.rootDir);
-  const indexedFiles = db.getAllFiles().filter((file) => isTypeScriptLike(file.path));
-  const fileNames = indexedFiles.map((file) => resolveProjectPath(options.rootDir, file.path, "indexed file"));
-  const snapshots = new Map<string, string>();
-  for (const fileName of fileNames) {
-    try {
-      snapshots.set(fileName, await readFile(fileName, "utf-8"));
-    } catch {}
-  }
-  const targetFullPath = resolveProjectPath(options.rootDir, target.file, "file");
-  const targetContent = snapshots.get(targetFullPath) ?? await readFile(targetFullPath, "utf-8");
-  snapshots.set(targetFullPath, targetContent);
-  if (!fileNames.includes(targetFullPath)) fileNames.push(targetFullPath);
-
-  const host: import("typescript").LanguageServiceHost = {
-    getScriptFileNames: () => fileNames,
-    getScriptVersion: () => "0",
-    getScriptSnapshot: (fileName) => {
-      const content = snapshots.get(fileName) ?? ts.sys.readFile(fileName);
-      return content === undefined ? undefined : ts.ScriptSnapshot.fromString(content);
-    },
-    getCurrentDirectory: () => options.rootDir,
-    getCompilationSettings: () => ({
-      allowJs: true,
-      checkJs: false,
-      jsx: ts.JsxEmit.ReactJSX,
-      moduleResolution: ts.ModuleResolutionKind.NodeJs,
-      target: ts.ScriptTarget.ES2022,
-      module: ts.ModuleKind.ESNext,
-    }),
-    getDefaultLibFileName: (compilerOptions) => ts.getDefaultLibFilePath(compilerOptions),
-    fileExists: ts.sys.fileExists,
-    readFile: ts.sys.readFile,
-    readDirectory: ts.sys.readDirectory,
-    directoryExists: ts.sys.directoryExists,
-    getDirectories: ts.sys.getDirectories,
-  };
-  const service = ts.createLanguageService(host);
-  const offset = offsetAtLineSymbol(targetContent, target.line, options.symbolName);
-  const referencedSymbols = service.findReferences(targetFullPath, offset) ?? [];
-  const references: ExactReference[] = [];
-  for (const referenced of referencedSymbols) {
-    for (const ref of referenced.references) {
-      if (!snapshots.has(ref.fileName) || !fileNames.includes(ref.fileName)) continue;
-      const content = snapshots.get(ref.fileName)!;
-      const sourceFile = service.getProgram()?.getSourceFile(ref.fileName);
-      if (!sourceFile) continue;
-      const position = sourceFile.getLineAndCharacterOfPosition(ref.textSpan.start);
-      const relativeFile = toProjectRelativePath(options.rootDir, ref.fileName, "reference file");
-      references.push({
-        file: relativeFile,
-        line: position.line + 1,
-        column: position.character + 1,
-        context: content.split("\n")[position.line]?.trim().slice(0, 160) ?? "",
-        isDefinition: ref.isDefinition === true,
-        confidence: "LSP_RESOLVED",
-      });
-    }
-  }
-  const unique = new Map<string, ExactReference>();
-  for (const ref of references) unique.set(`${ref.file}:${ref.line}:${ref.column}:${ref.isDefinition}`, ref);
-  const limited = [...unique.values()]
-    .sort((a, b) => a.file.localeCompare(b.file) || a.line - b.line || a.column - b.column)
-    .slice(0, Math.max(1, Math.min(options.limit ?? 100, 500)));
-
-  if (limited.length === 0) {
-    const scipResult = await formatScipFallback(options, target);
-    if (scipResult) return scipResult;
-  }
+  const found = await queryTypeScriptReferences({
+    rootDir: options.rootDir,
+    files: db.getAllFiles().filter(file => isTypeScriptLike(file.path)).map(file => resolveProjectPath(options.rootDir, file.path, "indexed file")),
+    file: resolveProjectPath(options.rootDir, target.file, "reference target"),
+    line: target.line, symbol: options.symbolName,
+  });
+  const references: ExactReference[] = found.references.map(ref => ({ ...ref, confidence: "LSP_RESOLVED" }));
+  const counts: Record<string, number> = { definition: 0, import: 0, call: 0, reference: 0 };
+  for (const ref of references) counts[ref.kind ?? "reference"]++;
   return formatReferencePayload({
-    symbolName: options.symbolName,
-    target,
-    confidence: "LSP_RESOLVED",
-    references: limited,
-    format: options.format,
+    symbolName: options.symbolName, target, confidence: "LSP_RESOLVED",
+    references: references.slice(0, Math.max(1, Math.min(options.limit ?? 100, 500))),
+    total: references.length, counts, warnings: found.warnings, scope: found.scope, format: options.format,
   });
 }

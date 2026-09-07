@@ -61,6 +61,7 @@ export interface ScipExactReference {
 }
 
 export interface ScipReferenceResult {
+  total: number;
   symbol: string;
   symbols: string[];
   confidence: "SCIP_RESOLVED";
@@ -394,10 +395,10 @@ export async function findScipReferences(options: {
 
   if (targetSymbols.size === 0) return null;
   const limit = Math.max(1, Math.min(options.limit ?? 100, 500));
-  const occurrences = index.occurrences
+  const allOccurrences = index.occurrences
     .filter((occurrence) => targetSymbols.has(occurrence.symbol))
-    .sort((a, b) => Number(b.role === "definition") - Number(a.role === "definition") || a.file.localeCompare(b.file) || a.line - b.line || a.column - b.column)
-    .slice(0, limit);
+    .sort((a, b) => Number(b.role === "definition") - Number(a.role === "definition") || a.file.localeCompare(b.file) || a.line - b.line || a.column - b.column);
+  const occurrences = allOccurrences.slice(0, limit);
   const references: ScipExactReference[] = [];
   for (const occurrence of occurrences) {
     references.push({
@@ -412,6 +413,7 @@ export async function findScipReferences(options: {
   }
   return {
     symbol: options.symbolName,
+    total: allOccurrences.length,
     symbols: [...targetSymbols].sort(),
     confidence: "SCIP_RESOLVED",
     references,

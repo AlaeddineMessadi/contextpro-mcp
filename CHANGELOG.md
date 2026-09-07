@@ -4,6 +4,13 @@ All notable changes to this project are recorded here. The project follows [Sema
 
 ## [Unreleased]
 
+### Fixed — Reference correctness and freshness (2026-09-08)
+
+- TS/JS references now use project configurations, inherited path aliases and source project references. Indexed tests remain in scope even when production builds exclude them. Results distinguish definitions, imports, direct calls and other references; totals precede truncation and incomplete scope is explicit. Python heuristic evidence carries an explicit limitation.
+- Reuse bounded TypeScript language services with versioned source snapshots, configuration updates and idle disposal. Compiler work runs in a separate process with a 30-second active deadline and a 512 MB V8 heap limit; failure rejects the request and permits a fresh worker on retry.
+- Schema v7 adds file change-time fingerprints. Ordinary refresh detects same-size edits with restored modification times, and hashing/parsing consume the same verified source read. Status checks now detect changed content, failed/partial refreshes remain stale, and a completed refresh does not unnecessarily request a full reindex.
+- Periodic reconciliation survives watcher initialization and runtime failures. New regressions cover aliases, project references, re-exports, shadowing, call classification, large result sets, configuration/source edits, worker failure and watcher loss. Direct app-a measurements and remaining work are recorded in `docs/benchmarks/2026-09-08-reference-foundation.md`.
+
 ### Added — Measured context workflows
 
 - A 13-tool default catalog with on-demand expert discovery/enabling. Explicit full/core profiles remain supported.

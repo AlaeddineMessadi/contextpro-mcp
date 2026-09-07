@@ -15,6 +15,8 @@ export interface EmbeddingTrackerOptions {
   reconcileIntervalMs?: number;
   /** Max drifted files reconciled per sweep (large backlogs drain over sweeps). */
   reconcileMaxFiles?: number;
+  /** Internal injection for watcher-failure integration tests. */
+  watchFactory?: typeof watch;
 }
 
 export interface EmbeddingTrackerController {
@@ -155,7 +157,7 @@ export function startEmbeddingTracker(options: EmbeddingTrackerOptions): () => v
   };
 
   try {
-    watcher = watch(options.rootDir, { recursive: true }, (_eventType, fileName) => {
+    watcher = (options.watchFactory ?? watch)(options.rootDir, { recursive: true }, (_eventType, fileName) => {
       if (closed || !fileName) return;
       const relativePath = normalizeRelativePath(String(fileName));
       if (!shouldTrack(relativePath)) return;
@@ -167,12 +169,14 @@ export function startEmbeddingTracker(options: EmbeddingTrackerOptions): () => v
       schedule();
     });
   } catch (error) {
-    console.error("Embedding tracker disabled: file watching is unavailable.", error);
-    return () => { };
+    console.error("File watching unavailable; periodic index reconciliation remains active.", error);
   }
 
-  watcher.on("error", (error) => {
+  watcher?.on("error", (error) => {
     console.error("Embedding tracker watcher error:", error);
+    watcher?.close();
+    watcher = null;
+    scheduler.signalActivity();
   });
 
   // Drive the reconcile scheduler on a steady interval. The first sweep is forced
@@ -182,6 +186,9 @@ export function startEmbeddingTracker(options: EmbeddingTrackerOptions): () => v
   scheduler.signalActivity();
   const tickReconcile = (): void => {
     if (closed) return;
+    // Without notifications, every interval must poll rather than wait for an
+    // activity signal that can never arrive (or the ten-interval idle sweep).
+    if (!watcher) scheduler.signalActivity();
     // Background sweeps must NEVER be able to crash the server. The scheduler's
     // own tick already swallows sweep errors, but a stray rejection (or a throw
     // in the drain-scheduling callback below) would otherwise escape this
