@@ -162,6 +162,29 @@ describe("ContextPlusDB", () => {
       db.close();
     });
 
+    it("clears incompatible vectors when the provider or model changes", async () => {
+      const root = await mkdtemp(join(tmpdir(), "contextpro-db-model-change-"));
+      await mkdir(join(root, ".contextpro"), { recursive: true });
+      const db = new ContextPlusDB(root);
+      try {
+        db.recordEmbeddingProvider("ollama", "model-a");
+        db.upsertEmbedding("file_search", "src/a.ts", [1, 0, 0, 0], "hash");
+        db.upsertMemoryNode({ type: "note", label: "old-space", content: "old vector space" }, [1, 0, 0, 0]);
+
+        db.recordEmbeddingProvider("ollama", "model-b");
+
+        assert.equal(db.getEmbeddingsByType("file_search").length, 0);
+        assert.equal(db.getEmbeddingStats().memory, 0);
+        assert.deepEqual(db.isEmbeddingsStale(), {
+          stale: true,
+          reason: "provider/model changed from ollama/model-a to ollama/model-b",
+        });
+      } finally {
+        db.close();
+        await rm(root, { recursive: true, force: true });
+      }
+    });
+
     it("returns empty embedding results when vec metadata exists but tables are missing", async () => {
       const root = await mkdtemp(join(tmpdir(), "contextpro-db-missing-vec-"));
       await mkdir(join(root, ".contextpro"), { recursive: true });

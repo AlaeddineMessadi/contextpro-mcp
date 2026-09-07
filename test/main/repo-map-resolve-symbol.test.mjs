@@ -34,6 +34,10 @@ describe("repo-map and resolve-symbol", () => {
         "export function getGraphStats() {",
         "  return 2;",
         "}",
+        "export class UnrelatedHeap {",
+        "  push() { return 3; }",
+        "}",
+        "export const now = () => 5;",
         "",
       ].join("\n"),
     );
@@ -48,6 +52,13 @@ describe("repo-map and resolve-symbol", () => {
         "export function runReport() {",
         "  const metrics = new Metrics();",
         "  return metrics.getGraphStats();",
+        "}",
+        "function localHelper() { return 4; }",
+        "export function runLocalList() {",
+        "  const values = [];",
+        "  values.push(localHelper());",
+        "  Date.now();",
+        "  return values.map((value) => value);",
         "}",
         "",
       ].join("\n"),
@@ -108,5 +119,19 @@ describe("repo-map and resolve-symbol", () => {
 
     assert.match(text, /method: getGraphStats \(src\/foo\.ts/);
     assert.doesNotMatch(text, /function: getGraphStats \(src\/bar\.ts/);
+  });
+
+  it("includes local helpers without inventing dependencies for generic member calls", async () => {
+    const mod = await import("../../build/tools/explain.js");
+    const text = await mod.explain({
+      rootDir: fixtureRoot,
+      file: "src/use.ts",
+      symbol: "runLocalList",
+      depth: 1,
+    });
+
+    assert.match(text, /function: localHelper \(src\/use\.ts/);
+    assert.doesNotMatch(text, /method: push \(src\/bar\.ts/);
+    assert.doesNotMatch(text, /const: now \(src\/bar\.ts/);
   });
 });

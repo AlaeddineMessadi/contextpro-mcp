@@ -5,7 +5,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { readFileSync } from "fs";
-import { mkdir, stat, writeFile } from "fs/promises";
+import { mkdir, readFile, stat, writeFile } from "fs/promises";
 import { dirname, join, resolve } from "path";
 import { fileURLToPath } from "url";
 import { cancelAllEmbeddings } from "./core/embeddings.js";
@@ -17,14 +17,18 @@ import { ensureProjectConfig, registerWorkspace, verifyProjectContext } from "./
 import { formatStartupHealthReport, runStartupHealthCheck } from "./core/startup-health.js";
 import { formatDoctorReport, runDoctor } from "./core/doctor.js";
 import { recordToolTiming, setToolCallSink } from "./core/tool-metrics.js";
+import { runtimeSessionId } from "./core/runtime-session.js";
+import { installAgentInstructions, mergeMcpConfig } from "./core/agent-setup.js";
 import { registerTools } from "./tools/register-tools.js";
 import { selectRootDir, validateSelectedRoot } from "./core/root-guard.js";
 import { resolveRequestRoot } from "./core/request-root.js";
 import { runWithRequestRoot } from "./core/request-context.js";
+import { resolveProjectPath } from "./core/path-guard.js";
+import { captureSource, publishSource, withSourceMutation } from "./core/source-mutation.js";
 import { CONTEXTPRO_DIR, ensureContextProDir } from "./core/data-dir.js";
 import { closeDB, getDB } from "./core/db.js";
 import { ensureFreshIndex } from "./core/index-freshness.js";
-import { addToSessionSavings, appendEfficiencyFooter, estimateToolEfficiency } from "./core/efficiency.js";
+import { addToSessionSavings, appendEfficiencyFooter, estimateResponseTokens, estimateToolEfficiency } from "./core/efficiency.js";
 import type { IndexFreshnessResult } from "./core/index-freshness.js";
 
 type AgentTarget = "claude" | "cursor" | "vscode" | "windsurf" | "opencode";
@@ -58,6 +62,13 @@ try {
   agentInstructions = readFileSync(resolve(PACKAGE_ROOT, "agent-instructions.md"), "utf8");
 } catch {
   process.stderr.write("[contextpro/startup] agent-instructions.md not found; manifest instructions disabled\n");
+}
+
+let agentGuide: string | undefined;
+try {
+  agentGuide = readFileSync(resolve(PACKAGE_ROOT, "agent-guide.md"), "utf8");
+} catch {
+  process.stderr.write("[contextpro/startup] agent-guide.md not found; instructions resource will use the manifest summary\n");
 }
 
 function isInstructionsRemoteEnabled(): boolean {
@@ -207,7 +218,8 @@ function withRequestActivity<TArgs, TResult>(
   return async (args: TArgs): Promise<TResult> => {
     const started = Date.now();
     noteServerActivity();
-    if (options?.useEmbeddingTracker) ensureTrackerRunning();
+    const lexicalOnly = args && typeof args === "object" && "preset" in args && args.preset === "keyword_only";
+    if (options?.useEmbeddingTracker && !lexicalOnly) ensureTrackerRunning();
     // Resolve the workspace this request targets. Precedence: an explicit `root`
     // arg → the MCP client's advertised roots (auto-detected) → the server's boot
     // ROOT_DIR. The resolved root is made active for the handler via
@@ -232,21 +244,36 @@ function withRequestActivity<TArgs, TResult>(
           }
         }
         const result = await handler(handlerArgs);
-        const durationMs = Date.now() - started;
         const toolName = options?.toolName ?? "unknown";
-        appendFreshnessNotice(result, freshness);
+        // Budgeted tools include their own freshness; do not add unbudgeted prose.
+        const bounded = toolName === "task_pack" || (handlerArgs && typeof handlerArgs === "object" && "max_tokens" in handlerArgs);
+        if (!bounded) appendFreshnessNotice(result, freshness);
+        const failed = !!(result && typeof result === "object" && "isError" in result && result.isError);
         let efficiency: Awaited<ReturnType<typeof estimateToolEfficiency>> | undefined;
         try {
-          efficiency = await estimateToolEfficiency(effectiveRoot, handlerArgs, result);
+          efficiency = await estimateToolEfficiency(effectiveRoot, handlerArgs, result, !failed);
+          if (failed) efficiency = { ...efficiency, sourceTokens: 0, savedTokens: 0 };
           const sessionSavedTokens = addToSessionSavings(effectiveRoot, efficiency);
-          if (toolName !== "efficiency_report") appendEfficiencyFooter(result, efficiency, sessionSavedTokens);
+          if (!bounded && toolName !== "efficiency_report") {
+            appendEfficiencyFooter(result, efficiency, sessionSavedTokens);
+            // Include optional footer bytes in persisted traffic, without crediting source twice.
+            const outputTokens = estimateResponseTokens(result);
+            efficiency = { ...efficiency, outputTokens,
+              savedTokens: Math.max(0, efficiency.sourceTokens - efficiency.inputTokens - outputTokens) };
+          }
         } catch {
           // Efficiency telemetry is optional and must never affect the tool result.
         }
-        recordToolTiming(effectiveRoot, toolName, durationMs, "ok", efficiency);
+        recordToolTiming(effectiveRoot, toolName, Date.now() - started, failed ? "error" : "ok", efficiency);
         return result;
       } catch (error) {
-        recordToolTiming(effectiveRoot, options?.toolName ?? "unknown", Date.now() - started, "error");
+        let traffic: Awaited<ReturnType<typeof estimateToolEfficiency>> | undefined;
+        try {
+          const message = error instanceof Error ? error.message : String(error);
+          const estimate = await estimateToolEfficiency(effectiveRoot, handlerArgs, { content: [{ type: "text", text: message }] });
+          traffic = { ...estimate, sourceTokens: 0, savedTokens: 0, representedFiles: 0 };
+        } catch { /* A broken store must not hide the original error. */ }
+        recordToolTiming(effectiveRoot, options?.toolName ?? "unknown", Date.now() - started, "error", traffic);
         throw error;
       }
     });
@@ -286,9 +313,8 @@ function buildMcpConfig(runner: "npx" | "bunx") {
           env: {
             CONTEXTPRO_PROVIDER: "ollama",
             CONTEXTPRO_EMBED_MODEL: "nomic-embed-text:latest",
-            CONTEXTPRO_CHAT_MODEL: "nemotron-3-ultra:cloud",
             CONTEXTPRO_EMBED_TRACKER: "lazy",
-            CONTEXTPRO_TOOL_PROFILE: "core",
+            CONTEXTPRO_TOOL_PROFILE: "workflow",
           },
         },
       },
@@ -317,9 +343,8 @@ function buildOpenCodeConfig(runner: "npx" | "bunx") {
           environment: {
             CONTEXTPRO_PROVIDER: "ollama",
             CONTEXTPRO_EMBED_MODEL: "nomic-embed-text:latest",
-            CONTEXTPRO_CHAT_MODEL: "nemotron-3-ultra:cloud",
             CONTEXTPRO_EMBED_TRACKER: "lazy",
-            CONTEXTPRO_TOOL_PROFILE: "core",
+            CONTEXTPRO_TOOL_PROFILE: "workflow",
           },
         },
       },
@@ -333,21 +358,34 @@ async function runInitCommand(args: string[]) {
   const parsed = parseCliArgs(["init", ...args]);
   const target = parseAgentTarget(parsed.positional[0]);
   const runner = parseRunner(args);
-  const outputPath = resolve(process.cwd(), AGENT_CONFIG_PATH[target]);
-  const content = target === "opencode" ? buildOpenCodeConfig(runner) : buildMcpConfig(runner);
-  await mkdir(dirname(outputPath), { recursive: true });
-  await writeFile(outputPath, `${content}\n`, "utf8");
+  const root = parsed.rootDir;
+  const migratedFrom = await ensureContextProDir(root);
+  const outputPath = resolveProjectPath(root, AGENT_CONFIG_PATH[target], "MCP config");
+  await withSourceMutation(root, async () => {
+    const snapshot = captureSource(root, outputPath);
+    let content = target === "opencode" ? buildOpenCodeConfig(runner) : buildMcpConfig(runner);
+    try {
+      const prior = await readFile(outputPath, "utf8");
+      content = JSON.stringify(mergeMcpConfig(JSON.parse(prior), JSON.parse(content), target), null, 2);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+    await publishSource(root, snapshot, `${content}\n`);
+  });
+  if (!args.includes("--no-agent-instructions")) {
+    const files = await installAgentInstructions(root, target);
+    console.error(`Installed ContextPro workflow in ${files.join(", ")} (existing instructions preserved).`);
+  }
 
-  const migratedFrom = await ensureContextProDir(process.cwd());
-  const contextProDir = join(process.cwd(), CONTEXTPRO_DIR);
+  const contextProDir = join(root, CONTEXTPRO_DIR);
   const configPath = join(contextProDir, "config.json");
   try {
     await stat(configPath);
   } catch {
-    await writeFile(configPath, JSON.stringify({ provider: "ollama", embedModel: "nomic-embed-text:latest", chatModel: "nemotron-3-ultra:cloud" }, null, 2) + "\n");
+    await writeFile(configPath, JSON.stringify({ provider: "ollama", embedModel: "nomic-embed-text:latest" }, null, 2) + "\n");
   }
   await ensureProjectConfig({
-    rootDir: process.cwd(),
+    rootDir: root,
     projectId: parsed.projectId,
     clientId: parsed.clientId,
     sessionSource: parsed.sessionSource ?? "mcp",
@@ -393,7 +431,7 @@ server.resource(
       contents: [{
         uri: uri.href,
         mimeType: "text/markdown",
-        text: agentInstructions ?? "ContextPro instructions are not bundled with this build.",
+        text: agentGuide ?? agentInstructions ?? "ContextPro instructions are not bundled with this build.",
       }],
     };
   }, { toolName: "instructions_resource", waitForIndexing: false }),
@@ -410,7 +448,7 @@ setToolCallSink((event) => {
   void (async () => {
     try {
       const db = await getDB(event.rootDir);
-      db.recordToolCall(event.tool, event.status, event.durationMs, event.calledAt, event.efficiency);
+      db.recordToolCall(event.tool, event.status, event.durationMs, event.calledAt, event.efficiency, runtimeSessionId);
       if (++toolCallWrites % 200 === 0) db.pruneToolCalls(5000);
     } catch {
       // telemetry is non-critical

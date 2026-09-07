@@ -13,6 +13,8 @@ export interface UpsertMemoryNodeOptions {
   content: string;
   metadata?: Record<string, string>;
   scope?: ContextScope;
+  /** Internal structural-only callers must not contact an embedding provider. */
+  skipEmbedding?: boolean;
 }
 
 export interface CreateRelationOptions {
@@ -102,8 +104,8 @@ async function buildScopedMetadata(rootDir: string, metadata: Record<string, str
     client_id: config?.clientId ?? "",
     workspace_root: config?.workspaceRoot ?? rootDir,
     git_root: config?.gitRoot ?? rootDir,
-    session_source: process.env.CONTEXTPLUS_SESSION_SOURCE ?? config?.sessionSource ?? "mcp",
-    session_id: process.env.CONTEXTPLUS_SESSION_ID ?? "",
+    session_source: process.env.CONTEXTPRO_SESSION_SOURCE ?? process.env.CONTEXTPLUS_SESSION_SOURCE ?? config?.sessionSource ?? "mcp",
+    session_id: process.env.CONTEXTPRO_SESSION_ID ?? process.env.CONTEXTPLUS_SESSION_ID ?? "",
   };
 }
 
@@ -118,7 +120,7 @@ async function resolveProjectConfig(rootDir: string): Promise<ResolvedProjectCon
   return {
     projectId: config?.projectId ?? "",
     clientId: config?.clientId ?? "",
-    sessionId: process.env.CONTEXTPLUS_SESSION_ID ?? "",
+    sessionId: process.env.CONTEXTPRO_SESSION_ID ?? process.env.CONTEXTPLUS_SESSION_ID ?? "",
   };
 }
 
@@ -149,12 +151,28 @@ function formatTraversalResult(result: TraversalResult): string {
   ].filter(Boolean).join("\n");
 }
 
+/** Restore missing vectors without rewriting durable memory content or access metadata. */
+export async function refreshMemoryEmbeddings(rootDir: string): Promise<number> {
+  const db = await getDB(rootDir);
+  const pending = db.listMemoryNodesWithoutEmbeddings();
+  let populated = 0;
+  for (let i = 0; i < pending.length; i += 32) {
+    const batch = pending.slice(i, i + 32);
+    const vectors = await fetchEmbedding(batch.map((node) => `${node.label} ${node.content}`));
+    for (let j = 0; j < batch.length; j++) {
+      if (db.setMemoryEmbedding(batch[j], vectors[j] ?? [])) populated++;
+    }
+  }
+  if (db.listMemoryNodesWithoutEmbeddings().length > 0) throw new Error("Memory embeddings remain incomplete; rerun reindex to retry.");
+  return populated;
+}
+
 export async function toolUpsertMemoryNode(options: UpsertMemoryNodeOptions): Promise<string> {
   const db = await getDB(options.rootDir);
   const metadata = await buildScopedMetadata(options.rootDir, options.metadata, options.scope);
   let embedding: number[] = [];
   try {
-    [embedding] = await fetchEmbedding(`${options.label} ${options.content}`);
+    if (!options.skipEmbedding) [embedding] = await fetchEmbedding(`${options.label} ${options.content}`);
   } catch {
     // Embedding provider unavailable — store without vector; keyword search still works.
   }

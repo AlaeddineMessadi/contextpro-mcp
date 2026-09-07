@@ -11,6 +11,8 @@ ContextPro is a Model Context Protocol server that gives Claude Code, Codex, Ant
 
 A private fork and evolution of [Context+](https://github.com/ForLoopCodes/contextplus), hardened with multi-project trust boundaries, agentic workflow tools, persistent SQLite + sqlite-vec storage, and a 25-issue audit pass landing in 1.2.x.
 
+New to MCP configuration or setting up an agent team? Start with the dedicated **[installation and agent-use guide](INSTALL.md)**. It explains the optional model settings, verification, worktrees, and a small project-instruction snippet that makes agents reach for ContextPro first.
+
 ---
 
 ## Why ContextPro
@@ -30,7 +32,7 @@ Coding agents waste most of their context window reading whole files when they o
 | Recompute heavy context on every call | `task_pack` read-through cache — identical tasks served instantly from artifacts |
 | Guess whether token claims are real | `efficiency_report` shows the estimate, method, history, and optional price scenario |
 
-For orientation-and-discovery work — the half of agent tasks where most tokens go — ContextPro typically reduces context usage by **~75%**.
+Savings depend on the task and the comparison. ContextPro can replace repeated broad reads with bounded context, while ordinary literal search can be cheaper for tiny exact-name lookups. Run `npm run bench:retrieval` for reproducible retrieval measurements; `efficiency_report` provides a clearly labeled full-file comparison estimate, not measured agent or billing savings.
 
 ---
 
@@ -71,8 +73,7 @@ Add to your project's `.mcp.json`:
       "env": {
         "CONTEXTPRO_PROVIDER": "ollama",
         "CONTEXTPRO_EMBED_MODEL": "nomic-embed-text:latest",
-        "CONTEXTPRO_CHAT_MODEL": "gemma4:12b",
-        "CONTEXTPRO_TOOL_PROFILE": "core"
+        "CONTEXTPRO_TOOL_PROFILE": "workflow"
       }
     }
   }
@@ -91,8 +92,7 @@ args = ["-y", "contextpro-mcp", "--root", "/absolute/path/to/your/project"]
 [mcp_servers.contextpro.env]
 CONTEXTPRO_PROVIDER = "ollama"
 CONTEXTPRO_EMBED_MODEL = "nomic-embed-text:latest"
-CONTEXTPRO_CHAT_MODEL = "gemma4:12b"
-CONTEXTPRO_TOOL_PROFILE = "core"
+CONTEXTPRO_TOOL_PROFILE = "workflow"
 ```
 
 #### OpenCode
@@ -110,8 +110,7 @@ Add to `opencode.json`:
       "environment": {
         "CONTEXTPRO_PROVIDER": "ollama",
         "CONTEXTPRO_EMBED_MODEL": "nomic-embed-text:latest",
-        "CONTEXTPRO_CHAT_MODEL": "gemma4:12b",
-        "CONTEXTPRO_TOOL_PROFILE": "core"
+        "CONTEXTPRO_TOOL_PROFILE": "workflow"
       }
     }
   }
@@ -141,9 +140,11 @@ Prefer a hosted API (OpenAI, OpenRouter, Groq, …) or a different local runtime
 
 ---
 
-## LLM providers
+## Model providers (separate from your coding agent)
 
-ContextPro uses an LLM for two things only: **embeddings** (semantic `search`) and an optional **chat model** (cluster labels, hub names, planning rerank). Everything else is pure AST/graph work with no model.
+ContextPro does **not** use, proxy, or consume the coding agent's own model context. It has an independent, optional model connection for two narrow jobs: **embeddings** power semantic `search`, while a **chat model** can improve cluster labels, hub names, and ambiguous planning reranks. Everything else is pure AST/graph work with no model.
+
+The recommended first install configures embeddings only. Leave `CONTEXTPRO_CHAT_MODEL` unset unless you explicitly want those optional chat-assisted refinements; setting it can make network calls or use local compute. See [why a separate model exists](INSTALL.md#why-contextpro-has-model-settings) for the precise behavior and privacy/cost implications.
 
 You configure all of it with **five short keys** — same names for every provider:
 
@@ -212,7 +213,7 @@ Run independent reads in parallel. Structural tools refresh changed files before
 
 ## Tool surface
 
-ContextPro exposes **50+ MCP tools** organized into seven categories. Set `CONTEXTPRO_TOOL_PROFILE=core` to expose only the high-frequency agent workflow; `full` remains the backward-compatible default.
+ContextPro offers three tool profiles: **workflow (12 tools)** for everyday discovery and validation, **core (37)** with editing and graph operations, and **full (59)** for all capabilities. `init` selects `workflow`; existing installations keep their profile, and an unset profile retains the backward-compatible `full` default.
 
 ### Orientation
 | Tool | What it does |
@@ -355,7 +356,7 @@ Pass `no_embed: true` (or set `CONTEXTPRO_REINDEX_NO_EMBED=true`) to skip step 2
 
 Each project's index is keyed by its absolute root, so even identically-named files in different projects never collide.
 
-**Guardrails.** ContextPro refuses to start when `--root` is `/`, your home directory, or a top-level home folder (it would scatter `.contextpro/` databases somewhere harmful) — override only if you mean it with `CONTEXTPRO_ALLOW_UNSAFE_ROOT=true`. It also self-heals native-binding ABI drift (see below).
+**Guardrails.** ContextPro refuses to start when `--root` is `/`, your home directory, or a top-level home folder (it would scatter `.contextpro/` databases somewhere harmful) — override only if you mean it with `CONTEXTPRO_ALLOW_UNSAFE_ROOT=true`. It detects native-binding ABI drift and supports explicit repair (see below).
 
 **Optional cross-project layer.** If you *want* to relate projects (e.g. a consulting client with several repos), `workspace_context` lists registered projects and `promote_pattern` shares a reusable memory note up to a `client`/`global` scope. This is opt-in — by default nothing crosses the project boundary. Set `CONTEXTPRO_CLIENT_ID` to group projects under one client.
 
@@ -369,17 +370,15 @@ ContextPro requires **Node 20–26** (declared in `package.json:engines`). The n
 Error: NODE_MODULE_VERSION X (compiled) vs Y (runtime)
 ```
 
-ContextPro auto-repairs this on startup (rebuilds against the active Node) — controlled by `CONTEXTPRO_NATIVE_AUTO_REPAIR` (default `true`). To repair manually:
+ContextPro automatically repairs missing or incompatible native dependencies in a **separate cache for each Node ABI, operating system, architecture, libc, and dependency version**. It never rebuilds the shared installation. Multiple MCP hosts can therefore use different Node versions without replacing each other's SQLite binary.
+
+The default cache is `~/.cache/contextpro/native`; override it with `CONTEXTPRO_NATIVE_CACHE_DIR`. The first repair needs npm and network access (and compiler tools if a prebuilt binary is unavailable). Later launches reuse the verified cache offline. Set `CONTEXTPRO_NATIVE_AUTO_REPAIR=false` to disable automatic installation. Explicit repair uses the same isolated cache:
 
 ```bash
-npm rebuild better-sqlite3 sqlite-vec
+node build/index.js doctor --fix
 ```
 
-If you have both NVM and Homebrew Node, ensure the same one is used at install and runtime:
-
-```bash
-which node && node --version
-```
+Run that command using the Node executable named in the failing host's diagnostic. Restart already-running MCP hosts after updating ContextPro. Repair validates both SQLite and its vector extension before publishing the cache; failures remain actionable diagnostics rather than successful health reports.
 
 ---
 
@@ -405,7 +404,7 @@ Canonical prefix is `CONTEXTPRO_*` (since 1.2.0). Legacy `CONTEXTPLUS_*` names w
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `CONTEXTPRO_EMBED_BATCH_SIZE` | `8` | Embedding batch per call (clamped to 5–10) |
+| `CONTEXTPRO_EMBED_BATCH_SIZE` | `32` with Ollama, `8` remotely | Embedding inputs per request (clamped to 1–128; adaptive splitting handles context limits) |
 | `CONTEXTPRO_EMBED_TRACKER` | `lazy` | `off`, `lazy`, or `eager` realtime updates |
 | `CONTEXTPRO_RECONCILE_INTERVAL_MS` | `30000` | Self-healing sweep interval; heals drift the file-watch misses (clamped ≥5000) |
 | `CONTEXTPRO_RECONCILE_MAX_FILES` | `40` | Max drifted files reconciled per sweep; large backlogs drain over sweeps (clamped ≥5) |
@@ -414,12 +413,15 @@ Canonical prefix is `CONTEXTPRO_*` (since 1.2.0). Legacy `CONTEXTPLUS_*` names w
 | `CONTEXTPRO_QUICKREFRESH_MAX_FILES` | `30` | Max stale files auto-patched per search |
 | `CONTEXTPRO_AUTO_REFRESH` | `true` | Refresh changed files before structural graph reads; set `false` only for controlled benchmarks |
 | `CONTEXTPRO_REFRESH` | `stat` | `stat` uses size/mtime fast paths and hashes suspicious files; `hash` verifies every indexed source for maximum integrity |
-| `CONTEXTPRO_EFFICIENCY_FOOTER` | `true` | Append a compact estimated-savings footer when a response avoids at least 100 source tokens |
-| `CONTEXTPRO_NATIVE_AUTO_REPAIR` | `true` | Auto-rebuild native bindings on ABI drift |
+| `CONTEXTPRO_EFFICIENCY_FOOTER` | `false` | Append a compact estimated-savings footer when a response avoids at least 100 source tokens |
+| `CONTEXTPRO_NATIVE_AUTO_REPAIR` | `true` | Repair native bindings in an isolated ABI/version cache |
+| `CONTEXTPRO_NATIVE_CACHE_DIR` | `~/.cache/contextpro/native` | Shared cache of separate native runtimes |
 | `CONTEXTPRO_ALLOW_UNSAFE_ROOT` | `false` | Allow `/` or home-level project roots |
-| `CONTEXTPRO_TOOL_PROFILE` | `full` | `core` exposes the focused daily agent workflow; `full` exposes every specialist and setup tool |
+| `CONTEXTPRO_TOOL_PROFILE` | `full` | `workflow` has 12 daily tools; `core` adds editing/graphs; `full` exposes all tools |
 | `CONTEXTPRO_PROJECT_ID` | (auto) | Override project identity |
 | `CONTEXTPRO_CLIENT_ID` | (none) | Group projects under one client for cross-project memory |
+
+For the complete, implementation-checked list—including tracker tuning, embedding hardware settings, session metadata, and remote-instruction controls—see [Environment variables in the installation guide](INSTALL.md#environment-reference).
 
 ---
 
@@ -449,7 +451,9 @@ See [CHANGELOG.md](./CHANGELOG.md) for the full history.
 ```bash
 npm install
 npm run build       # tsc
-npm test            # 366 tests across core, tools, and integration
+npm test            # core, tools, regression, and MCP integration tests
+npm run typecheck   # TypeScript without writing build output
+npm run bench:retrieval # offline fixed-corpus measurements against rg/read
 npm run test:demo   # 33 demo tests
 npm run dev         # tsc --watch
 ```

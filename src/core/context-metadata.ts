@@ -72,7 +72,7 @@ export async function getIndexState(rootDir: string): Promise<IndexState> {
     ? "empty"
     : activeStatus === "indexing"
       ? "indexing"
-      : generation === 0 || missingIndexedFiles > 0 || removedIndexedFiles > 0 || sourceEntries.length !== indexedFiles
+      : db.getMeta("index_repair_required") === "1" || generation === 0 || missingIndexedFiles > 0 || removedIndexedFiles > 0 || sourceEntries.length !== indexedFiles
         ? "stale"
         : "fresh";
   return {

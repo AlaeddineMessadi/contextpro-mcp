@@ -15,6 +15,7 @@ describe("efficiency reporting", () => {
     const { ensureProjectConfig } = await import("../../build/core/project-config.js");
     await ensureProjectConfig({ rootDir: root, projectId: "efficiency-fixture", sessionSource: "test" });
     priorFooter = process.env.CONTEXTPRO_EFFICIENCY_FOOTER;
+    process.env.CONTEXTPRO_EFFICIENCY_FOOTER = "1";
   });
 
   afterEach(async () => {
@@ -138,9 +139,9 @@ describe("efficiency reporting", () => {
       inputCostPerMillion: 5,
       format: "json",
     }));
-    assert.equal(report.estimate.savedTokens, 11_400);
+    assert.equal(report.estimate.savedTokens, 11_370);
     assert.equal(report.estimate.representedFileReferences, 10);
-    assert.equal(report.hypotheticalInputCostAvoided.usd, 0.057);
+    assert.equal(report.hypotheticalInputCostAvoided.usd, 0.05685);
     assert.match(report.privacy, /prompts.*never retained/i);
     assert.equal(report.byTool[0].tool, "repo_map");
   });

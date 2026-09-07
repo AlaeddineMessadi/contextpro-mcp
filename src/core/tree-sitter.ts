@@ -188,11 +188,17 @@ function walkTree(rootNode: TSNode, defTypes: Record<string, string>, maxDepth: 
 
     const kindStr = defTypes[node.type];
     if (kindStr) {
+      const span = node.parent?.type === "export_statement" ? node.parent : node;
       const sym: CodeSymbol = {
+        startIndex: span.startIndex,
+        endIndex: span.endIndex,
+        ...( ["lexical_declaration", "variable_declaration"].includes(node.type)
+          && node.namedChildren.filter((child: TSNode) => child.type === "variable_declarator").length > 1
+          ? { sharedDeclaration: true } : {}),
         name: extractName(node, kindStr),
         kind: mapKind(kindStr),
-        line: node.startPosition.row + 1,
-        endLine: node.endPosition.row + 1,
+        line: span.startPosition.row + 1,
+        endLine: span.endPosition.row + 1,
         signature: extractSignature(node),
         children: [],
       };

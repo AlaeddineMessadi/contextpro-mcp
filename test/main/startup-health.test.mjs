@@ -37,7 +37,7 @@ describe("startup health", () => {
 
     assert.equal(diagnostic.code, "native_module_missing");
     assert.match(diagnostic.message, /Could not locate the bindings file/);
-    assert.ok(diagnostic.remediation.some((step) => step.includes("npm install")));
+    assert.ok(diagnostic.remediation.some((step) => step.includes("doctor --fix")));
     assert.ok(diagnostic.remediation.some((step) => step.includes(process.execPath)));
   });
 });

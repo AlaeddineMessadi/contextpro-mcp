@@ -2,12 +2,15 @@
 // FEATURE: High-leverage agent context assembly over project intelligence data
 
 import { readFile } from "fs/promises";
-import { fetchEmbedding } from "../core/embeddings.js";
+import { createHash } from "node:crypto";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import { fetchEmbedding, withQueryEmbeddingCache } from "../core/embeddings.js";
 import { getDB, type MemoryNodeInput, type MemoryNodeRow } from "../core/db.js";
 import { createPromotedPattern, listPromotedPatterns, listRegisteredWorkspaces, loadProjectConfig } from "../core/project-config.js";
 import { unifiedSearchData } from "./search.js";
-import { join } from "path";
-import { persistArtifact, lookupFreshArtifact } from "../core/artifacts.js";
+import { join, resolve } from "path";
+import { persistArtifact, lookupFreshArtifact, readArtifact, buildArtifactId } from "../core/artifacts.js";
 import { buildFreshnessMetadata, buildTrustMetadata, getIndexState } from "../core/context-metadata.js";
 import { resolveSymbolData } from "./resolve-symbol.js";
 import {
@@ -36,6 +39,10 @@ interface AgentRepoMetadata {
 export interface TaskPackOptions {
   rootDir: string;
   task: string;
+  previousContextId?: string;
+  graphHops?: 0 | 1 | 2;
+  graphMaxFiles?: number;
+  preset?: "balanced" | "keyword_only";
   maxFiles?: number;
   maxMemory?: number;
   maxTokens?: number;
@@ -51,6 +58,7 @@ interface TaskPackFileEntry { path: string; reason: string; score: number; symbo
 interface TaskPackPayload {
   summary: string;
   files: TaskPackFileEntry[];
+  relatedFiles?: TaskPackFileEntry[];
   tests: Array<{ path: string; reason: string; score: number }>;
   recentDiffs: Array<{ path: string; commit: string; summary: string } | null>;
   memory: Array<{ id: string; kind: string; summary: string }>;
@@ -60,10 +68,12 @@ interface TaskPackPayload {
 
 interface TaskPackBudgetReport {
   maxTokens: number;
+  estimator: "utf8_bytes_div_4";
   estimatedTokens: number;
   truncated: boolean;
   dropped: {
     files: number;
+    relatedFiles: number;
     tests: number;
     recentDiffs: number;
     memory: number;
@@ -76,8 +86,11 @@ interface TaskPackBudgetReport {
 // The cache identity for a task pack: same task + same option flags → same artifact. The repo
 // fingerprint and index generation gate freshness separately (handled by lookupFreshArtifact).
 function taskPackArtifactKey(task: string, maxFiles: number, opts: TaskPackOptions): string {
-  return JSON.stringify({
+  return createHash("sha256").update(JSON.stringify({
     task,
+    preset: opts.preset ?? "balanced",
+    graphHops: opts.graphHops ?? 0,
+    graphMaxFiles: opts.graphHops ? Math.max(1, Math.min(opts.graphMaxFiles ?? 4, 10)) : 0,
     maxFiles,
     includeTests: opts.includeTests !== false,
     includeRecentDiffs: opts.includeRecentDiffs !== false,
@@ -85,14 +98,15 @@ function taskPackArtifactKey(task: string, maxFiles: number, opts: TaskPackOptio
     // maxMemory changes how many memory hits the pack carries, so it MUST be part of the cache
     // identity — otherwise two calls differing only in maxMemory would collide on one cached pack.
     maxMemory: opts.includeMemory === false ? 0 : Math.min(opts.maxMemory ?? 3, 10),
-  });
+  })).digest("hex");
 }
 
-function budgetTaskPackPayload(payload: TaskPackPayload, maxTokens?: number): TaskPackPayload & { budget: TaskPackBudgetReport } {
+function budgetTaskPackPayload(payload: TaskPackPayload, maxTokens: number | undefined, render: (value: TaskPackPayload & { budget: TaskPackBudgetReport }) => string): TaskPackPayload & { budget: TaskPackBudgetReport } {
   const budget = Math.max(512, Math.min(maxTokens ?? 3000, 12_000));
-  const maxChars = budget * 4;
+  const maxBytes = budget * 4;
   const original = {
     files: payload.files.length,
+    relatedFiles: payload.relatedFiles?.length ?? 0,
     tests: payload.tests.length,
     recentDiffs: payload.recentDiffs.length,
     memory: payload.memory.length,
@@ -100,7 +114,7 @@ function budgetTaskPackPayload(payload: TaskPackPayload, maxTokens?: number): Ta
     risks: payload.risks.length,
   };
   const result: TaskPackPayload = {
-    ...payload,
+    ...structuredClone(payload),
     files: payload.files.map((file) => ({ ...file, symbols: file.symbols.slice() })),
     tests: payload.tests.slice(),
     recentDiffs: payload.recentDiffs.slice(),
@@ -119,6 +133,7 @@ function budgetTaskPackPayload(payload: TaskPackPayload, maxTokens?: number): Ta
   let droppedMetadataFields = 0;
   const pruneNext = (): boolean => {
     if (result.recentDiffs.length > 0) result.recentDiffs.pop();
+    else if ((result.relatedFiles?.length ?? 0) > 0) result.relatedFiles!.pop();
     else if (result.memory.length > 0) result.memory.pop();
     else if (result.tests.length > 0) result.tests.pop();
     else {
@@ -138,6 +153,30 @@ function budgetTaskPackPayload(payload: TaskPackPayload, maxTokens?: number): Ta
         } else if (trust && Array.isArray(trust.evidence) && trust.evidence.length > 1) {
           trust.evidence.pop();
           droppedMetadataFields += 1;
+        } else if (result.files.some((file) => file.reason.length > 0)) {
+          result.files = result.files.map((file) => ({ ...file, reason: "" }));
+          droppedMetadataFields += 1;
+        } else if (result.summary.length > 0) {
+          result.summary = "";
+          droppedMetadataFields += 1;
+        } else if (result.trust) {
+          delete result.trust;
+          droppedMetadataFields += 1;
+        } else if (result.freshness) {
+          delete result.freshness;
+          droppedMetadataFields += 1;
+        } else if (result.repo) {
+          delete result.repo;
+          droppedMetadataFields += 1;
+        } else if (result.risks.length) {
+          result.risks.pop();
+        } else if (result.files.length) {
+          result.files.pop();
+        } else if (result.delta) {
+          // An incomplete delta is unsafe to apply. Explicitly require reading the full snapshot.
+          delete result.delta;
+          result.context = { ...(result.context as object), mode: "full_required", reason: "delta_exceeds_budget" };
+          droppedMetadataFields += 1;
         } else {
           return false;
         }
@@ -150,8 +189,10 @@ function budgetTaskPackPayload(payload: TaskPackPayload, maxTokens?: number): Ta
     const retainedSymbols = result.files.reduce((sum, file) => sum + file.symbols.length, 0);
     return {
       maxTokens: budget,
+      estimator: "utf8_bytes_div_4",
       estimatedTokens,
       truncated: original.files !== result.files.length
+        || original.relatedFiles !== (result.relatedFiles?.length ?? 0)
         || original.tests !== result.tests.length
         || original.recentDiffs !== result.recentDiffs.length
         || original.memory !== result.memory.length
@@ -160,6 +201,7 @@ function budgetTaskPackPayload(payload: TaskPackPayload, maxTokens?: number): Ta
         || droppedMetadataFields > 0,
       dropped: {
         files: original.files - result.files.length,
+        relatedFiles: original.relatedFiles - (result.relatedFiles?.length ?? 0),
         tests: original.tests - result.tests.length,
         recentDiffs: original.recentDiffs - result.recentDiffs.length,
         memory: original.memory - result.memory.length,
@@ -170,16 +212,18 @@ function budgetTaskPackPayload(payload: TaskPackPayload, maxTokens?: number): Ta
     };
   };
 
-  const indentation = maxTokens === undefined ? 2 : undefined;
   while (true) {
     let estimatedTokens = 0;
     let candidate = { ...result, budget: buildReport(estimatedTokens) };
     // The estimate changes its own digit count at most a couple of times.
     for (let iteration = 0; iteration < 3; iteration += 1) {
-      estimatedTokens = Math.ceil(JSON.stringify(candidate, null, indentation).length / 4);
+      estimatedTokens = Math.ceil(Buffer.byteLength(render(candidate), "utf8") / 4);
       candidate = { ...result, budget: buildReport(estimatedTokens) };
     }
-    if (JSON.stringify(candidate, null, indentation).length <= maxChars || !pruneNext()) return candidate;
+    if (Buffer.byteLength(render(candidate), "utf8") <= maxBytes) return candidate;
+    if (!pruneNext()) {
+      throw new Error("Task pack response cannot fit the requested UTF-8 byte budget; use a larger max_tokens.");
+    }
   }
 }
 
@@ -213,6 +257,8 @@ export interface DecisionBriefOptions {
 export interface ValidateScopeOptions {
   rootDir: string;
   task: string;
+  /** Files already changed or known to be in scope. These take precedence over task inference. */
+  files?: string[];
   maxFiles?: number;
   format?: OutputFormat;
 }
@@ -428,9 +474,46 @@ function pythonRunCommand(profile: PythonProjectProfile, tool: string, rootDir: 
 }
 
 
-export async function buildTaskPack(options: TaskPackOptions): Promise<string> {
+async function expandTaskImportGraph(rootDir: string, seeds: string[], hops: number, maxFiles: number): Promise<TaskPackFileEntry[]> {
+  if (hops <= 0) return [];
+  const db = await getDB(rootDir);
+  const seen = new Set(seeds);
+  const related: TaskPackFileEntry[] = [];
+  let frontier = seeds.slice(0, 3);
+  for (let depth = 0; depth < Math.min(hops, 2) && frontier.length; depth++) {
+    const next: string[] = [];
+    for (const seed of frontier) {
+      const file = db.getFile(seed);
+      if (!file) continue;
+      const edges = [
+        ...db.getImportsFrom(file.id).map((edge) => ({ path: edge.target_file_id ? db.getFileById(edge.target_file_id)?.path : null, reason: `Imported by ${seed}` })),
+        ...db.getImportersOf(file.id).map((edge) => ({ path: db.getFileById(edge.source_file_id)?.path, reason: `Imports ${seed}` })),
+      ].sort((a, b) => (a.path ?? "").localeCompare(b.path ?? ""));
+      for (const edge of edges) {
+        if (!edge.path || seen.has(edge.path)) continue;
+        seen.add(edge.path);
+        related.push({ path: edge.path, reason: `${edge.reason}; indexed import edge, parser/resolver heuristic (${depth + 1} hop)`, score: 0.5 / (depth + 1), symbols: [] });
+        next.push(edge.path);
+        if (related.length >= maxFiles) return related;
+      }
+    }
+    frontier = next;
+  }
+  return related;
+}
+
+export function buildTaskPack(options: TaskPackOptions): Promise<string> {
+  return withQueryEmbeddingCache(() => buildTaskPackUncached(options));
+}
+
+async function buildTaskPackUncached(options: TaskPackOptions): Promise<string> {
+  if (options.previousContextId && !/^task_context-[a-f0-9]{14}$/.test(options.previousContextId)) throw new Error("Invalid previous_context_id; use the task_context ID from a previous response.");
   const maxFiles = Math.max(1, Math.floor(options.maxFiles ?? 8));
-  const artifactKey = taskPackArtifactKey(options.task, maxFiles, options);
+  const taskKey = taskPackArtifactKey(options.task, maxFiles, options);
+  const db = await getDB(options.rootDir);
+  let memoryRevision = options.includeMemory === false ? 0 : db.getMemoryRevision();
+  const gitHead = options.includeRecentDiffs === false ? "" : await promisify(execFile)("git", ["rev-parse", "HEAD"], { cwd: options.rootDir, timeout: 3000 }).then(({ stdout }) => stdout.trim()).catch(() => "");
+  let artifactKey = createHash("sha256").update(`${taskKey}:${memoryRevision}:${gitHead}`).digest("hex");
 
   // READ-THROUGH CACHE: if a task pack for this exact task+flags was already computed and the index
   // hasn't advanced since, re-render the stored payload instead of recomputing the whole pipeline
@@ -460,7 +543,7 @@ export async function buildTaskPack(options: TaskPackOptions): Promise<string> {
         artifact: { id: cached.id, kind: cached.kind, key: cached.key, path: cached.path, createdAt: cached.createdAt, updatedAt: cached.updatedAt, indexGeneration: cached.indexGeneration },
       });
       const cachedPayload: TaskPackPayload = { ...cached.payload, trust };
-      return renderTaskPack(options.task, options.format, cachedPayload, cached.projectId ?? "unknown", cached.repoRoot, cached.id, options.maxTokens);
+      return finishTaskPack(options, cachedPayload, taskKey, memoryRevision, cached.repoFingerprint);
     }
   } catch {
     // Cache lookup failed (e.g. corrupt manifest, DB not ready) — fall through to recompute.
@@ -472,6 +555,8 @@ export async function buildTaskPack(options: TaskPackOptions): Promise<string> {
     mode: "hybrid",
     topK: maxFiles,
     persistArtifact: false,
+    expandCallers: false,
+    preset: options.preset,
   });
   const fileResults = search.files?.results ?? [];
   const identifierResults = search.identifiers?.results ?? [];
@@ -495,11 +580,14 @@ export async function buildTaskPack(options: TaskPackOptions): Promise<string> {
     symbols: item.symbols,
   }));
   const filePaths = topFiles.map((item) => item.path);
+  const relatedFiles = await expandTaskImportGraph(options.rootDir, filePaths, options.graphHops ?? 0, Math.max(1, Math.min(options.graphMaxFiles ?? 4, 10)));
   const tests = options.includeTests === false ? [] : await findTestsForFiles(options.rootDir, filePaths);
   const recentDiffs = options.includeRecentDiffs === false
     ? []
     : (await Promise.all(filePaths.slice(0, 5).map((path) => getRecentDiffSummary(options.rootDir, path)))).filter(Boolean);
-  const memory = options.includeMemory === false ? [] : await getProjectMemoryHits(options.rootDir, options.task, Math.min(options.maxMemory ?? 3, 10));
+  // Capture before the asynchronous read: concurrent writes must invalidate, never bless stale memory.
+  memoryRevision = options.includeMemory === false ? 0 : db.getMemoryRevision();
+  const memory = options.includeMemory === false ? [] : await getProjectMemoryHits(options.rootDir, options.task, Math.min(options.maxMemory ?? 3, 10), options.preset === "keyword_only");
   const risks = [
     ...identifierResults.slice(0, 2).filter((item) => item.totalCalls > 3).map((item) => `${item.name} has ${item.totalCalls} ranked call sites`),
     ...(tests.length === 0 ? ["No nearby tests found for top-ranked files"] : []),
@@ -537,11 +625,14 @@ export async function buildTaskPack(options: TaskPackOptions): Promise<string> {
     }),
     summary: inferProjectSummary(options.task, filePaths),
     files: topFiles,
+    ...(options.graphHops ? { relatedFiles } : {}),
     tests,
     recentDiffs,
     memory,
     risks,
   };
+  // Structural refresh can update memory too; cache under the revision captured for retrieval.
+  artifactKey = createHash("sha256").update(`${taskKey}:${memoryRevision}:${gitHead}`).digest("hex");
   const artifact = await persistAgentArtifact({
     rootDir: options.rootDir,
     kind: "task_pack",
@@ -549,7 +640,8 @@ export async function buildTaskPack(options: TaskPackOptions): Promise<string> {
     repo,
     payload: partial,
     metadata: {
-      task: options.task,
+      task: options.task.slice(0, 500),
+      memoryRevision: String(memoryRevision),
     },
   });
   const payload = {
@@ -562,58 +654,83 @@ export async function buildTaskPack(options: TaskPackOptions): Promise<string> {
       artifact,
     }),
   };
-  return renderTaskPack(options.task, options.format, payload, search.repo.projectId ?? "unknown", search.repo.root, artifact?.id ?? null, options.maxTokens);
+  return finishTaskPack(options, payload, taskKey, memoryRevision, search.repo.fingerprint);
 }
 
-// Render a task pack payload to text/JSON. Pulled out of buildTaskPack so a cache HIT can re-render
-// the stored payload without recomputing search/rerank/tests/diffs/memory.
-function renderTaskPack(
-  task: string,
-  format: OutputFormat | undefined,
-  payload: TaskPackPayload,
-  projectId: string,
-  root: string,
-  artifactId: string | null,
-  maxTokens?: number,
-): string {
-  const budgeted = budgetTaskPackPayload(payload, maxTokens);
-  if (format === "json" && maxTokens !== undefined) return JSON.stringify(budgeted);
-  return formatMaybeJson(format, budgeted, () => {
-    const lines = [
-      `Task Pack: ${task}`,
-      `Repo: ${projectId} | Root: ${root}`,
-      artifactId ? `Artifact: ${artifactId}` : "",
-      `Summary: ${budgeted.summary}`,
-      `Budget: ~${budgeted.budget.estimatedTokens}/${budgeted.budget.maxTokens} tokens${budgeted.budget.truncated ? " (utility-pruned)" : ""}`,
-      "",
-      "Files:",
-    ].filter(Boolean);
-    for (const file of budgeted.files) {
-      lines.push(`  ${file.path} (${Math.round(file.score * 100)}%) - ${file.reason}`);
-      if (file.symbols.length > 0) lines.push(`    Symbols: ${file.symbols.join(", ")}`);
-    }
-    if (budgeted.tests.length > 0) {
-      lines.push("");
-      lines.push("Tests:");
-      for (const test of budgeted.tests.slice(0, 6)) lines.push(`  ${test.path} (${Math.round(test.score * 100)}%) - ${test.reason}`);
-    }
-    if (budgeted.recentDiffs.length > 0) {
-      lines.push("");
-      lines.push("Recent Diffs:");
-      for (const diff of budgeted.recentDiffs.slice(0, 5)) lines.push(`  ${diff?.path} @ ${diff?.commit} - ${diff?.summary}`);
-    }
-    if (budgeted.memory.length > 0) {
-      lines.push("");
-      lines.push("Memory:");
-      for (const item of budgeted.memory) lines.push(`  ${item.id} [${item.kind}] ${item.summary}`);
-    }
-    if (budgeted.risks.length > 0) {
-      lines.push("");
-      lines.push("Risks:");
-      for (const risk of budgeted.risks) lines.push(`  - ${risk}`);
-    }
-    return lines.join("\n");
-  });
+interface TaskContextSnapshot {
+  taskKey: string;
+  payload: TaskPackPayload;
+  entries: Record<string, unknown>;
+  complete: boolean;
+}
+
+// Snapshots include source content hashes, so a changed implementation is visible even when its
+// ranking, path and symbols remain identical. IDs bind repository, task/options and delivery budget.
+async function finishTaskPack(options: TaskPackOptions, payload: TaskPackPayload, taskKey: string, memoryRevision: number, fingerprint: string | null): Promise<string> {
+  const db = await getDB(options.rootDir);
+  const entries: Record<string, unknown> = {};
+  for (const file of payload.files) entries[`file:${file.path}`] = { ...file, sourceHash: db.getFile(file.path)?.content_hash ?? null };
+  for (const file of payload.relatedFiles ?? []) entries[`graph:${file.path}`] = { ...file, sourceHash: db.getFile(file.path)?.content_hash ?? null };
+  for (const test of payload.tests) entries[`test:${test.path}`] = { ...test, sourceHash: db.getFile(test.path)?.content_hash ?? null };
+  for (const memory of payload.memory) entries[`memory:${memory.id}`] = memory;
+  for (const diff of payload.recentDiffs) if (diff) entries[`diff:${diff.path}`] = diff;
+  payload.risks.forEach((risk, index) => { entries[`risk:${index}`] = risk; });
+  const generation = db.getIndexGeneration();
+  const key = createHash("sha256").update(JSON.stringify({ root: options.rootDir, taskKey, entries, generation, memoryRevision, maxTokens: options.maxTokens ?? 3000, format: options.format ?? "text", previousId: options.previousContextId ?? null })).digest("hex");
+  const contextId = buildArtifactId("task_context", key, fingerprint);
+  const previous = options.previousContextId ? await readArtifact<TaskContextSnapshot>(options.rootDir, options.previousContextId) : null;
+  const validBaseline = previous?.kind === "task_context" && previous.repoRoot === resolve(options.rootDir) && previous.repoFingerprint === fingerprint
+    && previous.payload.taskKey === taskKey && previous.payload.complete === true;
+  const context: Record<string, unknown> = {
+    id: contextId,
+    mode: "full",
+    indexGeneration: generation,
+    memoryRevision,
+    recovery: "artifact_read({artifact_id: context.id}) returns the full snapshot; omit previous_context_id after compaction",
+  };
+  let delivery: TaskPackPayload = { ...payload, context };
+  if (options.previousContextId && validBaseline) {
+    const before = previous!.payload.entries;
+    const added = Object.entries(entries).filter(([id]) => !(id in before)).map(([id, value]) => ({ id, value }));
+    const changed = Object.entries(entries).filter(([id, value]) => id in before && JSON.stringify(before[id]) !== JSON.stringify(value)).map(([id, value]) => ({ id, value }));
+    const removed = Object.keys(before).filter((id) => !(id in entries));
+    context.mode = "delta";
+    context.previousId = options.previousContextId;
+    delivery = { ...delivery, files: [], relatedFiles: [], tests: [], memory: [], recentDiffs: [], risks: [], delta: { added, changed, removed } };
+  } else if (options.previousContextId) {
+    context.fallbackReason = previous ? "unrelated_or_incomplete_baseline" : "baseline_not_found";
+  }
+  const budgeted = budgetTaskPackPayload(delivery, options.maxTokens, (value) => renderTaskPack(options.format, value));
+  // A pruned full packet cannot serve as a delta baseline: the agent never received every entry.
+  // Complete deltas can be chained, since the unchanged entries came from a complete baseline.
+  const complete = !budgeted.budget.truncated;
+  await persistArtifact({ rootDir: options.rootDir, kind: "task_context", key, repoFingerprint: fingerprint,
+    indexGeneration: generation, immutable: true, payload: { taskKey, payload, entries, complete } satisfies TaskContextSnapshot });
+  return renderTaskPack(options.format, budgeted);
+}
+
+function renderTaskPack(format: OutputFormat | undefined, payload: TaskPackPayload & { budget: TaskPackBudgetReport }): string {
+  if (format === "json") return JSON.stringify(payload);
+  const lines = ["Task Pack", `Summary: ${payload.summary}`,
+    `Budget: ~${payload.budget.estimatedTokens}/${payload.budget.maxTokens} tokens (UTF-8 bytes / 4 estimate)${payload.budget.truncated ? " (truncated; read full context artifact)" : ""}`,
+    `Context: ${JSON.stringify(payload.context)}`];
+  if (payload.delta) lines.push(`Delta: ${JSON.stringify(payload.delta)}`);
+  if (payload.files.length) lines.push("Files:");
+  for (const file of payload.files) {
+    lines.push(`  ${file.path} (${Math.round(file.score * 100)}%) - ${file.reason}`);
+    if (file.symbols.length) lines.push(`    Symbols: ${file.symbols.join(", ")}`);
+  }
+  if (payload.relatedFiles?.length) lines.push("Related files (indexed import graph):");
+  for (const file of payload.relatedFiles ?? []) lines.push(`  ${file.path} - ${file.reason}`);
+  if (payload.tests.length) lines.push("Tests:");
+  for (const test of payload.tests) lines.push(`  ${test.path} - ${test.reason}`);
+  if (payload.recentDiffs.length) lines.push("Recent Diffs:");
+  for (const diff of payload.recentDiffs) if (diff) lines.push(`  ${diff.path} @ ${diff.commit} - ${diff.summary}`);
+  if (payload.memory.length) lines.push("Memory:");
+  for (const item of payload.memory) lines.push(`  ${item.id} [${item.kind}] ${item.summary}`);
+  if (payload.risks.length) lines.push("Risks:");
+  for (const risk of payload.risks) lines.push(`  - ${risk}`);
+  return lines.join("\n");
 }
 
 export async function buildChangeImpact(options: ChangeImpactOptions): Promise<string> {
@@ -628,6 +745,15 @@ export async function buildChangeImpact(options: ChangeImpactOptions): Promise<s
   const resolvedFiles = resolvedSymbols
     .map((item) => item.resolution?.bestMatch?.path)
     .filter((path): path is string => Boolean(path));
+  const symbolsByResolvedFile = new Map<string, string[]>();
+  for (const item of resolvedSymbols) {
+    const match = item.resolution?.bestMatch;
+    if (!match) continue;
+    symbolsByResolvedFile.set(match.path, unique([
+      ...(symbolsByResolvedFile.get(match.path) ?? []),
+      match.name,
+    ]));
+  }
   const fallbackFiles = await resolveFilesFromSymbols(options.rootDir, options.symbols);
   const inputFiles = unique([...(options.files ?? []), ...resolvedFiles, ...fallbackFiles]);
   const db = await getDB(options.rootDir);
@@ -645,17 +771,29 @@ export async function buildChangeImpact(options: ChangeImpactOptions): Promise<s
     ...(options.symbols ?? []),
     ...resolvedSymbols.map((item) => item.resolution?.bestMatch?.name).filter((name): name is string => Boolean(name)),
   ]);
+  // Only narrow to symbols when every analyzed file is covered by a resolved
+  // definition. An unknown name or an additional explicitly supplied file must
+  // remain conservative and be treated as a whole-file change.
+  const symbolScoped = inputFiles.length > 0 && inputFiles.every((file) => symbolsByResolvedFile.has(file));
+  const directCallerFiles = new Set<string>();
+  const symbolImporterFiles = new Set<string>();
 
   for (const file of inputFiles) {
     const dbFile = db.getFile(file);
     if (!dbFile) continue;
     const importers = db.getImportersOf(dbFile.id);
     const fileSymbols = unique(db.getSymbolsByFile(dbFile.id).map((symbol) => symbol.name)).slice(0, 8);
-    const relevantSymbols = unique([...(options.symbols ?? []), ...fileSymbols]);
+    // An explicitly named symbol is a narrower request than changing its entire
+    // module. Falling back to every top-level symbol made a tiny method edit look
+    // like a rewrite of a highly-imported core file.
+    const relevantSymbols = symbolScoped
+      ? symbolsByResolvedFile.get(file) ?? []
+      : fileSymbols;
     for (const symbol of relevantSymbols) {
       for (const call of db.getCallersOf(symbol)) {
         const callerFile = indexedFiles.find((candidate) => candidate.id === call.file_id);
         if (!callerFile || callerFile.path === file) continue;
+        if (!isTestFile(callerFile.path)) directCallerFiles.add(callerFile.path);
         upsertRanked(affected, {
           path: callerFile.path,
           kind: isTestFile(callerFile.path) ? "test_call_site" : "call_site",
@@ -670,6 +808,7 @@ export async function buildChangeImpact(options: ChangeImpactOptions): Promise<s
       if (!source) continue;
       const importedSymbols = parseJsonArray(importer.symbols_imported);
       const symbolOverlap = importedSymbols.filter((symbol) => relevantSymbols.includes(symbol));
+      if (!isTestFile(source.path) && symbolOverlap.length > 0) symbolImporterFiles.add(source.path);
       upsertRanked(affected, {
         path: source.path,
         kind: isTestFile(source.path)
@@ -704,8 +843,13 @@ export async function buildChangeImpact(options: ChangeImpactOptions): Promise<s
   const totalChurn = options.includeRecentChurn === false ? 0 : riskDetails.reduce((sum, detail) => sum + detail.churn, 0);
   if (targetTests.length === 0) reasons.push("No nearby regression tests found");
   if (totalChurn > 0) reasons.push(`Recent churn count: ${totalChurn}`);
-  const fanOut = totalImporters;
-  const blastRadius = affected.size;
+  const riskScope = symbolScoped ? "symbol" : "file";
+  const fanOut = symbolScoped
+    ? new Set([...directCallerFiles, ...symbolImporterFiles]).size
+    : totalImporters;
+  const blastRadius = symbolScoped
+    ? new Set([...directCallerFiles, ...symbolImporterFiles]).size
+    : affected.size;
   // A requested symbol name that resolved ambiguously (e.g. "search" matching a throwaway
   // local variable as readily as the real implementation) means everything computed below —
   // inputFiles, fanOut, blastRadius — may be built on the wrong file entirely. Don't let the
@@ -722,7 +866,14 @@ export async function buildChangeImpact(options: ChangeImpactOptions): Promise<s
         score: c.score,
       })),
     }));
-  const rawRiskScore = Math.min(0.99, 0.28 + fanOut * 0.07 + (targetTests.length === 0 ? 0.14 : 0) + Math.min(totalChurn, 10) * 0.025 + Math.min(blastRadius, 12) * 0.015);
+  const rawRiskScore = Math.min(
+    0.95,
+    (symbolScoped ? 0.12 : 0.24)
+      + Math.min(fanOut, 12) * (symbolScoped ? 0.055 : 0.07)
+      + (targetTests.length === 0 ? 0.12 : 0)
+      + Math.min(totalChurn, 10) * 0.015
+      + Math.min(blastRadius, 12) * 0.01,
+  );
   const riskScore = ambiguousResolutions.length > 0 ? Math.min(rawRiskScore, 0.4) : rawRiskScore;
   const config = await loadProjectConfig(options.rootDir);
   const repo = buildRepoMetadata({
@@ -737,7 +888,7 @@ export async function buildChangeImpact(options: ChangeImpactOptions): Promise<s
     ...resolvedSymbols
       .filter((item) => item.resolution?.bestMatch)
       .map((item) => `${item.symbol} resolved to ${item.resolution?.bestMatch?.path}`),
-    ...(fanOut > 0 ? [`${fanOut} direct importers`] : []),
+    ...(fanOut > 0 ? [`${fanOut} ${symbolScoped ? "symbol-level dependents" : "direct importers"}`] : []),
     ...(targetTests.length > 0 ? [`${targetTests.length} nearby tests`] : []),
     ...(blastRadius > 0 ? [`${blastRadius} structurally related files`] : []),
   ];
@@ -761,6 +912,15 @@ export async function buildChangeImpact(options: ChangeImpactOptions): Promise<s
       artifact: null,
     }),
     riskScore,
+    riskScope,
+    riskDrivers: {
+      fanOut,
+      directCallers: directCallerFiles.size,
+      symbolImporters: symbolImporterFiles.size,
+      wholeFileImporters: totalImporters,
+      churn: totalChurn,
+      nearbyTests: targetTests.length,
+    },
     ambiguousResolutions,
     impactSummary: ambiguousWarning + (inputFiles.length > 0
       ? `Changes may affect ${affected.size} structurally related files around ${inputFiles.join(", ")}.`
@@ -800,6 +960,7 @@ export async function buildChangeImpact(options: ChangeImpactOptions): Promise<s
     const lines = [
       `Change Impact`,
       `Risk Score: ${Math.round(payload.riskScore * 100)}%${payload.ambiguousResolutions.length > 0 ? " (capped — see ambiguity warning below)" : ""}`,
+      `Risk scope: ${payload.riskScope}${payload.riskScope === "symbol" ? ` (${payload.publicSurface.join(", ") || "resolved symbol"})` : " (whole file)"}`,
       artifact ? `Artifact: ${artifact.id}` : "",
       "",
     ].filter(Boolean);
@@ -1137,6 +1298,7 @@ export async function buildDecisionBrief(options: DecisionBriefOptions): Promise
 
 export async function buildValidateScope(options: ValidateScopeOptions): Promise<string> {
   const maxFiles = Math.max(1, Math.floor(options.maxFiles ?? 5));
+  const explicitFiles = unique(options.files ?? []);
   const editScopeRaw = JSON.parse(await buildEditScope({
     rootDir: options.rootDir,
     task: options.task,
@@ -1152,9 +1314,19 @@ export async function buildValidateScope(options: ValidateScopeOptions): Promise
   };
   const scripts = await readPackageScripts(options.rootDir);
   const pyProfile = await detectPythonProfile(options.rootDir);
-  const sourceFiles = editScopeRaw.recommendedScope.filter((item) => isSourcePath(item.path)).map((item) => item.path);
-  const tests = await findTestsForFiles(options.rootDir, sourceFiles);
-  const testPaths = tests.slice(0, 8).map((test) => test.path);
+  const inferredSources = editScopeRaw.recommendedScope.filter((item) => isSourcePath(item.path) && !isTestPath(item.path)).map((item) => item.path);
+  const explicitSources = explicitFiles.filter((path) => isSourcePath(path) && !isTestPath(path));
+  const sourceFiles = unique([...explicitSources, ...inferredSources]).slice(0, Math.max(maxFiles, explicitSources.length));
+  const inferredTests = await findTestsForFiles(options.rootDir, sourceFiles);
+  const explicitTests = explicitFiles
+    .filter((path) => isTestPath(path))
+    .map((path) => ({ path, reason: "Explicitly changed test file", score: 1 }));
+  const testsByPath = new Map<string, { path: string; reason: string; score: number }>();
+  for (const test of [...explicitTests, ...inferredTests]) {
+    if (!testsByPath.has(test.path)) testsByPath.set(test.path, test);
+  }
+  const tests = [...testsByPath.values()].slice(0, Math.max(8, explicitTests.length));
+  const testPaths = tests.map((test) => test.path);
   const checks: Array<{ type: string; command: string; reason: string }> = [];
 
   const hasPythonSources = sourceFiles.some((path) => path.endsWith(".py")) || testPaths.some((path) => path.endsWith(".py"));
@@ -1230,6 +1402,7 @@ export async function buildValidateScope(options: ValidateScopeOptions): Promise
     freshness: editScopeRaw.freshness,
     trust: editScopeRaw.trust,
     task: options.task,
+    explicitFiles,
     sourceFiles,
     tests: tests.slice(0, 8),
     optionalFiles: editScopeRaw.optionalScope,

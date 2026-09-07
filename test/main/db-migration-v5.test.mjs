@@ -41,14 +41,14 @@ describe("schema v5 migration", () => {
     try {
       const { getDB, closeDB } = await import("../../build/core/db.js");
       const db = await getDB(root);
-      assert.equal(db.getMeta("schema_version"), "5");
+      assert.equal(db.getMeta("schema_version"), "6");
       closeDB(root);
 
       const migrated = new Database(path);
       const fileColumns = migrated.prepare("PRAGMA table_info(files)").all().map((row) => row.name);
       const callColumns = migrated.prepare("PRAGMA table_info(tool_calls)").all().map((row) => row.name);
       assert.ok(fileColumns.includes("file_mtime_ms"));
-      for (const column of ["input_tokens_est", "output_tokens_est", "source_tokens_est", "saved_tokens_est", "represented_files"]) {
+      for (const column of ["input_tokens_est", "output_tokens_est", "source_tokens_est", "saved_tokens_est", "represented_files", "session_id"]) {
         assert.ok(callColumns.includes(column), `missing ${column}`);
       }
       migrated.close();

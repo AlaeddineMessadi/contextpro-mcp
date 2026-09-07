@@ -1,7 +1,7 @@
 // Tool-surface profiles and MCP safety hints
 // FEATURE: Reduce agent tool-choice noise while preserving the full expert surface
 
-export type ToolProfile = "core" | "full";
+export type ToolProfile = "workflow" | "core" | "full";
 
 export interface ContextProToolAnnotations {
   readOnlyHint: boolean;
@@ -50,6 +50,12 @@ const CORE_TOOLS = new Set([
   "rename_symbol",
 ]);
 
+const WORKFLOW_TOOLS = new Set([
+  "status", "task_pack", "search", "grep", "skeleton", "explain",
+  "blast_radius", "validate_scope", "memory_record_task", "efficiency_report",
+  "artifact_read", "reindex",
+]);
+
 const MUTATING_TOOLS = new Set([
   "gc",
   "graph_export",
@@ -81,11 +87,12 @@ const DESTRUCTIVE_TOOLS = new Set([
 ]);
 
 export function resolveToolProfile(value?: string): ToolProfile {
-  return value?.trim().toLowerCase() === "core" ? "core" : "full";
+  const name = value?.trim().toLowerCase();
+  return name === "workflow" ? "workflow" : name === "core" ? "core" : "full";
 }
 
 export function isToolEnabled(name: string, profile: ToolProfile): boolean {
-  return profile === "full" || CORE_TOOLS.has(name);
+  return profile === "full" || (profile === "workflow" ? WORKFLOW_TOOLS : CORE_TOOLS).has(name);
 }
 
 export function annotationsForTool(name: string): ContextProToolAnnotations {

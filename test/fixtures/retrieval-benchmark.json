@@ -1,0 +1,45 @@
+{
+  "version": 1,
+  "projects": [
+    {
+      "id": "typescript",
+      "files": {
+        "src/auth/session.ts": "// Session validation and expiry\nexport function validateSession(token: string, expiresAt: number): boolean {\n  return token.length > 0 && expiresAt > Date.now();\n}\n",
+        "src/auth/middleware.ts": "import { validateSession } from './session';\nexport function authenticate(token: string): boolean {\n  return validateSession(token, Date.now() + 60000);\n}\n",
+        "test/session.test.ts": "import { validateSession } from '../src/auth/session';\nexport function rejectsExpiredSession(): boolean {\n  return validateSession('expired', 0) === false;\n}\n",
+        "src/auth/password.ts": "export function hashPassword(password: string): string { return password; }\n",
+        "src/ui/session-label.ts": "// A display label only, no authentication behavior.\nexport const sessionLabel = 'Session';\n"
+      },
+      "tasks": [
+        { "id": "locate-session-validation", "task": "Locate session validation and its callers before changing expiry behavior.", "query": "validateSession", "expectedPaths": ["src/auth/session.ts", "src/auth/middleware.ts", "test/session.test.ts"] },
+        { "id": "recover-stale-index", "task": "Locate the renamed session validator after an out-of-band source edit.", "query": "validateAccessSession", "expectedPaths": ["src/auth/session.ts"], "changes": { "src/auth/session.ts": "// Session validation and expiry\nexport function validateAccessSession(token: string, expiresAt: number): boolean {\n  return token.length > 0 && expiresAt > Date.now();\n}\n" } }
+      ]
+    },
+    {
+      "id": "python",
+      "files": {
+        "app/retry.py": "# Retry delay calculation\ndef retry_delay(attempt: int) -> float:\n    return min(2 ** attempt, 60)\n",
+        "app/client.py": "from app.retry import retry_delay\n\ndef request_again(attempt: int) -> float:\n    return retry_delay(attempt)\n",
+        "tests/test_retry.py": "from app.retry import retry_delay\n\ndef test_retry_delay_is_capped():\n    assert retry_delay(10) == 60\n",
+        "app/metrics.py": "def record_latency(seconds: float):\n    return {'latency': seconds}\n"
+      },
+      "tasks": [
+        { "id": "python-retry-dependencies", "task": "Find the retry backoff implementation, dependent request code, and validation tests.", "query": "retry_delay", "expectedPaths": ["app/retry.py", "app/client.py", "tests/test_retry.py"] }
+      ]
+    },
+    {
+      "id": "monorepo",
+      "files": {
+        "packages/billing/src/tax.ts": "// Currency tax calculation\nexport function calculateTax(cents: number): number { return Math.round(cents * 0.2); }\n",
+        "packages/billing/test/tax.test.ts": "import { calculateTax } from '../src/tax';\nexport function taxIsRounded(): boolean { return calculateTax(101) === 20; }\n",
+        "apps/store/src/checkout.ts": "import { calculateTax } from '../../../packages/billing/src/tax';\nexport function checkout(cents: number): number { return cents + calculateTax(cents); }\n",
+        "apps/admin/src/TaxPage.ts": "// UI display only\nexport const taxTitle = 'Tax report';\n",
+        "packages/shipping/src/rate.ts": "export function shippingRate(distance: number): number { return distance * 2; }\n"
+      },
+      "tasks": [
+        { "id": "monorepo-tax-change", "task": "Find shared tax calculation, its checkout consumer, and tests before changing rounding.", "query": "calculateTax", "expectedPaths": ["packages/billing/src/tax.ts", "packages/billing/test/tax.test.ts", "apps/store/src/checkout.ts"] },
+        { "id": "worktree-local-implementation", "task": "Find the new branch-specific calculator in a worktree seeded from the base index.", "query": "calculateRegionalTax", "expectedPaths": ["packages/billing/src/tax.ts"], "worktree": true, "changes": { "packages/billing/src/tax.ts": "// Regional currency tax calculation\nexport function calculateRegionalTax(cents: number): number { return Math.round(cents * 0.15); }\n" } }
+      ]
+    }
+  ]
+}

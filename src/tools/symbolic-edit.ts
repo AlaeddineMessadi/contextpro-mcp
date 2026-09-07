@@ -1,14 +1,16 @@
 // Symbolic find and edit tools — Serena-parity symbol-level operations
 // FEATURE: Symbol-precise editing without LSP — parser-driven find / replace / insert / rename
 
-import { readFile, writeFile } from "fs/promises";
+import { readFile } from "fs/promises";
+import { createHash } from "node:crypto";
 import { extname } from "path";
 import { resolveProjectPath } from "../core/path-guard.js";
-import { analyzeFile, flattenSymbols, isSupportedFile, type CodeSymbol, type SymbolLocation } from "../core/parser.js";
+import { analyzeContent, analyzeFile, flattenSymbols, isSupportedFile, type CodeSymbol, type SymbolLocation } from "../core/parser.js";
 import { sourceMaskFlags } from "../core/source-mask.js";
-import { validateSyntax } from "../core/tree-sitter.js";
+import { getGrammarName, validateSyntax } from "../core/tree-sitter.js";
 import { walkDirectory } from "../core/walker.js";
 import { getDB } from "../core/db.js";
+import { assertSourceUnchanged, captureSource, publishSource, withSourceMutation, type SourceSnapshot } from "../core/source-mutation.js";
 import { createRestorePoint } from "../git/shadow.js";
 import { invalidateSearchCache } from "./semantic-search.js";
 import { invalidateIdentifierSearchCache } from "./semantic-identifiers.js";
@@ -32,6 +34,7 @@ export interface SymbolicEditOptions {
   namePath: string;
   body: string;
   message?: string;
+  expectedContentHash?: string;
 }
 
 export interface InsertSymbolOptions {
@@ -41,6 +44,7 @@ export interface InsertSymbolOptions {
   body: string;
   position: "before" | "after";
   message?: string;
+  expectedContentHash?: string;
 }
 
 export interface RenameSymbolOptions {
@@ -49,6 +53,7 @@ export interface RenameSymbolOptions {
   namePath: string;
   newName: string;
   message?: string;
+  expectedContentHash?: string;
 }
 
 export interface FoundSymbolEntry {
@@ -60,6 +65,7 @@ export interface FoundSymbolEntry {
   endLine: number;
   signature: string;
   body?: string;
+  contentHash?: string;
   children?: FoundSymbolEntry[];
 }
 
@@ -127,7 +133,7 @@ function withinKindFilter(symbol: CodeSymbol, includeKinds: string[] | undefined
   return true;
 }
 
-function toFoundEntry(match: MatchedSymbol, filePath: string, fileLines: string[], includeBody: boolean, depth: number): FoundSymbolEntry {
+function toFoundEntry(match: MatchedSymbol, filePath: string, content: string, includeBody: boolean, depth: number): FoundSymbolEntry {
   const entry: FoundSymbolEntry = {
     name: match.symbol.name,
     kind: match.symbol.kind,
@@ -138,11 +144,14 @@ function toFoundEntry(match: MatchedSymbol, filePath: string, fileLines: string[
     signature: match.symbol.signature,
   };
   if (includeBody) {
-    entry.body = fileLines.slice(match.symbol.line - 1, match.symbol.endLine).join("\n");
+    const { startIndex, endIndex } = match.symbol;
+    entry.body = startIndex !== undefined && endIndex !== undefined
+      ? content.slice(startIndex, endIndex)
+      : content.split("\n").slice(match.symbol.line - 1, match.symbol.endLine).join("\n");
   }
   if (depth > 0 && match.symbol.children.length > 0) {
     entry.children = match.symbol.children.map((child) =>
-      toFoundEntry({ symbol: child, namePath: `${match.namePath}/${child.name}`, parentChain: [...match.parentChain, match.symbol.name] }, filePath, fileLines, includeBody, depth - 1),
+      toFoundEntry({ symbol: child, namePath: `${match.namePath}/${child.name}`, parentChain: [...match.parentChain, match.symbol.name] }, filePath, content, includeBody, depth - 1),
     );
   }
   return entry;
@@ -152,15 +161,16 @@ async function findInOneFile(rootDir: string, relativePath: string, options: Fin
   const fullPath = resolveProjectPath(rootDir, relativePath, "relativePath");
   if (!isSupportedFile(fullPath)) return [];
   try {
-    const analysis = await analyzeFile(fullPath);
+    const content = await readFile(fullPath, "utf-8");
+    const analysis = await analyzeContent(fullPath, content);
+    const contentHash = createHash("sha256").update(content).digest("hex");
     const flat = flattenWithNamePath(analysis.symbols);
-    const fileLines = (options.includeBody ? (await readFile(fullPath, "utf-8")).split("\n") : []);
     const includeBody = options.includeBody === true;
     const depth = Math.max(0, Math.floor(options.depth ?? 0));
     return flat
       .filter((match) => matchesNamePathPattern(match.namePath, options.namePathPattern, options.substringMatching === true))
       .filter((match) => withinKindFilter(match.symbol, options.includeKinds, options.excludeKinds))
-      .map((match) => toFoundEntry(match, relativePath, fileLines, includeBody, depth));
+      .map((match) => ({ ...toFoundEntry(match, relativePath, content, includeBody, depth), contentHash }));
   } catch {
     return [];
   }
@@ -222,12 +232,12 @@ export async function findSymbol(options: FindSymbolOptions): Promise<string> {
   return lines.join("\n").trimEnd();
 }
 
-async function locateSymbolForEdit(rootDir: string, relativePath: string, namePath: string): Promise<{ symbol: CodeSymbol; parentChain: string[]; analysis: Awaited<ReturnType<typeof analyzeFile>>; fullPath: string }> {
+async function locateSymbolForEdit(rootDir: string, relativePath: string, namePath: string, content?: string): Promise<{ symbol: CodeSymbol; parentChain: string[]; analysis: Awaited<ReturnType<typeof analyzeFile>>; fullPath: string }> {
   const fullPath = resolveProjectPath(rootDir, relativePath, "relativePath");
   if (!isSupportedFile(fullPath)) {
     throw new Error(`File is not a supported source language: ${relativePath}`);
   }
-  const analysis = await analyzeFile(fullPath);
+  const analysis = content === undefined ? await analyzeFile(fullPath) : await analyzeContent(fullPath, content);
   const flat = flattenWithNamePath(analysis.symbols);
   const matches = flat.filter((match) => matchesNamePathPattern(match.namePath, namePath, false));
   if (matches.length === 0) {
@@ -245,12 +255,6 @@ function detectIndent(line: string): string {
   return match ? match[0] : "";
 }
 
-function applyLineEdit(content: string, startLine: number, endLine: number, replacement: string): string {
-  const lines = content.split("\n");
-  const head = lines.slice(0, startLine - 1);
-  const tail = lines.slice(endLine);
-  return [...head, ...replacement.split("\n"), ...tail].join("\n");
-}
 
 function insertLines(content: string, position: number, payload: string): string {
   const lines = content.split("\n");
@@ -260,7 +264,10 @@ function insertLines(content: string, position: number, payload: string): string
 }
 
 function looksLikeDefinitionStart(body: string, kind: string): boolean {
-  const firstLine = body.split("\n").find((line) => line.trim().length > 0) ?? "";
+  // Export wrappers may precede the declaration on a separate line. Validate
+  // the declaration start while retaining the original wrapper in the edit.
+  const declaration = body.trimStart().replace(/^export\s+(?:default\s+)?/, "");
+  const firstLine = declaration.split("\n").find((line) => line.trim().length > 0) ?? "";
   const trimmed = firstLine.trim();
   if (trimmed.length === 0) return false;
   // Generic checks that cover most languages and kinds
@@ -359,8 +366,15 @@ async function assertEditKeepsSyntaxValid(
 }
 
 export async function replaceSymbolBody(options: SymbolicEditOptions): Promise<string> {
-  const { symbol, fullPath } = await locateSymbolForEdit(options.rootDir, options.relativePath, options.namePath);
-  const content = await readFile(fullPath, "utf-8");
+  return withSourceMutation(options.rootDir, () => replaceSymbolBodyLocked(options));
+}
+
+async function replaceSymbolBodyLocked(options: SymbolicEditOptions): Promise<string> {
+  const snapshot = captureSource(options.rootDir, options.relativePath);
+  assertExpectedHash(snapshot, options.expectedContentHash);
+  const content = snapshot.content;
+  if (content === null) throw new Error(`Source file does not exist: ${options.relativePath}`);
+  const { symbol, fullPath } = await locateSymbolForEdit(options.rootDir, options.relativePath, options.namePath, content);
   const lines = content.split("\n");
   const definitionIndent = detectIndent(lines[symbol.line - 1] ?? "");
 
@@ -375,12 +389,14 @@ export async function replaceSymbolBody(options: SymbolicEditOptions): Promise<s
     );
   }
 
-  const replacement = reindentBody(options.body, definitionIndent);
-  const next = applyLineEdit(content, symbol.line, symbol.endLine, replacement);
+  assertExactSpan(symbol);
+  let replacement = reindentBody(options.body, definitionIndent).trimStart();
+  if (content.includes("\r\n")) replacement = replacement.replace(/\r?\n/g, "\r\n");
+  const next = content.slice(0, symbol.startIndex) + replacement + content.slice(symbol.endIndex);
   // Validate BEFORE writing or creating a restore point so a broken edit leaves no trace.
   await assertEditKeepsSyntaxValid(options.relativePath, fullPath, content, next, "replace_symbol_body");
   await createRestorePoint(options.rootDir, [options.relativePath], options.message ?? `replace_symbol_body:${options.namePath}`);
-  await writeFile(fullPath, next, "utf-8");
+  await publishSource(options.rootDir, snapshot, next);
   invalidateCaches();
   return `Replaced ${symbol.kind} "${options.namePath}" in ${options.relativePath} (was L${symbol.line}-L${symbol.endLine}). Syntax validated.`;
 }
@@ -408,8 +424,15 @@ function decoratorBlockStartLine(lines: string[], defLine0: number): number {
 }
 
 export async function insertAroundSymbol(options: InsertSymbolOptions): Promise<string> {
-  const { symbol, fullPath } = await locateSymbolForEdit(options.rootDir, options.relativePath, options.namePath);
-  const content = await readFile(fullPath, "utf-8");
+  return withSourceMutation(options.rootDir, () => insertAroundSymbolLocked(options));
+}
+
+async function insertAroundSymbolLocked(options: InsertSymbolOptions): Promise<string> {
+  const snapshot = captureSource(options.rootDir, options.relativePath);
+  assertExpectedHash(snapshot, options.expectedContentHash);
+  const content = snapshot.content;
+  if (content === null) throw new Error(`Source file does not exist: ${options.relativePath}`);
+  const { symbol, fullPath } = await locateSymbolForEdit(options.rootDir, options.relativePath, options.namePath, content);
   const lines = content.split("\n");
   const insertion = options.position === "before"
     ? `${options.body}\n`
@@ -417,10 +440,20 @@ export async function insertAroundSymbol(options: InsertSymbolOptions): Promise<
   const insertLine = options.position === "before"
     ? decoratorBlockStartLine(lines, symbol.line - 1)
     : symbol.endLine;
-  const next = insertLines(content, insertLine, insertion);
+  assertExactSpan(symbol);
+  // Whole-line insertion is safe only when there is no neighboring code on the boundary.
+  const boundary = options.position === "before" ? symbol.startIndex! : symbol.endIndex!;
+  const lineStart = content.lastIndexOf("\n", boundary - 1) + 1;
+  const lineEnd = content.indexOf("\n", boundary);
+  const adjacent = options.position === "before"
+    ? content.slice(lineStart, boundary)
+    : content.slice(boundary, lineEnd < 0 ? content.length : lineEnd);
+  const next = adjacent.trim().length === 0
+    ? insertLines(content, insertLine, insertion)
+    : content.slice(0, boundary) + "\n" + options.body + "\n" + content.slice(boundary);
   await assertEditKeepsSyntaxValid(options.relativePath, fullPath, content, next, `insert_${options.position}_symbol`);
   await createRestorePoint(options.rootDir, [options.relativePath], options.message ?? `insert_${options.position}_symbol:${options.namePath}`);
-  await writeFile(fullPath, next, "utf-8");
+  await publishSource(options.rootDir, snapshot, next);
   invalidateCaches();
   return `Inserted ${options.position} ${symbol.kind} "${options.namePath}" in ${options.relativePath} at L${options.position === "before" ? insertLine + 1 : symbol.endLine + 1}. Syntax validated.`;
 }
@@ -442,7 +475,7 @@ function renameOutsideStringsAndComments(
   filePath: string,
 ): { result: string; occurrences: number; skipped: number } {
   const masked = maskStringsAndComments(text, filePath);
-  const pattern = new RegExp(`\\b${escapeRegex(oldName)}\\b`, "g");
+  const pattern = new RegExp(`(?<![\\p{L}\\p{N}_$])${escapeRegex(oldName)}(?![\\p{L}\\p{N}_$])`, "gu");
   let occurrences = 0;
   let skipped = 0;
   const result = text.replace(pattern, (match, offset: number) => {
@@ -454,75 +487,95 @@ function renameOutsideStringsAndComments(
 }
 
 export async function renameSymbol(options: RenameSymbolOptions): Promise<string> {
-  const { symbol, fullPath } = await locateSymbolForEdit(options.rootDir, options.relativePath, options.namePath);
+  return withSourceMutation(options.rootDir, () => renameSymbolLocked(options));
+}
+
+async function renameSymbolLocked(options: RenameSymbolOptions): Promise<string> {
+  const snapshot = captureSource(options.rootDir, options.relativePath);
+  assertExpectedHash(snapshot, options.expectedContentHash);
+  if (snapshot.content === null) throw new Error(`Source file does not exist: ${options.relativePath}`);
+  const { symbol, fullPath, analysis } = await locateSymbolForEdit(options.rootDir, options.relativePath, options.namePath, snapshot.content);
   const oldName = symbol.name;
-  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(options.newName)) {
-    throw new Error(`Invalid new symbol name "${options.newName}". Must match /^[A-Za-z_][A-Za-z0-9_]*$/.`);
-  }
-  if (options.newName === oldName) {
-    throw new Error(`rename_symbol: new name "${options.newName}" is identical to the existing name. No rename performed.`);
-  }
+  assertRenameName(options.newName, fullPath);
+  if (options.newName === oldName) throw new Error(`rename_symbol: new name "${options.newName}" is identical to the existing name. No rename performed.`);
+  const collision = flattenSymbols(analysis.symbols).find((sym) => sym.name === options.newName);
+  if (collision) throw new Error(`rename_symbol: a ${collision.kind} named "${options.newName}" already exists at L${collision.line}. Choose a different name.`);
 
-  // Collision check: refuse if a different symbol with the new name already exists in the same file.
-  const analysis = await analyzeFile(fullPath);
-  const flat = flattenSymbols(analysis.symbols);
-  const collision = flat.find((sym) => sym.name === options.newName && sym.line !== symbol.line);
-  if (collision) {
-    throw new Error(
-      `rename_symbol: cannot rename "${oldName}" → "${options.newName}" in ${options.relativePath} because ` +
-      `a ${collision.kind} named "${options.newName}" already exists at L${collision.line}. ` +
-      `Choose a different name or rename/remove the existing symbol first.`
-    );
-  }
-  await createRestorePoint(options.rootDir, [options.relativePath], options.message ?? `rename_symbol:${oldName}->${options.newName}`);
-  const original = await readFile(fullPath, "utf-8");
-  const { result: next, occurrences, skipped: skippedInFile } = renameOutsideStringsAndComments(original, oldName, options.newName, fullPath);
-  await writeFile(fullPath, next, "utf-8");
-
+  const candidateFiles = new Set<string>([options.relativePath]);
   const db = await getDB(options.rootDir);
   const dbFile = db.getFile(options.relativePath);
-  let crossFileEdited = 0;
-  let crossFileSkipped = 0;
   if (dbFile) {
-    const importers = db.getImportersOf(dbFile.id);
-    const callers = db.getCallersOf(oldName);
-    const allFiles = db.getAllFiles();
-    const fileMap = new Map(allFiles.map((file) => [file.id, file.path] as const));
-    const candidateFiles = new Set<string>();
-    for (const importer of importers) {
+    const fileMap = new Map(db.getAllFiles().map((file) => [file.id, file.path] as const));
+    for (const importer of db.getImportersOf(dbFile.id)) {
       const path = fileMap.get(importer.source_file_id);
       if (path) candidateFiles.add(path);
     }
-    for (const caller of callers) {
+    for (const caller of db.getCallersOf(oldName)) {
       const path = fileMap.get(caller.file_id);
-      if (path && path !== options.relativePath) candidateFiles.add(path);
-    }
-
-    if (candidateFiles.size > 0) {
-      await createRestorePoint(options.rootDir, [...candidateFiles], `rename_symbol_cross:${oldName}->${options.newName}`);
-      for (const path of candidateFiles) {
-        try {
-          const candidatePath = resolveProjectPath(options.rootDir, path, "renameCandidate");
-          const text = await readFile(candidatePath, "utf-8");
-          const { result: replaced, occurrences: fileOccurrences, skipped: fileSkipped } =
-            renameOutsideStringsAndComments(text, oldName, options.newName, candidatePath);
-          crossFileSkipped += fileSkipped;
-          if (fileOccurrences > 0 && replaced !== text) {
-            await writeFile(candidatePath, replaced, "utf-8");
-            crossFileEdited++;
-          }
-        } catch {
-          // best-effort cross-file rename
-        }
-      }
+      if (path) candidateFiles.add(path);
     }
   }
-  invalidateCaches();
-  const totalSkipped = skippedInFile + crossFileSkipped;
-  const skipNote = totalSkipped > 0
-    ? ` (${totalSkipped} additional occurrence(s) inside string literals/comments left untouched)`
-    : "";
-  return `Renamed ${symbol.kind} "${oldName}" → "${options.newName}" in ${options.relativePath} (${occurrences} occurrences in definition file, ${crossFileEdited} other file(s) updated based on import/call graph).${skipNote}`;
+  const staged: { file: string; snapshot: SourceSnapshot; next: string; occurrences: number }[] = [];
+  let totalSkipped = 0;
+  for (const file of candidateFiles) {
+    const source = file === options.relativePath ? snapshot : captureSource(options.rootDir, file);
+    if (source.content === null) throw new Error(`rename_symbol: candidate ${file} is missing. No files were modified; refresh the index and retry.`);
+    const renamed = renameOutsideStringsAndComments(source.content, oldName, options.newName, source.path);
+    totalSkipped += renamed.skipped;
+    if (renamed.occurrences === 0) continue;
+    // Validate every candidate even when its original syntax is already broken: rename must
+    // never publish an unchecked batch. Use the replacement tools to repair broken source.
+    const validation = await validateSyntax(renamed.result, extname(source.path).toLowerCase());
+    if (!validation.checked || !validation.ok) {
+      throw new Error(`rename_symbol: proposed rename cannot be syntax validated in ${file}${validation.firstError ? ` at L${validation.firstError.line}` : ""}. No files were modified.`);
+    }
+    staged.push({ file, snapshot: source, next: renamed.result, occurrences: renamed.occurrences });
+  }
+  for (const item of staged) assertSourceUnchanged(options.rootDir, item.snapshot);
+  const restore = await createRestorePoint(options.rootDir, staged.map((item) => item.file), options.message ?? `rename_symbol:${oldName}->${options.newName}`);
+  const completed: string[] = [];
+  try {
+    for (const item of staged) {
+      await publishSource(options.rootDir, item.snapshot, item.next);
+      completed.push(item.file);
+    }
+  } catch (error) {
+    throw new Error(`rename_symbol failed: ${error instanceof Error ? error.message : String(error)} Updated files: ${completed.join(", ") || "none"}. Pending files: ${staged.filter((item) => !completed.includes(item.file)).map((item) => item.file).join(", ")}. Restore point: ${restore.id}.`);
+  } finally { invalidateCaches(); }
+  const occurrences = staged.find((item) => item.file === options.relativePath)?.occurrences ?? 0;
+  const skipNote = totalSkipped ? ` (${totalSkipped} occurrence(s) inside string literals/comments left untouched)` : "";
+  return `Renamed ${symbol.kind} "${oldName}" → "${options.newName}" in ${options.relativePath} (${occurrences} occurrences in definition file, ${Math.max(0, completed.length - 1)} other file(s) updated based on import/call graph).${skipNote}`;
+}
+
+// Structural grammars sometimes accept keywords in identifier positions. Reject reserved
+// names separately; syntax validation of every staged file remains necessary as well.
+function assertRenameName(name: string, filePath: string): void {
+  const language = getGrammarName(extname(filePath).toLowerCase()) ?? "unknown";
+  const js = ["typescript", "tsx", "javascript"].includes(language);
+  if (!(js ? /^[A-Za-z_$][A-Za-z0-9_$]*$/ : /^[A-Za-z_][A-Za-z0-9_]*$/).test(name)) {
+    throw new Error(`Invalid new symbol name "${name}" for ${language}.`);
+  }
+  const reserved: Record<string, string> = {
+    javascript: "await break case catch class const continue debugger default delete do else enum export extends false finally for function if implements import in instanceof interface let new null package private protected public return static super switch this throw true try typeof var void while with yield",
+    python: "False None True and as assert async await break class continue def del elif else except finally for from global if import in is lambda nonlocal not or pass raise return try while with yield",
+    rust: "as async await break const continue crate dyn else enum extern false fn for if impl in let loop match mod move mut pub ref return self Self static struct super trait true type unsafe use where while abstract become box do final macro override priv typeof unsized virtual yield try",
+    go: "break default func interface select case defer go map struct chan else goto package switch const fallthrough if range type continue for import return var",
+    java: "abstract assert boolean break byte case catch char class const continue default do double else enum extends final finally float for goto if implements import instanceof int interface long native new package private protected public return short static strictfp super switch synchronized this throw throws transient try void volatile while true false null _",
+    c: "auto break case char const continue default do double else enum extern float for goto if inline int long register restrict return short signed sizeof static struct switch typedef union unsigned void volatile while _Alignas _Alignof _Atomic _Bool _Complex _Generic _Imaginary _Noreturn _Static_assert _Thread_local",
+  };
+  const words = reserved[js ? "javascript" : language]
+    ?? "as break case catch class const continue default do else enum export extends false finally for function if import in new null private protected public return static struct super switch this throw true try type typeof var void while with yield";
+  if (new Set(words.split(" ")).has(name)) throw new Error(`Invalid new symbol name "${name}": reserved keyword in ${language}. No files were modified.`);
+}
+
+function assertExpectedHash(snapshot: SourceSnapshot, expected: string | undefined): void {
+  if (expected !== undefined && snapshot.hash !== expected) throw new Error(`Source conflict: ${snapshot.path} does not match expectedContentHash. Read current content and retry.`);
+}
+
+function assertExactSpan(symbol: CodeSymbol): void {
+  if (symbol.startIndex === undefined || symbol.endIndex === undefined || symbol.sharedDeclaration) {
+    throw new Error(`Cannot safely edit "${symbol.name}": an unambiguous exact source span is unavailable. Use a checked whole-file edit instead.`);
+  }
 }
 
 export type { SymbolLocation };

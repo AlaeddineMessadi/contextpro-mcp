@@ -11,6 +11,10 @@ export interface EfficiencyEstimate extends Required<ToolCallEfficiency> {
 const inventoryCache = new Map<string, { generation: number; files: FileRow[] }>();
 const sessionSavings = new Map<string, number>();
 const MAX_CACHED_ROOTS = 50;
+// Ephemeral IDs only: never persist paths or content in efficiency history.
+// When tracking fills up, under-count rather than crediting an unseen duplicate.
+const creditedSources = new Map<string, Set<string>>();
+const MAX_CREDITED_SOURCES = 100_000;
 
 export function estimateTokens(value: string): number {
   return Math.ceil(Buffer.byteLength(value, "utf8") / 4);
@@ -41,6 +45,10 @@ function responseText(result: unknown): string {
   } catch {
     return String(result);
   }
+}
+
+export function estimateResponseTokens(result: unknown): number {
+  return estimateTokens(responseText(result));
 }
 
 function containsExplicitPath(text: string, path: string): boolean {
@@ -87,7 +95,7 @@ async function indexedFiles(rootDir: string): Promise<FileRow[]> {
  * represented in the request/response, their recorded byte sizes, and the text
  * actually returned. It deliberately does not infer model billing or cache hits.
  */
-export async function estimateToolEfficiency(rootDir: string, args: unknown, result: unknown): Promise<EfficiencyEstimate> {
+export async function estimateToolEfficiency(rootDir: string, args: unknown, result: unknown, deduplicateSource: boolean = false): Promise<EfficiencyEstimate> {
   const output = responseText(result);
   let input = "";
   try {
@@ -97,11 +105,19 @@ export async function estimateToolEfficiency(rootDir: string, args: unknown, res
   }
   const searchable = `${input}\n${output}`.replace(/\\/g, "/");
   const files = await indexedFiles(rootDir);
+  const root = resolve(rootDir);
+  if (deduplicateSource && !creditedSources.has(root) && creditedSources.size < MAX_CACHED_ROOTS) creditedSources.set(root, new Set());
+  const credited = creditedSources.get(root);
   let representedFiles = 0;
   let sourceTokens = 0;
   for (const file of files) {
     if (!pathVariants(rootDir, file.path).some((path) => containsExplicitPath(searchable, path))) continue;
     representedFiles++;
+    if (deduplicateSource) {
+      const key = `${file.path}\0${file.content_hash}`;
+      if (!credited || credited.has(key) || credited.size >= MAX_CREDITED_SOURCES) continue;
+      credited.add(key);
+    }
     sourceTokens += Math.ceil(Math.max(0, file.file_size) / 4);
   }
   const outputTokens = estimateTokens(output);
@@ -109,7 +125,7 @@ export async function estimateToolEfficiency(rootDir: string, args: unknown, res
     inputTokens: estimateTokens(input),
     outputTokens,
     sourceTokens,
-    savedTokens: Math.max(0, sourceTokens - outputTokens),
+    savedTokens: Math.max(0, sourceTokens - outputTokens - estimateTokens(input)),
     representedFiles,
     method: "indexed-source-bytes-vs-response-chars",
   };
@@ -129,7 +145,7 @@ export function addToSessionSavings(rootDir: string, estimate: EfficiencyEstimat
 }
 
 function footerEnabled(): boolean {
-  const raw = (process.env.CONTEXTPRO_EFFICIENCY_FOOTER ?? process.env.CONTEXTPLUS_EFFICIENCY_FOOTER ?? "1").trim().toLowerCase();
+  const raw = (process.env.CONTEXTPRO_EFFICIENCY_FOOTER ?? process.env.CONTEXTPLUS_EFFICIENCY_FOOTER ?? "0").trim().toLowerCase();
   return !["0", "false", "no", "off"].includes(raw);
 }
 
@@ -146,6 +162,6 @@ export function appendEfficiencyFooter<T>(result: T, estimate: EfficiencyEstimat
   } catch {
     // Plain text response; safe to append a human-readable footer.
   }
-  textItem.text += `\n\n🌱 ContextPro estimated ~${estimate.savedTokens.toLocaleString("en-US")} source tokens avoided this call across ${estimate.representedFiles} file${estimate.representedFiles === 1 ? "" : "s"}; ~${sessionSavedTokens.toLocaleString("en-US")} this MCP session. Estimate only; use efficiency_report for the method and history.`;
+  textItem.text += `\n\nContextPro estimated ~${estimate.savedTokens.toLocaleString("en-US")} source tokens avoided this call across ${estimate.representedFiles} file${estimate.representedFiles === 1 ? "" : "s"}, before this optional footer. Use efficiency_report for the net session estimate.`;
   return result;
 }

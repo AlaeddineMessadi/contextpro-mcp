@@ -22,9 +22,10 @@ import { refreshFilesStructural } from "../tools/reindex.js";
 // multiplied across sessions. With this, we only hash a file when its mtime or size
 // actually changed since we last saw it; unchanged files are skipped entirely.
 // In-memory only (no schema change); the first sweep seeds it, later sweeps are cheap.
-const fileStatCache = new Map<string, Map<string, { mtimeMs: number; size: number }>>();
+interface ReconciledFingerprint { mtimeMs: number; ctimeMs: number; size: number; indexedHash: string }
+const fileStatCache = new Map<string, Map<string, ReconciledFingerprint>>();
 
-function statCacheFor(rootDir: string): Map<string, { mtimeMs: number; size: number }> {
+function statCacheFor(rootDir: string): Map<string, ReconciledFingerprint> {
   let m = fileStatCache.get(rootDir);
   if (!m) { m = new Map(); fileStatCache.set(rootDir, m); }
   return m;
@@ -109,15 +110,22 @@ export async function reconcileIndex(
       // readFile + sha256 entirely. This is what makes idle sweeps near-free.
       const st = await stat(fullPath);
       const prev = statCache.get(entry.relativePath);
-      if (prev && prev.mtimeMs === st.mtimeMs && prev.size === st.size) {
+      if (prev && prev.mtimeMs === st.mtimeMs && prev.ctimeMs === st.ctimeMs
+        && prev.size === st.size && prev.indexedHash === indexedHash) {
         continue; // unchanged since last sweep — no hashing needed
       }
 
       // mtime/size changed (or first time we've seen it this session): hash to
       // confirm a real content change before marking drift, then remember the stat.
       const content = await readFile(fullPath, "utf-8");
-      statCache.set(entry.relativePath, { mtimeMs: st.mtimeMs, size: st.size });
-      if (hashContent(content) !== indexedHash) drifted.push(entry.relativePath);
+      if (hashContent(content) !== indexedHash) {
+        // A seen file is not necessarily reconciled: capped or failed refreshes
+        // must remain eligible next sweep even when its filesystem stat is stable.
+        statCache.delete(entry.relativePath);
+        drifted.push(entry.relativePath);
+      } else {
+        statCache.set(entry.relativePath, { mtimeMs: st.mtimeMs, ctimeMs: st.ctimeMs, size: st.size, indexedHash });
+      }
     } catch {
       // Unreadable (race with deletion / permissions) — let prune or the next
       // sweep handle it rather than treating an error as drift.
@@ -127,26 +135,29 @@ export async function reconcileIndex(
 
   // Prune index entries whose files are gone from disk.
   const removedPaths = db.getRemovedFiles(diskPaths).filter((path) => isSupportedFile(path));
-  for (const path of removedPaths) db.deleteFile(path);
+  for (const path of removedPaths) statCache.delete(path);
 
   // Refresh up to the per-sweep cap; the remainder is reported as pending so the
   // tracker can schedule a prompt follow-up sweep.
   const batch = drifted.slice(0, maxFiles);
-  const pending = Math.max(0, drifted.length - batch.length);
 
   let refreshed = 0;
+  let removed = 0;
   let changedSymbols: string[] = [];
-  if (batch.length > 0) {
-    const result = await refreshFilesStructural(rootDir, batch);
+  if (batch.length > 0 || removedPaths.length > 0) {
+    // Deletions use the same writer lock, generation, and cache invalidation as
+    // updates. The mutation rechecks existence after acquiring the lock.
+    const result = await refreshFilesStructural(rootDir, batch, { removedPaths });
     refreshed = result.indexed;
+    removed = result.removed ?? 0;
     changedSymbols = result.changedSymbols;
   }
 
   return {
     refreshed,
-    removed: removedPaths.length,
+    removed,
     drifted: drifted.length,
-    pending,
+    pending: Math.max(0, drifted.length - refreshed),
     changedSymbols,
   };
 }

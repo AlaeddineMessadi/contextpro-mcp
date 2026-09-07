@@ -1,9 +1,10 @@
 // Shadow restore-point manager for safe AI change tracking
 // Backups files via JSON manifest before edits; no real git history pollution
 
-import { readFile, writeFile, mkdir, rename, unlink, readdir, stat, rm } from "fs/promises";
-import { join, dirname } from "path";
+import { readFile, mkdir, readdir, stat, rm } from "fs/promises";
+import { join } from "path";
 import { createHash } from "crypto";
+import { assertMutationPath, assertSourceUnchanged, captureSource, publishSource, withSourceMutation } from "../core/source-mutation.js";
 import { resolveProjectPath, toProjectRelativePath } from "../core/path-guard.js";
 
 const DATA_DIR = ".contextpro/backups";
@@ -27,7 +28,7 @@ export interface RestorePoint {
 const SESSION_ID = `${process.pid}-${Math.floor(Date.now() / 1000 / 60)}`;
 
 async function ensureDataDir(rootDir: string): Promise<string> {
-  const dataPath = join(rootDir, DATA_DIR);
+  const dataPath = assertMutationPath(rootDir, DATA_DIR);
   await mkdir(dataPath, { recursive: true });
   return dataPath;
 }
@@ -39,6 +40,10 @@ function hashPath(relPath: string): string {
 const manifestMutex = new Map<string, Promise<void>>();
 
 async function withManifestLock<T>(rootDir: string, fn: () => Promise<T>): Promise<T> {
+  return withSourceMutation(rootDir, () => withManifestLockLocal(rootDir, fn));
+}
+
+async function withManifestLockLocal<T>(rootDir: string, fn: () => Promise<T>): Promise<T> {
   const key = resolveProjectPath(rootDir, ".", "rootDir");
   const previous = manifestMutex.get(key) ?? Promise.resolve();
   let release: () => void = () => undefined;
@@ -61,7 +66,7 @@ async function withManifestLock<T>(rootDir: string, fn: () => Promise<T>): Promi
 }
 
 async function loadManifest(rootDir: string): Promise<RestorePoint[]> {
-  const manifestPath = join(rootDir, DATA_DIR, "restore-points.json");
+  const manifestPath = resolveProjectPath(rootDir, join(DATA_DIR, "restore-points.json"));
   try {
     const raw = await readFile(manifestPath, "utf-8");
     const parsed = JSON.parse(raw);
@@ -81,24 +86,18 @@ async function loadManifest(rootDir: string): Promise<RestorePoint[]> {
 
 async function saveManifestAtomic(rootDir: string, points: RestorePoint[]): Promise<void> {
   const dataPath = await ensureDataDir(rootDir);
-  const target = join(dataPath, "restore-points.json");
-  const tmp = `${target}.${process.pid}.${Date.now()}.tmp`;
-  await writeFile(tmp, JSON.stringify(points, null, 2));
-  await rename(tmp, target).catch(async (err) => {
-    // On Windows rename can fail when the target exists in some FS scenarios; fall back to unlink+rename.
-    if ((err as NodeJS.ErrnoException).code === "EEXIST" || (err as NodeJS.ErrnoException).code === "EPERM") {
-      await unlink(target).catch(() => undefined);
-      await rename(tmp, target);
-    } else {
-      throw err;
-    }
-  });
+  const snapshot = captureSource(rootDir, join(dataPath, "restore-points.json"));
+  await publishSource(rootDir, snapshot, JSON.stringify(points, null, 2));
 }
 
 export async function createRestorePoint(rootDir: string, files: string[], message: string): Promise<RestorePoint> {
+  return withSourceMutation(rootDir, () => createRestorePointLocked(rootDir, files, message));
+}
+
+async function createRestorePointLocked(rootDir: string, files: string[], message: string): Promise<RestorePoint> {
   const dataPath = await ensureDataDir(rootDir);
   const id = `rp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-  const backupDir = join(dataPath, "backups", id);
+  const backupDir = assertMutationPath(rootDir, join(dataPath, "backups", id));
   await mkdir(backupDir, { recursive: true });
   const safeFiles = files.map((file) => toProjectRelativePath(rootDir, file, "restore file"));
   const fileHashes: Record<string, string> = {};
@@ -107,22 +106,18 @@ export async function createRestorePoint(rootDir: string, files: string[], messa
   for (const file of safeFiles) {
     const fullPath = resolveProjectPath(rootDir, file, "restore file");
     try {
-      const content = await readFile(fullPath, "utf-8");
+      const source = captureSource(rootDir, fullPath);
+      if (source.content === null) { tombstoneFiles.push(file); continue; }
+      const content = source.content;
       // Hash-based backup filename guarantees uniqueness regardless of how the original relative
       // path looks (slashes, dots, very long path segments). Maps stored in fileHashes for
       // restoreFromPoint to resolve.
       const slug = hashPath(file);
       const backupPath = join(backupDir, `${slug}.bak`);
-      await writeFile(backupPath, content);
+      await publishSource(rootDir, captureSource(rootDir, backupPath), content);
       fileHashes[file] = slug;
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-        // The file doesn't exist yet — this is a tombstone. Restoring it should DELETE the file.
-        tombstoneFiles.push(file);
-      } else {
-        const message = error instanceof Error ? error.message : String(error);
-        process.stderr.write(`[contextpro/shadow] backup failed for ${file}: ${message}\n`);
-      }
+      throw new Error(`Backup failed for ${file}; source was not modified: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 
@@ -165,10 +160,12 @@ export interface RestorePlan {
 
 async function readBackupForFile(backupDir: string, file: string, point: RestorePoint): Promise<string | null> {
   const newSlug = point.fileHashes?.[file];
+  if (newSlug && !/^[a-f0-9]{32}$/.test(newSlug)) throw new Error(`Invalid restore backup hash for ${file}`);
   const candidates = newSlug
     ? [join(backupDir, `${newSlug}.bak`), join(backupDir, file.replace(/[\\/]/g, "__"))]
     : [join(backupDir, file.replace(/[\\/]/g, "__")), join(backupDir, `${hashPath(file)}.bak`)];
   for (const backupPath of candidates) {
+    resolveProjectPath(backupDir, backupPath);
     try {
       return await readFile(backupPath, "utf-8");
     } catch (error) {
@@ -194,7 +191,7 @@ async function fileExists(path: string): Promise<boolean> {
 // point ONCE up front and reuse it — never re-loading the manifest after the safety snapshot (whose
 // LRU trim could otherwise evict the target's manifest entry and spuriously fail the restore).
 async function planRestoreForPoint(rootDir: string, point: RestorePoint): Promise<RestorePlan> {
-  const backupDir = join(rootDir, DATA_DIR, "backups", point.id);
+  const backupDir = resolveProjectPath(rootDir, join(DATA_DIR, "backups", point.id));
   const tombstones = new Set(point.tombstoneFiles ?? []);
   const plans: RestoreFilePlan[] = [];
 
@@ -223,6 +220,7 @@ async function planRestoreForPoint(rootDir: string, point: RestorePoint): Promis
 
 async function resolvePoint(rootDir: string, pointId: string): Promise<RestorePoint> {
   const manifest = await loadManifest(rootDir);
+  if (!/^rp-[a-zA-Z0-9-]+$/.test(pointId)) throw new Error(`Invalid restore point id: ${pointId}`);
   const point = manifest.find((p) => p.id === pointId);
   if (!point) throw new Error(`Restore point ${pointId} not found`);
   return point;
@@ -254,6 +252,11 @@ export async function restorePoint(
   pointId: string,
   options: RestoreOptions = {},
 ): Promise<RestoreResult> {
+  if (options.preview) return { preview: true, plan: await planRestore(rootDir, pointId), restoredFiles: [], safetyPointId: null };
+  return withSourceMutation(rootDir, () => restorePointLocked(rootDir, pointId, options));
+}
+
+async function restorePointLocked(rootDir: string, pointId: string, options: RestoreOptions): Promise<RestoreResult> {
   // Resolve the target point ONCE, before anything mutates the manifest. We reuse this captured
   // reference for the actual restore so the safety snapshot's LRU trim can never evict it out from
   // under us. The backup files on disk for this point are not touched by the trim either.
@@ -263,6 +266,17 @@ export async function restorePoint(
   if (options.preview) {
     return { preview: true, plan, restoredFiles: [], safetyPointId: null };
   }
+
+  const snapshots = new Map(point.files.map((file) => [file, captureSource(rootDir, file)]));
+  const backupDir = resolveProjectPath(rootDir, join(DATA_DIR, "backups", pointId));
+  const tombstones = new Set(point.tombstoneFiles ?? []);
+  const staged = new Map<string, string | null>();
+  for (const file of point.files) {
+    const content = tombstones.has(file) ? null : await readBackupForFile(backupDir, file, point);
+    if (content === null && !tombstones.has(file)) throw new Error(`Restore failed: backup missing for ${file}. No files were modified.`);
+    staged.set(file, content);
+  }
+  for (const snapshot of snapshots.values()) assertSourceUnchanged(rootDir, snapshot);
 
   // SAFETY: snapshot the CURRENT state of every file this restore touches, BEFORE we overwrite or
   // delete anything. A wrong restore is then reversible — `restore <safetyPointId>` undoes it.
@@ -274,25 +288,16 @@ export async function restorePoint(
     safetyPointId = safety.id;
   }
 
-  const backupDir = join(rootDir, DATA_DIR, "backups", pointId);
-  const tombstones = new Set(point.tombstoneFiles ?? []);
   const restoredFiles: string[] = [];
-
-  for (const file of point.files) {
-    const targetPath = resolveProjectPath(rootDir, file, "restore file");
-    if (tombstones.has(file)) {
-      await unlink(targetPath).catch(() => undefined);
-      restoredFiles.push(`${file} (deleted — file did not exist at checkpoint time)`);
-      continue;
+  const completed: string[] = [];
+  try {
+    for (const [file, content] of staged) {
+      await publishSource(rootDir, snapshots.get(file)!, content);
+      completed.push(file);
+      restoredFiles.push(content === null ? `${file} (deleted — file did not exist at checkpoint time)` : file);
     }
-    const content = await readBackupForFile(backupDir, file, point);
-    if (content === null) {
-      process.stderr.write(`[contextpro/shadow] restore failed for ${file}: backup not found in any expected location\n`);
-      continue;
-    }
-    await mkdir(dirname(targetPath), { recursive: true });
-    await writeFile(targetPath, content);
-    restoredFiles.push(file);
+  } catch (error) {
+    throw new Error(`Restore failed: ${error instanceof Error ? error.message : String(error)} Updated files: ${completed.join(", ") || "none"}. Pending files: ${[...staged.keys()].filter((file) => !completed.includes(file)).join(", ")}. Safety restore point: ${safetyPointId ?? "disabled"}.`);
   }
 
   return { preview: false, plan, restoredFiles, safetyPointId };

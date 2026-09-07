@@ -2,6 +2,7 @@
 
 import { cp, mkdir, rename, rm, stat } from "fs/promises";
 import { join } from "path";
+import { resolveProjectPath } from "./path-guard.js";
 
 export const CONTEXTPRO_DIR = ".contextpro";
 export const LEGACY_CONTEXT_DIRS = [".contextplus", ".mcp_data"] as const;
@@ -19,11 +20,11 @@ async function pathExists(path: string): Promise<boolean> {
 }
 
 export async function migrateLegacyProjectData(rootDir: string): Promise<string | null> {
-  const destination = join(rootDir, CONTEXTPRO_DIR);
+  const destination = resolveProjectPath(rootDir, CONTEXTPRO_DIR);
   if (await pathExists(destination)) return null;
 
   for (const legacyName of LEGACY_CONTEXT_DIRS) {
-    const source = join(rootDir, legacyName);
+    const source = resolveProjectPath(rootDir, legacyName);
     if (!(await pathExists(source))) continue;
     try {
       await rename(source, destination);
@@ -46,7 +47,7 @@ export async function migrateLegacyProjectData(rootDir: string): Promise<string 
 
 export async function ensureContextProDir(rootDir: string): Promise<string | null> {
   const migratedFrom = await migrateLegacyProjectData(rootDir);
-  await mkdir(join(rootDir, CONTEXTPRO_DIR, "backups"), { recursive: true });
-  await mkdir(join(rootDir, CONTEXTPRO_DIR, "hubs"), { recursive: true });
+  await mkdir(resolveProjectPath(rootDir, join(CONTEXTPRO_DIR, "backups")), { recursive: true });
+  await mkdir(resolveProjectPath(rootDir, join(CONTEXTPRO_DIR, "hubs")), { recursive: true });
   return migratedFrom;
 }

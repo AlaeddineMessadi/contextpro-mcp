@@ -28,12 +28,14 @@
   "files": [
     "build",
     "README.md",
+    "INSTALL.md",
     "CHANGELOG.md",
     "STATUS.md",
     "AUDIT.md",
     "LICENSE",
     "INSTRUCTIONS.md",
     "agent-instructions.md",
+    "agent-guide.md",
     "docs/roadmaps"
   ],
   "bin": {
@@ -49,7 +51,9 @@
     "pretest": "npm run build",
     "test": "node --test test/main/*.test.mjs",
     "test:demo": "node --test test/demo/*.demo.mjs",
-    "test:all": "node --test test/main/*.test.mjs test/demo/*.demo.mjs"
+    "test:all": "node --test test/main/*.test.mjs test/demo/*.demo.mjs",
+    "typecheck": "tsc --noEmit",
+    "bench:retrieval": "npm run build && node scripts/benchmark-retrieval.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",

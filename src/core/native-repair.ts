@@ -1,195 +1,139 @@
-// Native dependency repair helpers — rebuild/install native SQLite bindings for the active Node runtime
-// FEATURE: Startup self-healing — recover from better-sqlite3 ABI drift without manual npm commands
-
+// Recover native dependencies in a private ABI/version cache without changing shared node_modules.
 import { execFile } from "child_process";
-import { constants } from "fs";
-import { access, mkdir, open, readFile, stat, unlink } from "fs/promises";
-import { dirname, join, resolve } from "path";
+import { access, mkdir, mkdtemp, open, readFile, realpath, rename, rm, stat, unlink, writeFile } from "fs/promises";
+import { delimiter, dirname, join, resolve } from "path";
 import { fileURLToPath } from "url";
 import { promisify } from "util";
+import { getNativeRuntime } from "./native-runtime.js";
 
 const execFileAsync = promisify(execFile);
-const LOCK_RETRY_MS = 40;
-const LOCK_TIMEOUT_MS = 60_000;
-const STALE_LOCK_AGE_MS = 90_000;
 const attemptedRepairKeys = new Set<string>();
-let activeRepair: Promise<boolean> | null = null;
-
-export interface NativeRepairAction {
-  label: string;
-  command: string;
-  success: boolean;
-  output: string;
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolveSleep) => setTimeout(resolveSleep, ms));
-}
-
-async function executableExists(path: string): Promise<boolean> {
-  try {
-    await access(path, constants.X_OK);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-async function resolveNpmCommand(): Promise<string> {
-  const sibling = join(dirname(process.execPath), "npm");
-  if (await executableExists(sibling)) return sibling;
-  return "npm";
-}
-
-async function readDependencyVersion(rootDir: string, packageName: string): Promise<string | null> {
-  try {
-    const raw = JSON.parse(await readFile(join(rootDir, "package.json"), "utf-8")) as {
-      dependencies?: Record<string, string>;
-      devDependencies?: Record<string, string>;
-    };
-    return raw.dependencies?.[packageName] ?? raw.devDependencies?.[packageName] ?? null;
-  } catch {
-    return null;
-  }
-}
-
-function sanitizeInstallSpec(packageName: string, version: string | null): string {
-  if (!version) return packageName;
-  const clean = version.replace(/^[~^]/, "");
-  return `${packageName}@${clean}`;
-}
-
-async function runCommand(rootDir: string, label: string, command: string, args: string[]): Promise<NativeRepairAction> {
-  const envPath = [dirname(process.execPath), process.env.PATH ?? ""].filter(Boolean).join(":");
-  try {
-    const { stdout, stderr } = await execFileAsync(command, args, {
-      cwd: rootDir,
-      env: {
-        ...process.env,
-        PATH: envPath,
-      },
-      maxBuffer: 1024 * 1024 * 8,
-    });
-    return {
-      label,
-      command: [command, ...args].join(" "),
-      success: true,
-      output: [stdout, stderr].filter(Boolean).join("\n").trim(),
-    };
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    const stderr = typeof error === "object" && error && "stderr" in error ? String((error as { stderr?: string }).stderr ?? "") : "";
-    const stdout = typeof error === "object" && error && "stdout" in error ? String((error as { stdout?: string }).stdout ?? "") : "";
-    return {
-      label,
-      command: [command, ...args].join(" "),
-      success: false,
-      output: [stdout, stderr, message].filter(Boolean).join("\n").trim(),
-    };
-  }
-}
-
-function nativeRepairLockDir(rootDir: string): string {
-  return join(rootDir, ".contextpro");
-}
-
-function nativeRepairLockPath(rootDir: string): string {
-  return join(nativeRepairLockDir(rootDir), "native-repair.lock");
-}
-
-async function reapStaleLock(lockPath: string): Promise<boolean> {
-  try {
-    const info = await stat(lockPath);
-    const age = Date.now() - info.mtimeMs;
-    if (age > STALE_LOCK_AGE_MS) {
-      await unlink(lockPath).catch(() => undefined);
-      process.stderr.write(`[contextpro/native-repair] reaped stale lock (age ${Math.round(age / 1000)}s) at ${lockPath}\n`);
-      return true;
-    }
-  } catch {
-    return false;
-  }
-  return false;
-}
-
-async function withRepairLock<T>(rootDir: string, fn: () => Promise<T>): Promise<T> {
-  await mkdir(nativeRepairLockDir(rootDir), { recursive: true });
-  const lockPath = nativeRepairLockPath(rootDir);
-  const deadline = Date.now() + LOCK_TIMEOUT_MS;
-
-  await reapStaleLock(lockPath);
-
-  while (true) {
-    try {
-      const handle = await open(lockPath, "wx");
-      try {
-        await handle.writeFile(JSON.stringify({ pid: process.pid, acquiredAt: new Date().toISOString() }) + "\n", "utf-8");
-        return await fn();
-      } finally {
-        await handle.close().catch(() => undefined);
-        await unlink(lockPath).catch(() => undefined);
-      }
-    } catch (error) {
-      if (Date.now() >= deadline) throw error;
-      if (await reapStaleLock(lockPath)) continue;
-      await sleep(LOCK_RETRY_MS);
-    }
-  }
-}
+const activeRepairs = new Map<string, Promise<boolean>>();
+export interface NativeRepairAction { label: string; command: string; success: boolean; output: string; }
 
 export function getContextPlusPackageRoot(): string {
   return resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 }
-
 export function isNativeAutoRepairEnabled(): boolean {
   const raw = (process.env.CONTEXTPRO_NATIVE_AUTO_REPAIR ?? process.env.CONTEXTPLUS_NATIVE_AUTO_REPAIR ?? "true").trim().toLowerCase();
-  return raw !== "0" && raw !== "false" && raw !== "off" && raw !== "no";
+  return ["1", "true", "on", "yes"].includes(raw);
 }
-
 export function isRepairableNativeError(code: string | undefined): boolean {
   return code === "native_module_missing" || code === "native_module_abi_mismatch" || code === "native_module_error";
 }
 
-export async function repairNativeDependencies(rootDir: string, issueCode?: string): Promise<NativeRepairAction[]> {
-  const normalizedRoot = resolve(rootDir);
-  const npmCommand = await resolveNpmCommand();
-  const betterSqliteSpec = sanitizeInstallSpec("better-sqlite3", await readDependencyVersion(normalizedRoot, "better-sqlite3"));
-  const sqliteVecSpec = sanitizeInstallSpec("sqlite-vec", await readDependencyVersion(normalizedRoot, "sqlite-vec"));
-  const actions: NativeRepairAction[] = [];
-
-  const runRebuild = () => runCommand(normalizedRoot, "rebuild-native-deps", npmCommand, ["rebuild", "better-sqlite3", "sqlite-vec"]);
-  const runInstall = () =>
-    runCommand(normalizedRoot, "install-native-deps", npmCommand, ["install", "--foreground-scripts", "--no-save", betterSqliteSpec, sqliteVecSpec]);
-
-  if (issueCode === "native_module_missing") {
-    actions.push(await runInstall());
-    if (!actions[0]?.success) actions.push(await runRebuild());
-    return actions;
+async function runCommand(root: string, label: string, command: string, args: string[]): Promise<NativeRepairAction> {
+  // Pin lifecycle scripts to the host runtime too. Inherited Electron/node-gyp
+  // targeting variables must not produce another host's ABI in this cache.
+  const env: NodeJS.ProcessEnv = { ...process.env, PATH: [dirname(process.execPath), process.env.PATH ?? ""].join(delimiter) };
+  for (const key of Object.keys(env)) {
+    if (/^npm_config_(target|runtime|arch|target_arch|platform|target_platform|disturl|dist_url|nodedir)$/i.test(key)) delete env[key];
   }
+  try {
+    const { stdout, stderr } = await execFileAsync(command, args, { cwd: root, env, timeout: 180_000, maxBuffer: 8 * 1024 * 1024 });
+    return { label, command: [command, ...args].join(" "), success: true, output: [stdout, stderr].filter(Boolean).join("\n").trim() };
+  } catch (error) {
+    const failure = error as Error & { stdout?: string; stderr?: string };
+    return { label, command: [command, ...args].join(" "), success: false, output: [failure.stdout, failure.stderr, failure.message].filter(Boolean).join("\n").trim() };
+  }
+}
 
-  actions.push(await runRebuild());
-  if (!actions[0]?.success) actions.push(await runInstall());
-  return actions;
+async function resolveNpmCli(): Promise<string> {
+  const candidates = [
+    join(dirname(process.execPath), "../lib/node_modules/npm/bin/npm-cli.js"),
+    join(dirname(process.execPath), "node_modules/npm/bin/npm-cli.js"),
+    ...(process.env.PATH ?? "").split(delimiter).filter(Boolean).map((path) => join(path, "npm")),
+  ];
+  for (const candidate of candidates) {
+    try {
+      const path = await realpath(candidate);
+      if (path.endsWith(".js")) { await access(path); return path; }
+    } catch { /* Try the next installation. */ }
+  }
+  throw new Error(`Cannot locate npm-cli.js. Install npm, then run ContextPro doctor --fix with ${process.execPath}.`);
+}
+
+async function validateRuntime(directory: string): Promise<NativeRepairAction> {
+  return runCommand(directory, "verify-isolated-native-deps", process.execPath, ["-e", `
+    const Database = require('./node_modules/better-sqlite3');
+    const vec = require('./node_modules/sqlite-vec');
+    const db = new Database(':memory:');
+    try { vec.load(db); db.prepare('SELECT vec_version()').get(); } finally { db.close(); }
+  `]);
+}
+
+async function withRepairLock<T>(directory: string, fn: () => Promise<T>): Promise<T> {
+  await mkdir(dirname(directory), { recursive: true });
+  const lock = `${directory}.lock`;
+  const deadline = Date.now() + 240_000;
+  while (true) {
+    let handle;
+    try { handle = await open(lock, "wx", 0o600); }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      try {
+        const owner = JSON.parse(await readFile(lock, "utf8"));
+        if (Number.isInteger(owner.pid) && owner.pid > 0) {
+          try { process.kill(owner.pid, 0); }
+          catch (pidError) {
+            if ((pidError as NodeJS.ErrnoException).code === "ESRCH") await unlink(lock).catch(() => undefined);
+          }
+        }
+      } catch { // Give a newly created lock time to receive its owner metadata.
+        const info = await stat(lock).catch(() => null);
+        if (info && Date.now() - info.mtimeMs > 240_000) await unlink(lock).catch(() => undefined);
+      }
+      if (Date.now() >= deadline) throw new Error(`Timed out waiting for native runtime repair: ${directory}`);
+      await new Promise((done) => setTimeout(done, 100));
+      continue;
+    }
+    try { await handle.writeFile(JSON.stringify({ pid: process.pid })); return await fn(); }
+    finally { await handle.close(); await unlink(lock).catch(() => undefined); }
+  }
+}
+
+export async function repairNativeDependencies(rootDir: string, _issueCode?: string): Promise<NativeRepairAction[]> {
+  const runtime = getNativeRuntime(rootDir);
+  return withRepairLock(runtime.directory, async () => {
+    // Another process may have completed the same ABI repair while we waited.
+    const existing = await validateRuntime(runtime.directory);
+    if (existing.success) return [existing];
+    const actions: NativeRepairAction[] = [];
+    const staging = await mkdtemp(`${runtime.directory}.staging-`);
+    try {
+      await writeFile(join(staging, "package.json"), JSON.stringify({ name: "contextpro-native-runtime", version: "1.0.0", private: true, dependencies: runtime.dependencies }));
+      const npmCli = await resolveNpmCli();
+      actions.push(await runCommand(staging, "install-isolated-native-deps", process.execPath, [npmCli, "install", "--foreground-scripts", "--no-audit", "--no-fund", "--package-lock=false"]));
+      if (!actions.at(-1)?.success) return actions;
+      actions.push(await validateRuntime(staging));
+      if (!actions.at(-1)?.success) return actions;
+      await rm(runtime.directory, { recursive: true, force: true });
+      await rename(staging, runtime.directory);
+      return actions;
+    } finally { await rm(staging, { recursive: true, force: true }); }
+  });
 }
 
 export async function attemptNativeAutoRepair(issueCode: string | undefined, rootDir: string = getContextPlusPackageRoot()): Promise<boolean> {
   if (!isNativeAutoRepairEnabled() || !isRepairableNativeError(issueCode)) return false;
-  const repairKey = `${resolve(rootDir)}|${process.execPath}|${process.versions.modules ?? "unknown"}|${issueCode ?? "unknown"}`;
-  if (attemptedRepairKeys.has(repairKey)) return false;
-  if (activeRepair) return activeRepair;
-
-  // Bound the dedup set — it can only realistically grow with (#roots × #node-versions), but
-  // cap it defensively for a very long-lived multi-project server.
-  if (attemptedRepairKeys.size > 200) attemptedRepairKeys.clear();
-  attemptedRepairKeys.add(repairKey);
-  activeRepair = withRepairLock(rootDir, async () => {
-    const actions = await repairNativeDependencies(rootDir, issueCode);
-    return actions.some((action) => action.success);
-  });
-
-  try {
-    return await activeRepair;
-  } finally {
-    activeRepair = null;
-  }
+  const key = getNativeRuntime(rootDir).directory;
+  const active = activeRepairs.get(key);
+  if (active) return active;
+  if (attemptedRepairKeys.has(key)) return false;
+  attemptedRepairKeys.add(key);
+  if (attemptedRepairKeys.size > 200) attemptedRepairKeys.delete(attemptedRepairKeys.values().next().value!);
+  const repair = (async () => {
+    process.stderr.write(`[contextpro/native-repair] preparing isolated SQLite runtime for Node ${process.version} (ABI ${process.versions.modules})\n`);
+    try {
+      const actions = await repairNativeDependencies(rootDir, issueCode);
+      const ok = actions.at(-1)?.success === true;
+      if (!ok) process.stderr.write(`[contextpro/native-repair] failed: ${actions.at(-1)?.output.slice(-2000)}\n`);
+      return ok;
+    } catch (error) {
+      process.stderr.write(`[contextpro/native-repair] failed: ${error instanceof Error ? error.message : String(error)}\n`);
+      return false;
+    } finally { activeRepairs.delete(key); }
+  })();
+  activeRepairs.set(key, repair);
+  return repair;
 }

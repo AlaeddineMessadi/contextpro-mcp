@@ -3,6 +3,8 @@
 
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import { toJsonSchemaCompat } from "@modelcontextprotocol/sdk/server/zod-json-schema-compat.js";
+import { runtimeSessionId, runtimeSessionStartedAt, setToolSchemaTokens } from "../core/runtime-session.js";
 import { getContextTree } from "./context-tree.js";
 import { getFileSkeleton } from "./file-skeleton.js";
 import { unifiedSearch, invalidateSearchCache, invalidateIdentifierSearchCache } from "./search.js";
@@ -45,6 +47,24 @@ type ActivityWrapper = <TArgs, TResult>(
   options?: { useEmbeddingTracker?: boolean; toolName?: string; waitForIndexing?: boolean; ensureFreshIndex?: boolean },
 ) => (args: TArgs) => Promise<TResult>;
 
+const MAX_ARTIFACT_LIST_KEY_CHARS = 240;
+
+/** Keep discovery output bounded when a cache key contains a full user task. */
+export function compactArtifactListKeys<T extends { key: string }>(artifacts: T[]): Array<T & {
+  keyTruncated?: boolean;
+  keyLength?: number;
+}> {
+  return artifacts.map((artifact) => {
+    if (artifact.key.length <= MAX_ARTIFACT_LIST_KEY_CHARS) return artifact;
+    return {
+      ...artifact,
+      key: `${artifact.key.slice(0, MAX_ARTIFACT_LIST_KEY_CHARS - 3)}...`,
+      keyTruncated: true,
+      keyLength: artifact.key.length,
+    };
+  });
+}
+
 /** Optional per-request root override, injected into every tool schema. */
 const rootArg = z
   .string()
@@ -71,10 +91,18 @@ export function registerTools(
   // `root: rootArg` into each tool's Zod shape; withRequestActivity reads and
   // strips it before the handler runs.
   const toolProfile = resolveToolProfile(process.env.CONTEXTPRO_TOOL_PROFILE ?? process.env.CONTEXTPLUS_TOOL_PROFILE);
-  const sessionStartedAt = Date.now();
+  const sessionStartedAt = runtimeSessionStartedAt;
+  const catalog: unknown[] = [];
+  const noteSchema = (name: string, description: string, shape: Record<string, unknown>, output?: unknown): void => {
+    const entry = { name, description, inputSchema: toJsonSchemaCompat(z.object({ ...shape, root: rootArg } as z.ZodRawShape)), annotations: annotationsForTool(name),
+      ...(output ? { outputSchema: toJsonSchemaCompat(output as z.AnyZodObject) } : {}) };
+    catalog.push(entry);
+    setToolSchemaTokens(Buffer.byteLength(JSON.stringify({ tools: catalog }), "utf8") / 4);
+  };
   const server = {
     tool: (name: string, description: string, shape: Record<string, unknown>, handler: unknown) => {
       if (!isToolEnabled(name, toolProfile)) return undefined;
+      noteSchema(name, description, shape);
       return (serverInput.tool as unknown as (...a: unknown[]) => unknown)(
         name,
         description,
@@ -92,6 +120,7 @@ export function registerTools(
     handler: unknown,
   ): unknown => {
     if (!isToolEnabled(name, toolProfile)) return undefined;
+    noteSchema(name, description, inputSchema, outputSchema);
     return (serverInput.registerTool as unknown as (...args: unknown[]) => unknown)(
       name,
       {
@@ -180,12 +209,16 @@ export function registerTools(
       kind: z.string().optional().describe("Optional artifact kind filter, e.g. repo_map, search, task_pack."),
       limit: z.number().optional().describe("Maximum artifacts to return. Default: 20."),
     },
-    withRequestActivity(async ({ kind, limit }) => ({
-      content: [{
-        type: "text" as const,
-        text: JSON.stringify(await listArtifacts(rootDir(), kind, limit), null, 2),
-      }],
-    }), { toolName: "artifact_list", waitForIndexing: false }),
+    withRequestActivity(async ({ kind, limit }) => {
+      const artifacts = await listArtifacts(rootDir(), kind, limit);
+      const compact = compactArtifactListKeys(artifacts);
+      return {
+        content: [{
+          type: "text" as const,
+          text: JSON.stringify(compact, null, 2),
+        }],
+      };
+    }, { toolName: "artifact_list", waitForIndexing: false }),
   );
 
   server.tool(
@@ -544,15 +577,16 @@ export function registerTools(
     {
       file_path: z.string().min(1).describe("Where to save the file (relative to project root)."),
       new_content: z.string().min(1).describe("The complete file content to save."),
+      expected_content_hash: z.string().regex(/^[a-f0-9]{64}$/).optional().describe("Expected current file SHA-256; reject stale edits. Omit for compatibility."),
       strict: z.boolean().optional().describe("If true, reject on any style violation. Default: false (warnings only)."),
     },
-    withRequestActivity(async ({ file_path, new_content, strict }) => {
+    withRequestActivity(async ({ file_path, new_content, strict, expected_content_hash }) => {
       invalidateSearchCache();
       invalidateIdentifierSearchCache();
       return {
         content: [{
           type: "text" as const,
-          text: await proposeCommit({ rootDir: rootDir(), filePath: file_path, newContent: new_content, strict }),
+          text: await proposeCommit({ rootDir: rootDir(), filePath: file_path, newContent: new_content, strict, expectedContentHash: expected_content_hash }),
         }],
       };
     }, { toolName: "checkpoint" }),
@@ -843,19 +877,22 @@ export function registerTools(
     "efficiency_report",
     "Report ContextPro's persistent, auditable context-compression estimates by tool. History stores numeric metrics only—never prompts, source code, response bodies, or file paths. Token savings are estimates, not billing data.",
     {
-      scope: z.enum(["session", "24h", "7d", "all"]).optional().describe("History window. Default: 24h."),
+      scope: z.enum(["session", "24h", "7d", "all"]).optional().describe("History window. Default: this MCP session. Call at task completion and quote finalSummary."),
       input_cost_per_million: z.number().nonnegative().optional().describe("Optional model input price in USD per million tokens. When provided, returns a clearly-labelled hypothetical cost estimate."),
+      contextpro_cost_usd: z.number().nonnegative().optional().describe("Optional known ContextPro operating cost for this window; deducted only when supplied. Never guess."),
       history_limit: z.number().int().min(1).max(100).optional().describe("Maximum recent saving events to include. Default: 10."),
       format: z.enum(["text", "json"]).optional().describe("Return plain text or JSON. Default: text."),
     },
-    withRequestActivity(async ({ scope, input_cost_per_million, history_limit, format }) => ({
+    withRequestActivity(async ({ scope, input_cost_per_million, contextpro_cost_usd, history_limit, format }) => ({
       content: [{
         type: "text" as const,
         text: await getEfficiencyReport({
           rootDir: rootDir(),
           scope,
           sessionStartedAt,
+          sessionId: runtimeSessionId,
           inputCostPerMillion: input_cost_per_million,
+          contextproCostUsd: contextpro_cost_usd,
           historyLimit: history_limit,
           format,
         }),
@@ -1002,9 +1039,13 @@ export function registerTools(
 
   const TASK_PACK_SHAPE = {
     task: z.string().min(1).describe("Task description or engineering objective."),
+    previous_context_id: z.string().min(1).optional().describe("Context ID from a previous packet you still hold; return a delta. Omit after context loss to recover full context."),
+    preset: z.enum(["balanced", "keyword_only"]).optional().describe("balanced (default) or keyword_only for zero-provider lexical discovery."),
+    graph_hops: z.union([z.literal(0), z.literal(1), z.literal(2)]).optional().describe("Opt-in related import context: 0 (default), 1 or 2 hops. Benchmark before enabling routinely."),
+    graph_max_files: z.number().int().min(1).max(10).optional().describe("Maximum additional graph-related file pointers. Default: 4."),
     max_files: z.number().optional().describe("Maximum ranked files to include. Default: 8."),
     max_memory: z.number().optional().describe("Maximum memory hits to include. Default: 3, max: 10."),
-    max_tokens: z.number().optional().describe("Approximate output budget with utility-aware pruning. Default: 3000, range: 512-12000."),
+    max_tokens: z.number().int().min(512).max(12000).optional().describe("Final response budget estimated as UTF-8 bytes/4, not tokenizer tokens. Default: 3000."),
     include_tests: z.boolean().optional().describe("Include nearby tests. Default: true."),
     include_recent_diffs: z.boolean().optional().describe("Include recent file-level diffs. Default: true."),
     include_memory: z.boolean().optional().describe("Include project memory hits. Default: true."),
@@ -1013,11 +1054,17 @@ export function registerTools(
   type TaskPackArgs = {
     task: string; max_files?: number; max_memory?: number; max_tokens?: number; include_tests?: boolean;
     include_recent_diffs?: boolean; include_memory?: boolean; format?: "text" | "json";
+    previous_context_id?: string; preset?: "balanced" | "keyword_only";
+    graph_hops?: 0 | 1 | 2; graph_max_files?: number;
   };
-  const runTaskPack = ({ task, max_files, max_memory, max_tokens, include_tests, include_recent_diffs, include_memory, format }: TaskPackArgs) =>
+  const runTaskPack = ({ task, max_files, max_memory, max_tokens, include_tests, include_recent_diffs, include_memory, format, previous_context_id, preset, graph_hops, graph_max_files }: TaskPackArgs) =>
     buildTaskPack({
       rootDir: rootDir(),
       task,
+      previousContextId: previous_context_id,
+      preset,
+      graphHops: graph_hops,
+      graphMaxFiles: graph_max_files,
       maxFiles: max_files,
       maxMemory: max_memory,
       maxTokens: max_tokens,
@@ -1134,16 +1181,17 @@ export function registerTools(
 
   const VALIDATE_SCOPE_SHAPE = {
     task: z.string().min(1).describe("Task description or intended change."),
+    files: z.array(z.string()).optional().describe("Files already changed or known to be in scope. These take precedence over task inference."),
     max_files: z.number().optional().describe("Maximum files to inspect when building validation guidance. Default: 5."),
     format: z.enum(["text", "json"]).optional().describe("Return plain text or structured JSON. Default: text."),
   };
-  type ValidateScopeArgs = { task: string; max_files?: number; format?: "text" | "json" };
-  const runValidateScope = ({ task, max_files, format }: ValidateScopeArgs) =>
-    buildValidateScope({ rootDir: rootDir(), task, maxFiles: max_files, format });
+  type ValidateScopeArgs = { task: string; files?: string[]; max_files?: number; format?: "text" | "json" };
+  const runValidateScope = ({ task, files, max_files, format }: ValidateScopeArgs) =>
+    buildValidateScope({ rootDir: rootDir(), task, files, maxFiles: max_files, format });
 
   server.tool(
     "validate_scope",
-    "After edit_scope, recommend the most relevant validation checks and commands for the scoped files.",
+    "After edit_scope, recommend the most relevant validation checks and commands. Pass files when you already know what changed; they take precedence over task inference.",
     VALIDATE_SCOPE_SHAPE,
     withRequestActivity(async (args: ValidateScopeArgs) => ({
       content: [{ type: "text" as const, text: await runValidateScope(args) }],
@@ -1318,15 +1366,16 @@ export function registerTools(
     "Creates a shadow restore point before writing. Use this for surgical refactors instead of file-level edits. " +
     "Only call after find_symbol/skeleton/explain confirms the target.",
     {
+      expected_content_hash: z.string().regex(/^[a-f0-9]{64}$/).optional().describe("Expected current SHA-256 from find_symbol; stale edits fail with a conflict."),
       relative_path: z.string().min(1).describe("File containing the symbol (relative to project root)."),
       name_path: z.string().min(1).describe("Name path of the symbol to replace (e.g., \"ClassName/methodName\")."),
       body: z.string().min(1).describe("Full replacement text for the symbol definition, including signature line."),
       message: z.string().optional().describe("Optional restore-point message for traceability."),
     },
-    withRequestActivity(async ({ relative_path, name_path, body, message }) => ({
+    withRequestActivity(async ({ relative_path, name_path, body, message, expected_content_hash }) => ({
       content: [{
         type: "text" as const,
-        text: await replaceSymbolBody({ rootDir: rootDir(), relativePath: relative_path, namePath: name_path, body, message }),
+        text: await replaceSymbolBody({ rootDir: rootDir(), relativePath: relative_path, namePath: name_path, body, message, expectedContentHash: expected_content_hash }),
       }],
     }), { toolName: "replace_symbol_body" }),
   );
@@ -1336,15 +1385,16 @@ export function registerTools(
     "Insert new code immediately after the closing line of an existing symbol. " +
     "Useful for adding sibling functions, methods, or class members without re-reading the file. Creates a shadow restore point.",
     {
+      expected_content_hash: z.string().regex(/^[a-f0-9]{64}$/).optional().describe("Expected current SHA-256 from find_symbol; stale edits fail with a conflict."),
       relative_path: z.string().min(1).describe("File to modify (relative to project root)."),
       name_path: z.string().min(1).describe("Name path of the anchor symbol (insertion happens after its end)."),
       body: z.string().min(1).describe("Code to insert after the symbol."),
       message: z.string().optional().describe("Optional restore-point message."),
     },
-    withRequestActivity(async ({ relative_path, name_path, body, message }) => ({
+    withRequestActivity(async ({ relative_path, name_path, body, message, expected_content_hash }) => ({
       content: [{
         type: "text" as const,
-        text: await insertAroundSymbol({ rootDir: rootDir(), relativePath: relative_path, namePath: name_path, body, position: "after", message }),
+        text: await insertAroundSymbol({ rootDir: rootDir(), relativePath: relative_path, namePath: name_path, body, position: "after", message, expectedContentHash: expected_content_hash }),
       }],
     }), { toolName: "insert_after_symbol" }),
   );
@@ -1354,15 +1404,16 @@ export function registerTools(
     "Insert new code immediately before the first line of an existing symbol. " +
     "Useful for prepending imports, helpers, or decorators. Creates a shadow restore point.",
     {
+      expected_content_hash: z.string().regex(/^[a-f0-9]{64}$/).optional().describe("Expected current SHA-256 from find_symbol; stale edits fail with a conflict."),
       relative_path: z.string().min(1).describe("File to modify (relative to project root)."),
       name_path: z.string().min(1).describe("Name path of the anchor symbol (insertion happens before its start)."),
       body: z.string().min(1).describe("Code to insert before the symbol."),
       message: z.string().optional().describe("Optional restore-point message."),
     },
-    withRequestActivity(async ({ relative_path, name_path, body, message }) => ({
+    withRequestActivity(async ({ relative_path, name_path, body, message, expected_content_hash }) => ({
       content: [{
         type: "text" as const,
-        text: await insertAroundSymbol({ rootDir: rootDir(), relativePath: relative_path, namePath: name_path, body, position: "before", message }),
+        text: await insertAroundSymbol({ rootDir: rootDir(), relativePath: relative_path, namePath: name_path, body, position: "before", message, expectedContentHash: expected_content_hash }),
       }],
     }), { toolName: "insert_before_symbol" }),
   );
@@ -1374,15 +1425,16 @@ export function registerTools(
     "Best-effort textual rename — does not understand scopes (though it does skip string literals and comments); always inspect blast_radius first to confirm safety. " +
     "If an LSP-backed rename tool (e.g. Serena) is available for this language, prefer it for scope-exact renames.",
     {
+      expected_content_hash: z.string().regex(/^[a-f0-9]{64}$/).optional().describe("Expected current SHA-256 from find_symbol; stale edits fail with a conflict."),
       relative_path: z.string().min(1).describe("File where the symbol is defined."),
       name_path: z.string().min(1).describe("Name path of the symbol to rename."),
       new_name: z.string().min(1).describe("The new identifier name."),
       message: z.string().optional().describe("Optional restore-point message."),
     },
-    withRequestActivity(async ({ relative_path, name_path, new_name, message }) => ({
+    withRequestActivity(async ({ relative_path, name_path, new_name, message, expected_content_hash }) => ({
       content: [{
         type: "text" as const,
-        text: await renameSymbol({ rootDir: rootDir(), relativePath: relative_path, namePath: name_path, newName: new_name, message }),
+        text: await renameSymbol({ rootDir: rootDir(), relativePath: relative_path, namePath: name_path, newName: new_name, message, expectedContentHash: expected_content_hash }),
       }],
     }), { toolName: "rename_symbol" }),
   );

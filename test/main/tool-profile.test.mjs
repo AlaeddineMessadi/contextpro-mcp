@@ -58,3 +58,37 @@ describe("tool profiles and MCP annotations", () => {
     }
   });
 });
+
+describe('workflow profile budget', () => {
+  it('exposes twelve useful tools and a substantially smaller protocol catalog', async () => {
+    const { McpServer } = await import('@modelcontextprotocol/sdk/server/mcp.js');
+    const { Client } = await import('@modelcontextprotocol/sdk/client/index.js');
+    const { InMemoryTransport } = await import('@modelcontextprotocol/sdk/inMemory.js');
+    const { registerTools } = await import('../../build/tools/register-tools.js');
+    const old = process.env.CONTEXTPRO_TOOL_PROFILE;
+    const sizes = {};
+    try {
+      for (const profile of ['workflow', 'core', 'full']) {
+        process.env.CONTEXTPRO_TOOL_PROFILE = profile;
+        const server = new McpServer({ name: 'profile', version: '0' });
+        registerTools(server, process.cwd(), handler => handler, () => {});
+        const client = new Client({ name: 'test', version: '0' });
+        const [a, b] = InMemoryTransport.createLinkedPair();
+        await Promise.all([server.connect(a), client.connect(b)]);
+        const catalog = await client.listTools();
+        sizes[profile] = Buffer.byteLength(JSON.stringify(catalog));
+        if (profile === 'workflow') {
+          assert.equal(catalog.tools.length, 12);
+          for (const name of ['task_pack', 'efficiency_report', 'reindex', 'artifact_read']) assert.ok(catalog.tools.some(t => t.name === name));
+          assert.ok(!catalog.tools.some(t => t.name === 'rename_symbol'));
+        }
+        await client.close(); await server.close();
+      }
+      assert.ok(sizes.workflow < sizes.core * .6);
+      assert.ok(sizes.workflow < 24000, `catalog grew to ${sizes.workflow} bytes`);
+    } finally {
+      if (old === undefined) delete process.env.CONTEXTPRO_TOOL_PROFILE;
+      else process.env.CONTEXTPRO_TOOL_PROFILE = old;
+    }
+  });
+});

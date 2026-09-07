@@ -14,9 +14,11 @@ describe("native repair helpers", () => {
     assert.equal(mod.isRepairableNativeError(undefined), false);
   });
 
-  it("enables auto repair by default and honors opt-out env values", async () => {
+  it("enables isolated repair by default and honors explicit opt-out", async () => {
     const mod = await import("../../build/core/native-repair.js");
     const previous = process.env.CONTEXTPLUS_NATIVE_AUTO_REPAIR;
+    const modern = process.env.CONTEXTPRO_NATIVE_AUTO_REPAIR;
+    delete process.env.CONTEXTPRO_NATIVE_AUTO_REPAIR;
 
     delete process.env.CONTEXTPLUS_NATIVE_AUTO_REPAIR;
     assert.equal(mod.isNativeAutoRepairEnabled(), true);
@@ -30,6 +32,8 @@ describe("native repair helpers", () => {
     process.env.CONTEXTPLUS_NATIVE_AUTO_REPAIR = "true";
     assert.equal(mod.isNativeAutoRepairEnabled(), true);
 
+    if (modern === undefined) delete process.env.CONTEXTPRO_NATIVE_AUTO_REPAIR;
+    else process.env.CONTEXTPRO_NATIVE_AUTO_REPAIR = modern;
     if (previous === undefined) delete process.env.CONTEXTPLUS_NATIVE_AUTO_REPAIR;
     else process.env.CONTEXTPLUS_NATIVE_AUTO_REPAIR = previous;
   });

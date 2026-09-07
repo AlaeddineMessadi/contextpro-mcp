@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contextpro.local/schemas/benchmark-agent-runs-v1.json",
+  "title": "Externally measured paired coding agent runs",
+  "description": "Supply both baseline and contextpro runs for the same taskId, pairId, and model. Include the full task (prompt/tool schemas, tool results, reasoning/output) in provider usage. Prices are supplied by the evaluator; the benchmark does not assume current model pricing. Negative differences are valid when ContextPro costs more. Task success must be independently evaluated against the same acceptance criteria for both variants.",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "required": ["taskId", "pairId", "model", "variant", "success", "inputTokens", "outputTokens", "costUsd", "tokenSource", "costSource"],
+    "properties": {
+      "taskId": { "type": "string", "minLength": 1 },
+      "pairId": { "type": "string", "minLength": 1 },
+      "model": { "type": "string", "minLength": 1 },
+      "variant": { "enum": ["baseline", "contextpro"] },
+      "success": { "type": "boolean" },
+      "inputTokens": { "type": "integer", "minimum": 0 },
+      "outputTokens": { "type": "integer", "minimum": 0 },
+      "costUsd": { "type": "number", "minimum": 0 },
+      "tokenSource": { "const": "provider_usage" },
+      "costSource": { "enum": ["provider_billing", "calculated_given_rates"] },
+      "acceptanceEvidence": { "type": "string" },
+      "pricingNotes": { "type": "string" }
+    },
+    "additionalProperties": false
+  }
+}

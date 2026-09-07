@@ -24,14 +24,14 @@ function needsNativeRepair(report: StartupHealthReport): boolean {
 export async function runDoctor(rootDir: string, fix: boolean): Promise<DoctorReport> {
   const normalizedRoot = resolve(rootDir);
   await ensureContextProDir(normalizedRoot);
-  const before = await runStartupHealthCheck(normalizedRoot);
+  const before = await runStartupHealthCheck(normalizedRoot, { autoRepair: false });
   const actions: DoctorAction[] = [];
 
   if (fix && needsNativeRepair(before)) {
     actions.push(...await repairNativeDependencies(getContextPlusPackageRoot(), before.storage.diagnostic?.code));
   }
 
-  const after = await runStartupHealthCheck(normalizedRoot);
+  const after = await runStartupHealthCheck(normalizedRoot, { autoRepair: false });
   return {
     rootDir: normalizedRoot,
     fixApplied: fix,

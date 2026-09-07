@@ -80,7 +80,7 @@ function summarizeProjectContext(context: VerifiedProjectContext | null, error: 
   };
 }
 
-export async function runStartupHealthCheck(rootDir: string): Promise<StartupHealthReport> {
+export async function runStartupHealthCheck(rootDir: string, options: { autoRepair?: boolean } = {}): Promise<StartupHealthReport> {
   const timestamp = new Date().toISOString();
   let verifiedContext: VerifiedProjectContext | null = null;
   let projectError: unknown = null;
@@ -92,7 +92,7 @@ export async function runStartupHealthCheck(rootDir: string): Promise<StartupHea
   }
 
   let storageProbe = probeNativeStorage();
-  if (!storageProbe.ok) {
+  if (!storageProbe.ok && options.autoRepair !== false) {
     const repaired = await attemptNativeAutoRepair(storageProbe.diagnostic?.code);
     if (repaired) storageProbe = probeNativeStorage();
   }

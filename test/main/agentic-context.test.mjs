@@ -145,6 +145,23 @@ describe("agentic-context", () => {
     assert.ok(impact.affectedFiles.some((file) => file.path.includes("middleware.ts")));
     assert.ok(impact.affectedFiles.every((file) => file.kind !== "text_match"));
     assert.ok(Array.isArray(impact.affectedTests));
+
+    const symbolImpact = JSON.parse(await agenticMod.buildChangeImpact({
+      rootDir: fixtureRoot,
+      symbols: ["withSessionLock"],
+      format: "json",
+    }));
+    assert.equal(symbolImpact.riskScope, "symbol");
+    assert.equal(symbolImpact.riskDrivers.wholeFileImporters, 2);
+    assert.ok(symbolImpact.riskScore < impact.riskScore, "a resolved local helper should not inherit whole-module fan-out risk");
+
+    const mixedImpact = JSON.parse(await agenticMod.buildChangeImpact({
+      rootDir: fixtureRoot,
+      files: ["src/auth/session.ts", "src/auth/middleware.ts"],
+      symbols: ["withSessionLock"],
+      format: "json",
+    }));
+    assert.equal(mixedImpact.riskScope, "file", "an extra whole-file target must keep impact analysis conservative");
   });
 
   it("builds edit scope and validation with code-first ranking", async () => {
@@ -176,6 +193,16 @@ describe("agentic-context", () => {
     assert.ok(validation.tests.some((test) => test.path === "test/auth/session.test.ts"));
     assert.ok(validation.checks.some((check) => check.command.includes("npm run test -- test/auth/session.test.ts")));
     assert.ok(validation.checks.some((check) => check.command === "npm run build"));
+
+    const explicitValidation = JSON.parse(await agenticMod.buildValidateScope({
+      rootDir: fixtureRoot,
+      task: "unrelated wording that should not override known changed files",
+      files: ["src/auth/session.ts", "test/auth/session.test.ts"],
+      format: "json",
+    }));
+    assert.ok(explicitValidation.sourceFiles.includes("src/auth/session.ts"));
+    assert.ok(explicitValidation.tests.some((test) => test.path === "test/auth/session.test.ts" && test.reason === "Explicitly changed test file"));
+    assert.ok(explicitValidation.checks.some((check) => check.command.includes("test/auth/session.test.ts")));
   });
 
   it("records task memory and promotes patterns", async () => {

@@ -7,6 +7,7 @@ import { analyzeFile, flattenSymbols, isSupportedFile } from "../core/parser.js"
 import { getDB } from "../core/db.js";
 import { resolveSymbolData } from "./resolve-symbol.js";
 import { resolveProjectPath } from "../core/path-guard.js";
+import { maskSourceText } from "../core/source-mask.js";
 
 export interface ExplainOptions {
   rootDir: string;
@@ -28,7 +29,23 @@ interface SymbolBody {
 interface CallReference {
   name: string;
   kind?: string;
+  receiver?: string;
 }
+
+// Without receiver type information these ubiquitous platform/container methods
+// are more likely to resolve to an unrelated project definition than a real callee.
+const GENERIC_MEMBER_CALLS = new Set([
+  "add", "all", "append", "at", "catch", "clear", "concat", "delete", "entries",
+  "every", "filter", "finally", "find", "flat", "flatMap", "forEach", "get", "has",
+  "includes", "join", "keys", "map", "pop", "push", "reduce", "set", "shift", "slice",
+  "some", "sort", "splice", "split", "startsWith", "substring", "then", "trim",
+  "unshift", "values", "write",
+]);
+const BUILTIN_CALL_RECEIVERS = new Set([
+  "Array", "BigInt", "Boolean", "Buffer", "Date", "Error", "JSON", "Map", "Math",
+  "Number", "Object", "Promise", "Reflect", "RegExp", "Set", "String", "Symbol",
+  "WeakMap", "WeakSet", "console",
+]);
 
 async function findSymbolInFile(rootDir: string, filePath: string, symbolName: string, preferredLine?: number): Promise<SymbolBody | null> {
   const fullPath = resolveProjectPath(rootDir, filePath, "file");
@@ -83,19 +100,22 @@ async function findSymbolAcrossProject(rootDir: string, symbolName: string, file
   return null;
 }
 
-function collectCallReferences(body: string): CallReference[] {
+function collectCallReferences(body: string, currentFile: string): CallReference[] {
   const refs = new Map<string, CallReference>();
+  const executableBody = maskSourceText(body, currentFile);
 
   const memberPattern = /\b([a-zA-Z_]\w*)\.([a-zA-Z_]\w*)\s*\(/g;
   let memberMatch;
-  while ((memberMatch = memberPattern.exec(body)) !== null) {
+  while ((memberMatch = memberPattern.exec(executableBody)) !== null) {
+    const receiver = memberMatch[1];
     const name = memberMatch[2];
-    refs.set(`method:${name}`, { name, kind: "method" });
+    if (BUILTIN_CALL_RECEIVERS.has(receiver) || GENERIC_MEMBER_CALLS.has(name)) continue;
+    refs.set(`method:${receiver}:${name}`, { name, kind: "method", receiver });
   }
 
   const functionPattern = /(?<!\.)\b([a-zA-Z_]\w*)\s*\(/g;
   let functionMatch;
-  while ((functionMatch = functionPattern.exec(body)) !== null) {
+  while ((functionMatch = functionPattern.exec(executableBody)) !== null) {
     const name = functionMatch[1];
     refs.set(`call:${name}`, { name });
   }
@@ -115,12 +135,17 @@ async function getCalledSymbols(rootDir: string, body: string, currentFile: stri
     for (const s of symbols) allSymbolNames.add(s.name);
   }
 
-  const callReferences = collectCallReferences(body).filter((ref) => allSymbolNames.has(ref.name) && ref.name.length > 2);
+  const callReferences = collectCallReferences(body, currentFile).filter((ref) => allSymbolNames.has(ref.name) && ref.name.length > 2);
 
   const results: SymbolBody[] = [];
   for (const ref of callReferences) {
-    const found = await findSymbolAcrossProject(rootDir, ref.name, currentFile, ref.kind);
-    if (found && found.file !== currentFile) {
+    // Bare calls should prefer a helper in the same module. Member calls need the
+    // import-aware resolver because a same-named method in this file may belong to
+    // an unrelated class.
+    const local = ref.kind ? null : await findSymbolInFile(rootDir, currentFile, ref.name);
+    const found = local ?? await findSymbolAcrossProject(rootDir, ref.name, currentFile, ref.kind);
+    const isSelf = found?.file === currentFile && found.body === body;
+    if (found && !isSelf) {
       results.push(found);
       if (depth > 1) {
         const deeper = await getCalledSymbols(rootDir, found.body, found.file, depth - 1);

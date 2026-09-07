@@ -15,6 +15,15 @@ async function indexFixture(dir) {
 }
 
 describe("artifact cache + GC", () => {
+  it("bounds long artifact keys in MCP discovery output", async () => {
+    const { compactArtifactListKeys } = await import("../../build/tools/register-tools.js");
+    const longKey = "x".repeat(15_000);
+    const [artifact] = compactArtifactListKeys([{ id: "a", key: longKey }]);
+    assert.equal(artifact.key.length, 240);
+    assert.equal(artifact.keyTruncated, true);
+    assert.equal(artifact.keyLength, longKey.length);
+  });
+
   beforeEach(async () => {
     root = await mkdtemp(join(tmpdir(), "contextpro-cachegc-"));
     process.env.HOME = root;

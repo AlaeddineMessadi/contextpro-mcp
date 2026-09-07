@@ -308,6 +308,36 @@ describe("memory-tools MCP wrappers", () => {
         restore();
       }
     });
+
+    it("uses canonical CONTEXTPRO session metadata", async () => {
+      const restore = mockEmbedding();
+      const previousId = process.env.CONTEXTPRO_SESSION_ID;
+      const previousSource = process.env.CONTEXTPRO_SESSION_SOURCE;
+      process.env.CONTEXTPRO_SESSION_ID = "canonical-session";
+      process.env.CONTEXTPRO_SESSION_SOURCE = "codex";
+      try {
+        const output = await toolUpsertMemoryNode({
+          rootDir: FIXTURE,
+          type: "note",
+          label: "Canonical session metadata",
+          content: "Uses the ContextPro environment namespace.",
+        });
+        const id = output.match(/ID: (mn-[\w-]+)/)?.[1];
+        assert.ok(id);
+        const { getDB } = await import("../../build/core/db.js");
+        const node = (await getDB(FIXTURE)).getMemoryNode(id);
+        assert.ok(node);
+        const metadata = JSON.parse(node.metadata);
+        assert.equal(metadata.session_id, "canonical-session");
+        assert.equal(metadata.session_source, "codex");
+      } finally {
+        if (previousId === undefined) delete process.env.CONTEXTPRO_SESSION_ID;
+        else process.env.CONTEXTPRO_SESSION_ID = previousId;
+        if (previousSource === undefined) delete process.env.CONTEXTPRO_SESSION_SOURCE;
+        else process.env.CONTEXTPRO_SESSION_SOURCE = previousSource;
+        restore();
+      }
+    });
   });
 
   describe("toolCreateRelation", () => {

@@ -3,8 +3,8 @@
 > Live state of the project: what's working, what's known-broken, what's in flight.
 > Update on every release and after any audit. Pair with `CHANGELOG.md` (what changed, when) and `AUDIT.md` (deep findings).
 
-**Last updated:** 2026-06-18
-**Current version:** 1.2.2
+**Last updated:** 2026-09-07
+**Current package version:** 1.3.0 (improvements in working tree; unreleased)
 **Branch:** `main`
 **Node target:** `>=20 <27`
 
@@ -14,9 +14,9 @@
 
 | Area | State | Notes |
 |---|---|---|
-| Core indexing (SQLite + sqlite-vec) | ✅ Stable | 768-dim vectors, FTS5 fallback, schema v4 |
+| Core indexing (SQLite + sqlite-vec) | ✅ Stable | Model-dependent vector dimensions, FTS5 fallback, schema v6 |
 | Walker / parser (tree-sitter + regex) | ✅ Stable | 36 langs via WASM grammars, regex fallback |
-| Tool surface (48 tools) | 🟡 Working, slimming | 5 alias tools deprecated in 1.2.0 (still wired); new `grep` tool added in 1.2.2 |
+| Tool surface | ✅ Three profiles | workflow: 12, core: 37, full: 59; init selects workflow |
 | Memory graph | ✅ Stable | Auto-prune on access, decay-weighted edges |
 | Embeddings (Ollama / OpenAI-compatible) | ✅ Stable | Lazy tracker, dim-drift now surfaced to clients |
 | Restore points (`checkpoint` / `restore`) | ✅ Stable | JSON manifest under `.contextpro/backups/` |
@@ -25,7 +25,7 @@
 | Multi-project / multi-client | ✅ Stable | Workspace registry, scope-aware memory |
 | Agent instructions resource | ✅ Stable | Now bundled locally; remote fetch optional |
 | CLI subcommands (`init`, `doctor`, `tree`, `skeleton`) | ✅ Stable | Explicit exit codes after writes |
-| Test suite | ✅ Green | Run `npm test` after `npm rebuild better-sqlite3` |
+| Test suite | ✅ Green | Run `npm test` with the same Node ABI as the installed SQLite binary |
 
 ---
 
@@ -43,16 +43,19 @@ See `CHANGELOG.md` for the full entry-by-entry history.
 
 ## Known issues — open
 
+- See `plans/README.md` for the current audited implementation and verification. End-to-end agent-task savings have not been measured. Optional graph expansion remains off by default.
+- Native repair uses a separate ABI/version cache automatically; hosts on different Node majors do not rebuild the shared installation. Source writes serialize per project; multi-file writes have explicit recovery rather than transaction semantics.
+
 None blocking. Two deferred items remain for 2.0:
 
-- **`register-tools.ts` 1010 lines.** Co-locating Zod schemas with each tool will land in 2.0. (`AUDIT.md` 2026-06-18 #21.)
+- **Large `register-tools.ts`.** Co-locating Zod schemas with each tool will land in 2.0. (`AUDIT.md` 2026-06-18 #21.)
 - **Project's own files violating its own lint rules.** Scope reduced to `src/tools/*`; full cleanup tracked in `TODO.md` v2. (`AUDIT.md` 2026-06-18 #18.)
 
 ---
 
 ## What's working well
 
-- **Token efficiency.** `repo_map` + `skeleton` + `explain` reduce orientation-and-discovery context; `efficiency_report` now exposes the conservative estimate, per-tool history, and optional price scenario instead of presenting an unauditable headline alone.
+- **Token efficiency.** Bounded context, context deltas and the workflow profile are available. `efficiency_report` returns a full-file comparison estimate and optional price scenario. The fixed synthetic benchmark shows that rg is cheaper in output tokens for small exact-name lookups; completed-agent savings require paired measurements.
 - **Project safety.** All file-facing tools route through `resolveProjectPath` and reject path traversal. The `--root` flag is now also subject to unsafe-root checks (1.2.0).
 - **Confidence signaling.** Every agentic tool emits a freshness/trust envelope (index generation, last-indexed time, evidence kind).
 - **Reusable artifacts.** Tool outputs are content-addressed and retrievable by `artifact_list` / `artifact_read` so agents don't regenerate the same task pack twice.
@@ -67,7 +70,7 @@ None blocking. Two deferred items remain for 2.0:
 
 ## Known limitations (by design)
 
-- **Single project per process.** Each MCP process pins to one `--root`. Multi-project orchestration uses the workspace registry and `workspace_context`, not a single shared index.
+- **Per-request root routing.** One MCP process can serve verified worktrees through `root`; each retains its own index and memory.
 - **TS/JS LSP only for `exact_references`.** Other languages need a SCIP index imported via `scip_import`.
 - **Symbol-level call graph is approximate** outside of TS/JS or SCIP-imported indexes — call-site rows are heuristic regex matches and tagged `HEURISTIC` in confidence metadata.
 

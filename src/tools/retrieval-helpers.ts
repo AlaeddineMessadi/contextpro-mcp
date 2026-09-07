@@ -5,7 +5,7 @@ import { execFile } from "child_process";
 import { promisify } from "util";
 import { readFile } from "fs/promises";
 import { basename, join } from "path";
-import { fetchEmbedding } from "../core/embeddings.js";
+import { fetchQueryEmbedding } from "../core/embeddings.js";
 import { getDB } from "../core/db.js";
 import { loadProjectConfig } from "../core/project-config.js";
 import { discoverHubs, parseHubFile } from "../core/hub.js";
@@ -139,18 +139,23 @@ export async function getRecentDiffSummary(rootDir: string, filePath: string): P
   }
 }
 
-export async function getProjectMemoryHits(rootDir: string, query: string, topK: number): Promise<Array<{ id: string; kind: string; summary: string }>> {
+export async function getProjectMemoryHits(rootDir: string, query: string, topK: number, keywordOnly = false): Promise<Array<{ id: string; kind: string; summary: string }>> {
+  if (!Number.isFinite(topK) || topK <= 0) return [];
   const db = await getDB(rootDir);
   const config = await loadProjectConfig(rootDir);
   const projectId = config?.projectId ?? "";
   const clientId = config?.clientId ?? "";
   let queryVector: number[];
   try {
-    [queryVector] = await fetchEmbedding(query);
+    queryVector = keywordOnly ? [] : await fetchQueryEmbedding(query);
   } catch {
-    return [];
+    queryVector = [];
   }
-  const hits = db.searchMemoryNodes(queryVector, Math.max(topK * 6, 18));
+  const terms = query.toLowerCase().match(/[\p{L}\p{N}_]+/gu) ?? [];
+  const lexicalHits = db.listMemoryNodes().map((node) => ({ node, distance: 1, score: terms.reduce((sum, term) => sum + Number(`${node.label} ${node.content}`.toLowerCase().includes(term)), 0) }))
+    .filter((hit) => hit.score > 0).sort((a, b) => b.score - a.score || a.node.id.localeCompare(b.node.id));
+  const semanticHits = queryVector.length ? db.searchMemoryNodes(queryVector, Math.max(topK * 6, 18)) : [];
+  const hits = [...semanticHits, ...lexicalHits.filter((hit) => !semanticHits.some((candidate) => candidate.node.id === hit.node.id))];
   const filtered: Array<{ id: string; kind: string; summary: string }> = [];
   for (const hit of hits) {
     const metadata = parseMetadata(hit.node.metadata);

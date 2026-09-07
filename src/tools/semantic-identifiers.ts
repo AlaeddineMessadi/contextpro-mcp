@@ -6,6 +6,7 @@ import { walkDirectory } from "../core/walker.js";
 import { analyzeFile, flattenSymbols, isSupportedFile } from "../core/parser.js";
 import {
   fetchEmbedding,
+  fetchQueryEmbedding,
   getEmbeddingBatchSize,
   type EmbeddingCache,
 } from "../core/embeddings.js";
@@ -39,6 +40,8 @@ async function saveIdentifierCache(rootDir: string, cache: EmbeddingCache, dirty
 export interface SemanticIdentifierSearchOptions {
   rootDir: string;
   query: string;
+  preset?: "fast" | "balanced" | "exhaustive" | "semantic_only" | "keyword_only";
+  expandCallers?: boolean;
   topK?: number;
   topCallsPerIdentifier?: number;
   includeKinds?: string[];
@@ -124,6 +127,7 @@ const TRIVIAL_IDENTIFIER_NAMES = new Set([
 
 let cachedRootDir: string | null = null;
 let cachedAt = 0;
+let cachedLexicalOnly = false;
 let cachedIndex: IdentifierIndex | null = null;
 
 function hashContent(text: string): string {
@@ -290,8 +294,8 @@ async function buildIdentifierDocsForFile(rootDir: string, relativePath: string)
   }
 }
 
-async function buildIdentifierIndex(rootDir: string): Promise<IdentifierIndex> {
-  if (cachedIndex && cachedRootDir === rootDir && Date.now() - cachedAt < INDEX_TTL_MS) {
+async function buildIdentifierIndex(rootDir: string, skipEmbeddings = false): Promise<IdentifierIndex> {
+  if (cachedIndex && cachedRootDir === rootDir && cachedLexicalOnly === skipEmbeddings && Date.now() - cachedAt < INDEX_TTL_MS) {
     return cachedIndex;
   }
 
@@ -333,6 +337,7 @@ async function buildIdentifierIndex(rootDir: string): Promise<IdentifierIndex> {
 
   if (docs.length === 0) {
     const empty: IdentifierIndex = { docs: [], vectors: [], fileLines, fileCodeLines };
+    cachedLexicalOnly = skipEmbeddings;
     cachedIndex = empty;
     cachedRootDir = rootDir;
     cachedAt = Date.now();
@@ -355,7 +360,7 @@ async function buildIdentifierIndex(rootDir: string): Promise<IdentifierIndex> {
     }
   }
 
-  if (uncached.length > 0) {
+  if (!skipEmbeddings && uncached.length > 0) {
     const batchSize = getEmbeddingBatchSize();
     const batches: typeof uncached[] = [];
     for (let i = 0; i < uncached.length; i += batchSize) {
@@ -379,6 +384,7 @@ async function buildIdentifierIndex(rootDir: string): Promise<IdentifierIndex> {
   }
 
   const index: IdentifierIndex = { docs, vectors, fileLines, fileCodeLines };
+  cachedLexicalOnly = skipEmbeddings;
   cachedIndex = index;
   cachedRootDir = rootDir;
   cachedAt = Date.now();
@@ -448,7 +454,7 @@ async function rankCallSites(
     }
   }
 
-  if (uncached.length > 0) {
+  if (queryVec.length > 0 && uncached.length > 0) {
     const batchSize = getEmbeddingBatchSize();
     for (let i = 0; i < uncached.length; i += batchSize) {
       const batch = uncached.slice(i, i + batchSize);
@@ -466,7 +472,7 @@ async function rankCallSites(
 
   const ranked: CallSite[] = keyedCandidates.map(({ candidate, key }) => {
     const vector = cache[key]?.vector;
-    const semanticScore = vector ? Math.max(cosine(queryVec, vector), 0) : 0;
+    const semanticScore = vector && queryVec.length > 0 ? Math.max(cosine(queryVec, vector), 0) : 0;
     const score = clamp01(semanticScore * 0.82 + candidate.keywordScore * 0.18);
     return {
       file: candidate.file,
@@ -487,16 +493,16 @@ async function rankCallSites(
 export async function semanticIdentifierSearchResults(options: SemanticIdentifierSearchOptions): Promise<SemanticIdentifierSearchData> {
   const topK = Math.max(1, Math.floor(options.topK ?? 5));
   const topCalls = Math.max(1, Math.floor(options.topCallsPerIdentifier ?? 10));
-  const semanticWeight = normalizeWeight(options.semanticWeight, 0.78);
-  const keywordWeight = normalizeWeight(options.keywordWeight, 0.22);
+  const semanticWeight = options.preset === "keyword_only" ? 0 : normalizeWeight(options.semanticWeight, 0.78);
+  const keywordWeight = options.preset === "keyword_only" ? 1 : normalizeWeight(options.keywordWeight, 0.22);
   const includeKinds = normalizeKinds(options.includeKinds);
 
-  const index = await buildIdentifierIndex(options.rootDir);
+  const index = await buildIdentifierIndex(options.rootDir, semanticWeight === 0);
   if (index.docs.length === 0) return { query: options.query, results: [] };
 
   let queryVec: number[];
   try {
-    [queryVec] = await fetchEmbedding(options.query);
+    queryVec = semanticWeight === 0 ? [] : await fetchQueryEmbedding(options.query);
   } catch {
     queryVec = [];
   }
@@ -552,7 +558,7 @@ export async function semanticIdentifierSearchResults(options: SemanticIdentifie
 
   for (let i = 0; i < top.length; i++) {
     const item = top[i];
-    const calls = await rankCallSites(
+    const calls = options.expandCallers === false ? { sites: [], total: 0 } : await rankCallSites(
       options.rootDir,
       cache,
       dirtyKeys,

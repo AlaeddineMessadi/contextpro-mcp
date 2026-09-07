@@ -4,6 +4,35 @@ All notable changes to this project are recorded here. The project follows [Sema
 
 ## [Unreleased]
 
+### Added — Reliable agent workflows (2026-09-07)
+
+- Twelve-tool `workflow` profile; init installs managed agent-first rules and preserves customized servers and user instructions.
+- Immutable task-context snapshots, explicit added/changed/removed deltas, full recovery, and optional bounded import-graph expansion.
+- Offline retrieval benchmark against rg/read, plus a schema for importing paired real-agent success, provider-token usage and cost records. No universal savings percentage is claimed.
+- Isolated session efficiency history (schema v6), one credit per represented file revision, request/response/catalog overhead, an end-of-task summary and optional user-priced dollar scenarios. Actual billing savings stay unknown.
+
+### Fixed — Audit regressions
+
+- Reindex rebuilds missing durable-memory vectors after model changes, preserves node metadata, and retains stale status on embedding failures.
+- Retrieval benchmarks clear file and identifier caches before each cold task-packet variant.
+
+- Symbol lookup returns the exact editable body, including multiline export wrappers and excluding same-line neighbors; replacement accepts multiline default exports.
+- Degraded full reindexes set a repair marker and advance the generation so stale context cannot remain cached as fresh.
+- Canonical workspace/storage containment; atomic mode-preserving source writes, cross-process mutation coordination and stale-revision conflicts.
+- Exact symbol spans preserve neighboring declarations, Unicode, BOM and CRLF; ambiguous spans reject safely. Rename validates reserved names and every staged file before publication.
+- Reconciliation retains capped/failed changes and invalidates deleted-file graphs; worktree snapshots include WAL state without inheriting writer ownership or overwriting another initializer.
+- Incoming import edges reconnect when modules appear or are recreated; structural writes roll back on failure.
+- Task-packet budgets apply to final UTF-8 text/JSON, memory changes invalidate packets, and final search constraints survive candidate expansion.
+- Keyword-only retrieval and structural no-embedding snapshots avoid provider requests; hybrid query embeddings are shared within a request.
+
+### Changed — Defaults and compatibility
+
+- Per-call savings footers are off by default; agents report the net session estimate once at completion.
+- Native dependency repair is automatic in an isolated per-ABI/platform/architecture/libc/version cache. It leaves shared node_modules unchanged, pins npm lifecycle scripts to the launching Node runtime, and validates SQLite plus vectors before publication. `doctor --fix` uses the same cache; `CONTEXTPRO_NATIVE_AUTO_REPAIR=false` opts out.
+- Existing tool profiles and customized MCP config entries are preserved. New init configurations select `workflow`; unset runtime profiles still select `full`.
+- Writes reject child symlinks. Multi-file publication is not transactional; partial failures identify recovery points. Root-level mutation serialization favors correctness over parallel-write throughput.
+
+
 ### Added — Graph intelligence and agent ergonomics
 
 - **Pre-query freshness gate for structural tools.** Graph-driven MCP reads now stat the workspace first, hash only suspicious files by default, and repair edits/additions/deletions before answering. SQLite compare-and-set ownership coordinates separate agent processes, re-probes after lock acquisition to prevent duplicate generations, recovers dead-process locks, and falls back to a structural-only reindex for large changes. `CONTEXTPRO_REFRESH=hash` catches same-size/same-mtime edits. (`src/core/index-freshness.ts`, `src/tools/reindex.ts`, `src/tools/register-tools.ts`)
@@ -35,6 +64,7 @@ A re-audit graded B+ with two A-blockers and an A+ punch-list. All are fixed her
 
 ### Changed — Providers & docs
 
+- **Model configuration is now genuinely opt-in for chat-assisted features.** Generated client configs and first-run project config enable local embeddings but no longer set a chat model. Semantic navigation uses heuristic labels unless a chat model is explicitly configured, avoiding an unexpected source-metadata request. New `INSTALL.md` explains installation, provider/data-flow choices, agent instruction policy, worktree routing, and every supported canonical environment variable. (`src/index.ts`, `src/tools/semantic-navigate.ts`, `README.md`, `INSTALL.md`)
 - **Five generic provider keys — one set of names for every provider.** Configure any backend with just `CONTEXTPRO_PROVIDER`, `CONTEXTPRO_API_KEY`, `CONTEXTPRO_BASE_URL`, `CONTEXTPRO_EMBED_MODEL`, `CONTEXTPRO_CHAT_MODEL` — no more provider-specific `CONTEXTPRO_OPENAI_*` / `OLLAMA_*` soup. A new single source of truth (`src/core/provider-config.ts`) resolves every setting with clear precedence: **generic key → legacy `CONTEXTPRO_*` → legacy `CONTEXTPLUS_*` → provider-native (`OLLAMA_*` / `OPENAI_*`) → built-in default**. Fully backward-compatible: every old long name (including plain `OPENAI_API_KEY` / `OPENAI_BASE_URL`) still works; the short keys just take precedence. `embeddings.ts`, `chat-model.ts`, and `semantic-navigate.ts` now all read through the shared resolver (eliminating three divergent copies of the alias/precedence logic — `semantic-navigate.ts` previously honored only `CONTEXTPLUS_*` names and silently ignored `CONTEXTPRO_*`). `init` config templates and the README/INSTRUCTIONS env tables now lead with the five keys. (`src/core/provider-config.ts`, `src/core/embeddings.ts`, `src/core/chat-model.ts`, `src/tools/semantic-navigate.ts`, `src/index.ts`)
 - **OpenAI-compatible providers are first-class.** `CONTEXTPRO_PROVIDER` accepts friendly aliases (`openrouter`, `groq`, `together`, `deepinfra`, `vllm`, `lmstudio`, `litellm`, `anyscale`, `fireworks`, `mistral`, `openai-compatible`) that all map to the OpenAI-compatible HTTP path — any provider speaking the OpenAI `/embeddings` + `/chat/completions` API works by pointing `CONTEXTPRO_BASE_URL` at it.
 - **README rewritten for clarity:** new **LLM providers** section leading with the five-key table plus Ollama / OpenAI / OpenRouter / local examples (and the Anthropic-via-proxy note since Claude has no embeddings endpoint), a clearer **Multiple projects** section explaining per-project isolation (one server = one `.contextpro/` = one project, never mixed), and a corrected env-var table with a legacy-names compatibility note. (`README.md`, `INSTRUCTIONS.md`)

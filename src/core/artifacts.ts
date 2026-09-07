@@ -4,6 +4,7 @@
 import { createHash } from "crypto";
 import { mkdir, open, readFile, readdir, rename, stat, unlink, writeFile } from "fs/promises";
 import { join, resolve } from "path";
+import { resolveProjectPath } from "./path-guard.js";
 
 /**
  * Atomic file write: write to a unique temp file then rename over the target. A crash mid-write
@@ -61,6 +62,7 @@ interface PersistArtifactOptions<T = unknown> {
   metadata?: Record<string, string>;
   payload: T;
   indexGeneration?: number;
+  immutable?: boolean;
 }
 
 const ARTIFACT_DIR = ".contextpro/artifacts";
@@ -80,18 +82,19 @@ async function readJsonFile<T>(path: string, fallback: T): Promise<T> {
 }
 
 function artifactBaseDir(rootDir: string): string {
-  return resolve(rootDir, ARTIFACT_DIR);
+  return resolveProjectPath(rootDir, ARTIFACT_DIR);
 }
 
 function manifestPath(rootDir: string): string {
-  return join(artifactBaseDir(rootDir), MANIFEST_FILE);
+  return resolveProjectPath(rootDir, join(artifactBaseDir(rootDir), MANIFEST_FILE));
 }
 
 function manifestLockPath(rootDir: string): string {
-  return join(artifactBaseDir(rootDir), MANIFEST_LOCK_FILE);
+  return resolveProjectPath(rootDir, join(artifactBaseDir(rootDir), MANIFEST_LOCK_FILE));
 }
 
-function buildArtifactId(kind: string, key: string, repoFingerprint?: string | null): string {
+export function buildArtifactId(kind: string, key: string, repoFingerprint?: string | null): string {
+  if (!/^[a-zA-Z0-9_-]+$/.test(kind)) throw new Error(`Invalid artifact kind: ${kind}`);
   const hash = createHash("sha256")
     .update(`${kind}|${repoFingerprint ?? "no-fingerprint"}|${key}`)
     .digest("hex")
@@ -148,11 +151,11 @@ async function scanArtifactsOnDisk(rootDir: string): Promise<ArtifactReference[]
     const artifacts: ArtifactReference[] = [];
     for (const entry of entries) {
       if (!entry.isDirectory()) continue;
-      const kindDir = join(baseDir, entry.name);
+      const kindDir = resolveProjectPath(rootDir, join(baseDir, entry.name));
       const files = await readdir(kindDir, { withFileTypes: true }).catch(() => []);
       for (const file of files) {
         if (!file.isFile() || !file.name.endsWith(".json")) continue;
-        const fullPath = join(kindDir, file.name);
+        const fullPath = resolveProjectPath(rootDir, join(kindDir, file.name));
         const parsed = await readJsonFile<StoredArtifact | null>(fullPath, null);
         if (!parsed?.id || !parsed.kind || !parsed.key) continue;
         artifacts.push({
@@ -216,11 +219,19 @@ export function canonicalArtifactKey(value: unknown): string {
 }
 
 export async function persistArtifact<T>(options: PersistArtifactOptions<T>): Promise<ArtifactReference> {
+  // Serialize the existence check and publication of immutable snapshots too.
+  // Locking only manifest updates allowed concurrent writers to replace a context ID.
+  if (options.immutable) return withManifestLock(options.rootDir, () => persistArtifactRecord(options, true));
+  return persistArtifactRecord(options, false);
+}
+
+async function persistArtifactRecord<T>(options: PersistArtifactOptions<T>, manifestLocked: boolean): Promise<ArtifactReference> {
   const baseDir = artifactBaseDir(options.rootDir);
-  const kindDir = join(baseDir, options.kind);
+  const kindDir = resolveProjectPath(options.rootDir, join(baseDir, options.kind));
   const id = buildArtifactId(options.kind, options.key, options.repoFingerprint);
-  const artifactFile = join(kindDir, `${id}.json`);
+  const artifactFile = resolveProjectPath(options.rootDir, join(kindDir, `${id}.json`));
   const existing = await readArtifact<T>(options.rootDir, id);
+  if (options.immutable && existing) return existing;
   const now = new Date().toISOString();
   const record: StoredArtifact<T> = {
     id,
@@ -251,7 +262,7 @@ export async function persistArtifact<T>(options: PersistArtifactOptions<T>): Pr
     indexGeneration: record.indexGeneration,
   };
 
-  await withManifestLock(options.rootDir, async () => {
+  const updateManifest = async () => {
     const manifest = await loadManifestWithRepair(options.rootDir);
     const filtered = manifest.artifacts.filter((artifact) => artifact.id !== id);
     filtered.unshift(nextRef);
@@ -259,7 +270,9 @@ export async function persistArtifact<T>(options: PersistArtifactOptions<T>): Pr
     const trimmed = filtered.slice(0, MAX_ARTIFACTS_PER_MANIFEST);
     await mkdir(baseDir, { recursive: true });
     await writeFileAtomic(manifestPath(options.rootDir), JSON.stringify({ artifacts: trimmed }, null, 2) + "\n");
-  });
+  };
+  if (manifestLocked) await updateManifest();
+  else await withManifestLock(options.rootDir, updateManifest);
 
   return nextRef;
 }
@@ -314,18 +327,18 @@ export async function readArtifact<T = unknown>(rootDir: string, artifactId: str
   const manifest = await loadManifestWithRepair(rootDir);
   const ref = manifest.artifacts.find((artifact) => artifact.id === artifactId);
   if (ref) {
-    const migratedPath = migrateLegacyArtifactPath(ref.path);
+    const migratedPath = resolveProjectPath(rootDir, migrateLegacyArtifactPath(ref.path));
     const record = await readJsonFile<StoredArtifact<T> | null>(migratedPath, null);
     if (record) return record;
     if (migratedPath !== ref.path) {
-      const original = await readJsonFile<StoredArtifact<T> | null>(ref.path, null);
+      const original = await readJsonFile<StoredArtifact<T> | null>(resolveProjectPath(rootDir, ref.path), null);
       if (original) return original;
     }
   }
 
   const fallback = (await scanArtifactsOnDisk(rootDir)).find((artifact) => artifact.id === artifactId);
   if (!fallback) return null;
-  return readJsonFile<StoredArtifact<T> | null>(fallback.path, null);
+  return readJsonFile<StoredArtifact<T> | null>(resolveProjectPath(rootDir, fallback.path), null);
 }
 
 export async function listArtifacts(rootDir: string, kind?: string, limit: number = 20): Promise<ArtifactReference[]> {
@@ -336,7 +349,7 @@ export async function listArtifacts(rootDir: string, kind?: string, limit: numbe
     .slice(0, Math.max(1, limit));
   // Stat each selected artifact's payload for its on-disk size (best-effort; missing files report 0).
   return Promise.all(selected.map(async (artifact) => {
-    const sizeBytes = await stat(artifact.path).then((s) => s.size).catch(() => 0);
+    const sizeBytes = await stat(resolveProjectPath(rootDir, artifact.path)).then((s) => s.size).catch(() => 0);
     return { ...artifact, sizeBytes };
   }));
 }
@@ -375,11 +388,11 @@ export async function garbageCollectArtifacts(rootDir: string): Promise<{ delete
     }
     for (const entry of entries) {
       if (!entry.isDirectory()) continue;
-      const kindDir = join(baseDir, entry.name);
+      const kindDir = resolveProjectPath(rootDir, join(baseDir, entry.name));
       const files = await readdir(kindDir, { withFileTypes: true }).catch(() => []);
       for (const file of files) {
         if (!file.isFile()) continue;
-        const fullPath = join(kindDir, file.name);
+        const fullPath = resolveProjectPath(rootDir, join(kindDir, file.name));
         const fileStat = await stat(fullPath).catch(() => null);
         if (!fileStat) continue;
         // Grace period: never touch a freshly written file (closes the persist/GC TOCTOU).

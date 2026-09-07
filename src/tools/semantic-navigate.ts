@@ -4,7 +4,8 @@
 import { walkDirectory } from "../core/walker.js";
 import { analyzeFile, flattenSymbols, isSupportedFile } from "../core/parser.js";
 import { fetchEmbedding } from "../core/embeddings.js";
-import { getProvider, getChatProvider, getApiKey, getBaseUrl, getChatModelName } from "../core/provider-config.js";
+import { getProvider } from "../core/provider-config.js";
+import { chatCompletion, hasConfiguredChatModel } from "../core/chat-model.js";
 import { readFile } from "fs/promises";
 import { spectralCluster, findPathPattern } from "../core/clustering.js";
 import { extname } from "path";
@@ -54,89 +55,12 @@ const NON_CODE_NAVIGATE_EXTENSIONS = new Set([
   ".env",
 ]);
 
-type OllamaChatClient = { chat: (params: Record<string, unknown>) => Promise<{ message: { content: string } }> };
-let ollamaClient: OllamaChatClient | null = null;
-
-async function getOllamaClient(): Promise<OllamaChatClient> {
-  if (!ollamaClient) {
-    const { Ollama } = await import("ollama");
-    ollamaClient = new Ollama({ host: process.env.OLLAMA_HOST }) as unknown as OllamaChatClient;
-  }
-  return ollamaClient;
-}
-
-function getErrorMessage(error: unknown): string {
-  if (error instanceof Error) return error.message;
-  return String(error);
-}
-
-function formatOllamaChatError(error: unknown, model: string): string {
-  const message = getErrorMessage(error);
-  const lower = message.toLowerCase();
-  const installHint = "Install Ollama from https://ollama.com/download, then run `ollama serve`.";
-  const modelHint = `Run \`ollama pull ${model}\`, or set OLLAMA_CHAT_MODEL to any chat model shown by \`ollama list\`.`;
-
-  if (
-    lower.includes("econnrefused")
-    || lower.includes("fetch failed")
-    || lower.includes("connection refused")
-    || lower.includes("connect")
-  ) {
-    return `Ollama is not reachable while loading the chat model "${model}". ${installHint} ${modelHint} Original error: ${message}`;
-  }
-
-  if (lower.includes("not found") || lower.includes("no such model") || lower.includes("model")) {
-    return `Ollama chat model "${model}" is not available. ${modelHint} Original error: ${message}`;
-  }
-
-  return `Ollama chat model "${model}" failed. ${installHint} ${modelHint} Original error: ${message}`;
-}
-
 async function fetchEmbeddings(inputs: string[]): Promise<number[][]> {
   return fetchEmbedding(inputs);
 }
 
 function isNavigableSourceCandidate(filePath: string): boolean {
   return isSupportedFile(filePath) && !NON_CODE_NAVIGATE_EXTENSIONS.has(extname(filePath).toLowerCase());
-}
-
-async function chatCompletion(prompt: string): Promise<string> {
-  if (getChatProvider() === "openai") {
-    const url = `${getBaseUrl().replace(/\/+$/, "")}/chat/completions`;
-    const response = await fetch(url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${getApiKey()}`,
-      },
-      body: JSON.stringify({
-        model: getChatModelName("openai"),
-        messages: [{ role: "user", content: prompt }],
-        stream: false,
-      }),
-    });
-
-    if (!response.ok) {
-      const body = await response.text().catch(() => "");
-      throw new Error(`OpenAI chat API error ${response.status}: ${body}`);
-    }
-
-    const data = await response.json() as { choices: { message: { content: string } }[] };
-    return data.choices[0]?.message?.content ?? "";
-  }
-
-  const chatModel = getChatModelName("ollama");
-  const client = await getOllamaClient();
-  try {
-    const response = await client.chat({
-      model: chatModel,
-      messages: [{ role: "user", content: prompt }],
-      stream: false,
-    });
-    return response.message.content;
-  } catch (error) {
-    throw new Error(formatOllamaChatError(error, chatModel));
-  }
 }
 
 async function embedFilesWithFallback(files: FileInfo[]): Promise<{ files: FileInfo[]; vectors: number[][]; skipped: number }> {
@@ -320,7 +244,11 @@ function tokenizeHeader(header: string, stop: Set<string>): string[] {
     .filter((t) => t.length > 3 && !stop.has(t));
 }
 
-async function labelSiblingClusters(clusters: { files: FileInfo[]; pathPattern: string | null }[]): Promise<string[]> {
+async function labelSiblingClusters(
+  rootDir: string,
+  clusters: { files: FileInfo[]; pathPattern: string | null }[],
+  useChatModel: boolean,
+): Promise<string[]> {
   if (clusters.length === 0) return [];
   if (clusters.length === 1) {
     const pp = clusters[0].pathPattern;
@@ -330,6 +258,7 @@ async function labelSiblingClusters(clusters: { files: FileInfo[]; pathPattern: 
 
   const allFilesCorpus = clusters.flatMap((c) => c.files);
   const heuristicLabels = clusters.map((c, i) => deriveHeuristicLabel(c, i, allFilesCorpus));
+  if (!useChatModel) return heuristicLabels;
 
   const clusterDescriptions = clusters.map((c, i) => {
     const fileList = c.files.map((f) => `${f.relativePath}: ${f.header || "no description"}`).join("\n  ");
@@ -347,7 +276,7 @@ ${clusterDescriptions.join("\n\n")}
 Respond with ONLY a JSON array of ${clusters.length} objects. No other text.`;
 
   try {
-    const response = await chatCompletion(prompt);
+    const response = await chatCompletion(rootDir, prompt);
     const jsonMatch = response.match(/\[[\s\S]*\]/);
     if (!jsonMatch) {
       process.stderr.write(`[contextpro/cluster] degraded: chat model returned no JSON; using heuristic labels\n`);
@@ -366,7 +295,15 @@ Respond with ONLY a JSON array of ${clusters.length} objects. No other text.`;
   }
 }
 
-async function buildHierarchy(files: FileInfo[], vectors: number[][], maxClusters: number, depth: number, maxDepth: number): Promise<ClusterNode> {
+async function buildHierarchy(
+  rootDir: string,
+  files: FileInfo[],
+  vectors: number[][],
+  maxClusters: number,
+  depth: number,
+  maxDepth: number,
+  useChatModel: boolean,
+): Promise<ClusterNode> {
   if (files.length <= MAX_FILES_PER_LEAF || depth >= maxDepth) {
     return {
       label: "",
@@ -393,11 +330,23 @@ async function buildHierarchy(files: FileInfo[], vectors: number[][], maxCluster
     pathPattern: findPathPattern(cluster.indices.map((i) => files[i].relativePath)),
   }));
 
-  const labels = await labelSiblingClusters(childMetas.map((c) => ({ files: c.files, pathPattern: c.pathPattern })));
+  const labels = await labelSiblingClusters(
+    rootDir,
+    childMetas.map((c) => ({ files: c.files, pathPattern: c.pathPattern })),
+    useChatModel,
+  );
 
   const children: ClusterNode[] = [];
   for (let i = 0; i < childMetas.length; i++) {
-    const child = await buildHierarchy(childMetas[i].files, childMetas[i].vectors, maxClusters, depth + 1, maxDepth);
+    const child = await buildHierarchy(
+      rootDir,
+      childMetas[i].files,
+      childMetas[i].vectors,
+      maxClusters,
+      depth + 1,
+      maxDepth,
+      useChatModel,
+    );
     child.label = labels[i];
     children.push(child);
   }
@@ -436,6 +385,7 @@ function renderClusterTree(node: ClusterNode, indent: number = 0): string {
 export async function semanticNavigate(options: SemanticNavigateOptions): Promise<string> {
   const maxClusters = options.maxClusters ?? 20;
   const maxDepth = options.maxDepth ?? 3;
+  const useChatModel = await hasConfiguredChatModel(options.rootDir);
 
   const entries = await walkDirectory({ rootDir: options.rootDir, depthLimit: 0 });
   const fileEntries = entries.filter((e) => !e.isDirectory && isNavigableSourceCandidate(e.path));
@@ -487,14 +437,15 @@ export async function semanticNavigate(options: SemanticNavigateOptions): Promis
   if (embeddableFiles.length === 0) return "No embeddable source files found in the project.";
 
   if (embeddableFiles.length <= MAX_FILES_PER_LEAF) {
-    let fileLabels: string[];
-    try {
-      const prompt = `For each file below, produce a 3-7 word description. Return ONLY a JSON array of strings.\n\n${embeddableFiles.map((f) => `${f.relativePath}: ${f.header}`).join("\n")}`;
-      const response = await chatCompletion(prompt);
-      const match = response.match(/\[[\s\S]*\]/);
-      fileLabels = match ? JSON.parse(match[0]) : embeddableFiles.map((f) => f.header);
-    } catch {
-      fileLabels = embeddableFiles.map((f) => f.header);
+    let fileLabels = embeddableFiles.map((file) => file.header);
+    if (useChatModel) {
+      try {
+        const prompt = `For each file below, produce a 3-7 word description. Return ONLY a JSON array of strings.\n\n${embeddableFiles.map((f) => `${f.relativePath}: ${f.header}`).join("\n")}`;
+        const response = await chatCompletion(options.rootDir, prompt);
+        const match = response.match(/\[[\s\S]*\]/);
+        fileLabels = match ? JSON.parse(match[0]) : fileLabels;
+      } catch {
+      }
     }
 
     const summary = skippedForEmbedding > 0
@@ -508,7 +459,7 @@ export async function semanticNavigate(options: SemanticNavigateOptions): Promis
     return lines.join("\n");
   }
 
-  const tree = await buildHierarchy(embeddableFiles, vectors, maxClusters, 0, maxDepth);
+  const tree = await buildHierarchy(options.rootDir, embeddableFiles, vectors, maxClusters, 0, maxDepth, useChatModel);
   tree.label = "Project";
 
   const summary = skippedForEmbedding > 0

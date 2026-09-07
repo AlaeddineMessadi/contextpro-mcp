@@ -12,9 +12,22 @@ import {
 
 describe("embeddings", () => {
   describe("getEmbeddingBatchSize", () => {
-    it("returns a GPU-safe value between 5 and 10", () => {
+    it("uses a bounded provider default", () => {
       const value = getEmbeddingBatchSize();
-      assert.ok(value >= 5 && value <= 10);
+      assert.ok(value >= 1 && value <= 128);
+    });
+
+    it("allows small batches and caps oversized overrides", () => {
+      const previous = process.env.CONTEXTPRO_EMBED_BATCH_SIZE;
+      try {
+        process.env.CONTEXTPRO_EMBED_BATCH_SIZE = "1";
+        assert.equal(getEmbeddingBatchSize(), 1);
+        process.env.CONTEXTPRO_EMBED_BATCH_SIZE = "999";
+        assert.equal(getEmbeddingBatchSize(), 128);
+      } finally {
+        if (previous === undefined) delete process.env.CONTEXTPRO_EMBED_BATCH_SIZE;
+        else process.env.CONTEXTPRO_EMBED_BATCH_SIZE = previous;
+      }
     });
   });
 

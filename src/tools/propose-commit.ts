@@ -1,8 +1,8 @@
 // Code commit gatekeeper enforcing 2-line headers, no inline comments
 // Validates abstraction rules and creates shadow restore points before writing
 
-import { writeFile, mkdir } from "fs/promises";
-import { dirname, extname } from "path";
+import { extname } from "path";
+import { captureSource, publishSource, withSourceMutation } from "../core/source-mutation.js";
 import { createRestorePoint } from "../git/shadow.js";
 import { isSupportedFile } from "../core/parser.js";
 import { resolveProjectPath, toProjectRelativePath } from "../core/path-guard.js";
@@ -12,6 +12,7 @@ export interface ProposeCommitOptions {
   filePath: string;
   newContent: string;
   strict?: boolean;
+  expectedContentHash?: string;
 }
 
 interface ValidationError {
@@ -132,6 +133,14 @@ function validateAbstraction(lines: string[]): ValidationError[] {
 }
 
 export async function proposeCommit(options: ProposeCommitOptions): Promise<string> {
+  return withSourceMutation(options.rootDir, () => proposeCommitLocked(options));
+}
+
+async function proposeCommitLocked(options: ProposeCommitOptions): Promise<string> {
+  const snapshot = captureSource(options.rootDir, options.filePath);
+  if (options.expectedContentHash !== undefined && options.expectedContentHash !== snapshot.hash) {
+    throw new Error(`Source conflict: ${options.filePath} does not match expectedContentHash. Read current content and retry.`);
+  }
   const fullPath = resolveProjectPath(options.rootDir, options.filePath, "filePath");
   const relativePath = toProjectRelativePath(options.rootDir, options.filePath, "filePath");
   const ext = extname(fullPath);
@@ -157,8 +166,7 @@ export async function proposeCommit(options: ProposeCommitOptions): Promise<stri
   }
 
   await createRestorePoint(options.rootDir, [relativePath], `Pre-commit: ${relativePath}`);
-  await mkdir(dirname(fullPath), { recursive: true });
-  await writeFile(fullPath, normalized, "utf-8");
+  await publishSource(options.rootDir, snapshot, normalized);
 
   const result = [`✅ File saved: ${relativePath}`];
   if (allIssues.length > 0) {

@@ -3,8 +3,9 @@
 
 import { createHash } from "crypto";
 import { join, resolve } from "path";
+import { resolveProjectPath } from "./path-guard.js";
 import { CONTEXTPRO_DIR, ensureContextProDir } from "./data-dir.js";
-import { loadNativeStorageBindings } from "./db-native.js";
+import { ensureNativeStorage, loadNativeStorageBindings } from "./db-native.js";
 
 type DatabaseType = import("better-sqlite3").Database;
 
@@ -160,7 +161,7 @@ export interface FileTextSearchMatch {
 export type { NativeStorageDiagnostic, NativeStorageProbe } from "./db-native.js";
 export { describeNativeStorageError, probeNativeStorage } from "./db-native.js";
 
-const SCHEMA_VERSION = "5";
+const SCHEMA_VERSION = "6";
 const DECAY_LAMBDA = 0.05;
 const STALE_EDGE_THRESHOLD = 0.15;
 const STALE_NODE_DAYS = 7;
@@ -245,7 +246,8 @@ CREATE TABLE IF NOT EXISTS tool_calls (
   output_tokens_est INTEGER NOT NULL DEFAULT 0,
   source_tokens_est INTEGER NOT NULL DEFAULT 0,
   saved_tokens_est INTEGER NOT NULL DEFAULT 0,
-  represented_files INTEGER NOT NULL DEFAULT 0
+  represented_files INTEGER NOT NULL DEFAULT 0,
+  session_id TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_tool_calls_called_at ON tool_calls(called_at);
 CREATE INDEX IF NOT EXISTS idx_tool_calls_tool ON tool_calls(tool);
@@ -295,7 +297,8 @@ export class ContextPlusDB {
 
   constructor(rootDir: string) {
     this.rootDir = rootDir;
-    const dbPath = join(rootDir, CONTEXTPRO_DIR, "index.db");
+    const dbPath = resolveProjectPath(rootDir, join(CONTEXTPRO_DIR, "index.db"));
+    for (const suffix of ["-wal", "-shm", "-journal"]) resolveProjectPath(rootDir, `${dbPath}${suffix}`);
     const { Database, sqliteVec } = loadNativeStorageBindings();
     this.db = new Database(dbPath);
     sqliteVec.load(this.db);
@@ -306,6 +309,7 @@ export class ContextPlusDB {
     this.db.exec(SCHEMA_SQL);
     this.initMeta();
     this.runMigrations();
+    this.db.exec("CREATE INDEX IF NOT EXISTS idx_tool_calls_session ON tool_calls(session_id, called_at)");
     this.ensureVecTables();
   }
 
@@ -372,6 +376,10 @@ export class ContextPlusDB {
       if (!this.columnExists("tool_calls", "saved_tokens_est")) this.db.exec("ALTER TABLE tool_calls ADD COLUMN saved_tokens_est INTEGER NOT NULL DEFAULT 0");
       if (!this.columnExists("tool_calls", "represented_files")) this.db.exec("ALTER TABLE tool_calls ADD COLUMN represented_files INTEGER NOT NULL DEFAULT 0");
     }
+    if (current < 6) {
+      if (!this.columnExists("tool_calls", "session_id")) this.db.exec("ALTER TABLE tool_calls ADD COLUMN session_id TEXT");
+    }
+    this.db.exec("CREATE INDEX IF NOT EXISTS idx_tool_calls_session ON tool_calls(session_id, called_at)");
     this.db.prepare("INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', ?)").run(SCHEMA_VERSION);
   }
 
@@ -407,6 +415,7 @@ export class ContextPlusDB {
       );
       this.db.exec("DROP TABLE IF EXISTS embeddings");
       this.db.exec("DROP TABLE IF EXISTS memory_embeddings");
+      this.bumpMemoryRevision();
       this.setMeta("embeddings_stale", "true");
       this.setMeta("embeddings_stale_reason", `dimension changed from ${this.vecDimension} to ${dim}`);
     }
@@ -421,8 +430,14 @@ export class ContextPlusDB {
     if (previousProvider && previousModel && (previousProvider !== provider || previousModel !== model)) {
       process.stderr.write(
         `[contextpro/db] WARNING: embedding provider/model changed from ${previousProvider}/${previousModel} to ${provider}/${model}. ` +
-        `Cached vectors are now considered stale; run reindex to rebuild.\n`,
+        `Cached vectors are being cleared; run reindex to rebuild.\n`,
       );
+      // Content hashes alone cannot validate vectors across embedding models. This is
+      // especially important when the old and new models happen to share a dimension:
+      // vec0 would accept the stale vectors and silently mix incompatible vector spaces.
+      if (this.tableExists("embeddings")) this.db.exec("DELETE FROM embeddings");
+      if (this.tableExists("memory_embeddings")) this.db.exec("DELETE FROM memory_embeddings");
+      this.bumpMemoryRevision();
       this.setMeta("embeddings_stale", "true");
       this.setMeta("embeddings_stale_reason", `provider/model changed from ${previousProvider}/${previousModel} to ${provider}/${model}`);
     }
@@ -648,13 +663,23 @@ export class ContextPlusDB {
     return row?.content_hash ?? null;
   }
 
+  getMemoryRevision(): number { return Number(this.getMeta("memory_revision") ?? "0"); }
+
+  private bumpMemoryRevision(): void {
+    this.db.prepare("INSERT INTO meta (key, value) VALUES ('memory_revision', '1') ON CONFLICT(key) DO UPDATE SET value = CAST(value AS INTEGER) + 1").run();
+  }
+
   upsertMemoryNode(input: MemoryNodeInput, embedding?: number[]): string {
     const now = Date.now();
-    const existing = this.db.prepare("SELECT id FROM memory_nodes WHERE label = ? AND type = ?").get(input.label, input.type) as { id: string } | undefined;
+    const existing = this.db.prepare("SELECT id, content FROM memory_nodes WHERE label = ? AND type = ?").get(input.label, input.type) as { id: string; content: string } | undefined;
 
     if (existing) {
       this.db.prepare("UPDATE memory_nodes SET content = ?, last_accessed = ?, access_count = access_count + 1, metadata = ? WHERE id = ?")
         .run(input.content, now, JSON.stringify(input.metadata ?? {}), existing.id);
+      this.bumpMemoryRevision();
+      if (existing.content !== input.content && this.hasVectorTables()) {
+        this.db.prepare("DELETE FROM memory_embeddings WHERE node_id = ?").run(existing.id);
+      }
       if (this.hasUsableEmbedding(embedding)) {
         this.ensureVecDimension(embedding.length);
         this.db.prepare("DELETE FROM memory_embeddings WHERE node_id = ?").run(existing.id);
@@ -666,6 +691,7 @@ export class ContextPlusDB {
     const id = input.id ?? generateId("node");
     this.db.prepare("INSERT INTO memory_nodes (id, type, label, content, created_at, last_accessed, access_count, metadata) VALUES (?, ?, ?, ?, ?, ?, 1, ?)")
       .run(id, input.type, input.label, input.content, now, now, JSON.stringify(input.metadata ?? {}));
+    this.bumpMemoryRevision();
     if (this.hasUsableEmbedding(embedding)) {
       this.ensureVecDimension(embedding.length);
       this.db.prepare("INSERT INTO memory_embeddings (vector, node_id) VALUES (?, ?)").run(vecToBuffer(embedding), id);
@@ -693,6 +719,26 @@ export class ContextPlusDB {
     return this.db.prepare("SELECT * FROM memory_nodes ORDER BY last_accessed DESC, created_at DESC").all() as MemoryNodeRow[];
   }
 
+  listMemoryNodesWithoutEmbeddings(): MemoryNodeRow[] {
+    if (!this.hasVectorTables()) return this.listMemoryNodes();
+    return this.db.prepare("SELECT * FROM memory_nodes WHERE id NOT IN (SELECT node_id FROM memory_embeddings)").all() as MemoryNodeRow[];
+  }
+
+  setMemoryEmbedding(node: Pick<MemoryNodeRow, "id" | "label" | "content">, embedding: number[]): boolean {
+    return this.db.transaction(() => {
+      const current = this.peekMemoryNode(node.id);
+      // Keep the revision check and publication in one SQLite transaction so
+      // another process cannot change the node between the check and write.
+      if (!current || current.label !== node.label || current.content !== node.content) return false;
+      if (!this.hasUsableEmbedding(embedding)) throw new Error(`Invalid memory embedding for ${node.id}`);
+      this.ensureVecDimension(embedding.length);
+      this.db.prepare("DELETE FROM memory_embeddings WHERE node_id = ?").run(node.id);
+      this.db.prepare("INSERT INTO memory_embeddings (vector, node_id) VALUES (?, ?)").run(vecToBuffer(embedding), node.id);
+      this.bumpMemoryRevision();
+      return true;
+    })();
+  }
+
   deleteMemoryNode(id: string): void {
     if (this.hasVectorTables()) {
       try {
@@ -700,7 +746,7 @@ export class ContextPlusDB {
       } catch {}
     }
     this.db.prepare("DELETE FROM memory_edges WHERE source = ? OR target = ?").run(id, id);
-    this.db.prepare("DELETE FROM memory_nodes WHERE id = ?").run(id);
+    if (this.db.prepare("DELETE FROM memory_nodes WHERE id = ?").run(id).changes > 0) this.bumpMemoryRevision();
   }
 
   upsertMemoryEdge(input: MemoryEdgeInput): string {
@@ -710,17 +756,19 @@ export class ContextPlusDB {
     if (existing) {
       this.db.prepare("UPDATE memory_edges SET weight = ?, metadata = ? WHERE id = ?")
         .run(input.weight ?? 1.0, JSON.stringify(input.metadata ?? {}), existing.id);
+      this.bumpMemoryRevision();
       return existing.id;
     }
 
     const id = input.id ?? generateId("edge");
     this.db.prepare("INSERT INTO memory_edges (id, source, target, relation, weight, created_at, metadata) VALUES (?, ?, ?, ?, ?, ?, ?)")
       .run(id, input.source, input.target, input.relation, input.weight ?? 1.0, Date.now(), JSON.stringify(input.metadata ?? {}));
+    this.bumpMemoryRevision();
     return id;
   }
 
   deleteMemoryEdge(id: string): void {
-    this.db.prepare("DELETE FROM memory_edges WHERE id = ?").run(id);
+    if (this.db.prepare("DELETE FROM memory_edges WHERE id = ?").run(id).changes > 0) this.bumpMemoryRevision();
   }
 
   getMemoryEdgesForNode(id: string): MemoryEdgeRow[] {
@@ -822,6 +870,7 @@ export class ContextPlusDB {
       if (staleEdgeIds.length > 0) {
         const placeholders = staleEdgeIds.map(() => "?").join(", ");
         this.db.prepare(`DELETE FROM memory_edges WHERE id IN (${placeholders})`).run(...staleEdgeIds);
+        this.bumpMemoryRevision();
       }
       for (const orphan of orphans) this.deleteMemoryNode(orphan.id);
       this.setMeta("last_prune", String(now));
@@ -855,6 +904,14 @@ export class ContextPlusDB {
 
   getImportersOf(fileId: number): ImportRow[] {
     return this.db.prepare("SELECT * FROM imports WHERE target_file_id = ?").all(fileId) as ImportRow[];
+  }
+
+  getAllImports(): ImportRow[] {
+    return this.db.prepare("SELECT * FROM imports").all() as ImportRow[];
+  }
+
+  updateImportTarget(importId: number, targetFileId: number | null): void {
+    this.db.prepare("UPDATE imports SET target_file_id = ? WHERE id = ?").run(targetFileId, importId);
   }
 
   upsertCallSites(fileId: number, sites: Array<{ callee: string; line: number; context: string }>): void {
@@ -933,12 +990,13 @@ export class ContextPlusDB {
     durationMs: number,
     calledAt: number,
     efficiency: ToolCallEfficiency = {},
+    sessionId?: string,
   ): void {
     this.db.prepare(
       `INSERT INTO tool_calls (
          tool, status, duration_ms, called_at, input_tokens_est, output_tokens_est,
-         source_tokens_est, saved_tokens_est, represented_files
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         source_tokens_est, saved_tokens_est, represented_files, session_id
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       tool,
       status,
@@ -949,6 +1007,7 @@ export class ContextPlusDB {
       Math.max(0, Math.round(efficiency.sourceTokens ?? 0)),
       Math.max(0, Math.round(efficiency.savedTokens ?? 0)),
       Math.max(0, Math.round(efficiency.representedFiles ?? 0)),
+      sessionId ?? null,
     );
   }
 
@@ -965,8 +1024,12 @@ export class ContextPlusDB {
   }
 
   /** Recent calls with a positive savings estimate, optionally bounded by time. */
-  getToolSavingsHistory(limit: number = 20, sinceMs?: number): ToolCallHistoryRow[] {
-    const where = sinceMs ? "WHERE saved_tokens_est > 0 AND called_at >= ?" : "WHERE saved_tokens_est > 0";
+  getToolSavingsHistory(limit: number = 20, sinceMs?: number, sessionId?: string): ToolCallHistoryRow[] {
+    const filters = ["saved_tokens_est > 0"];
+    const params: Array<number | string> = [];
+    if (sinceMs !== undefined) { filters.push("called_at >= ?"); params.push(sinceMs); }
+    if (sessionId !== undefined) { filters.push("session_id = ?"); params.push(sessionId); }
+    const where = `WHERE ${filters.join(" AND ")}`;
     const stmt = this.db.prepare(
       `SELECT tool, status, duration_ms as durationMs, called_at as calledAt,
               input_tokens_est as inputTokens, output_tokens_est as outputTokens,
@@ -976,12 +1039,16 @@ export class ContextPlusDB {
        ORDER BY called_at DESC, id DESC LIMIT ?`,
     );
     const boundedLimit = Math.max(1, Math.min(100, limit));
-    return (sinceMs ? stmt.all(sinceMs, boundedLimit) : stmt.all(boundedLimit)) as ToolCallHistoryRow[];
+    return stmt.all(...params, boundedLimit) as ToolCallHistoryRow[];
   }
 
   /** Per-tool aggregates over the whole history (or since a timestamp). */
-  getToolCallAggregates(sinceMs?: number): ToolEfficiencyAggregate[] {
-    const where = sinceMs ? "WHERE called_at >= ?" : "";
+  getToolCallAggregates(sinceMs?: number, sessionId?: string): ToolEfficiencyAggregate[] {
+    const filters: string[] = [];
+    const params: Array<number | string> = [];
+    if (sinceMs !== undefined) { filters.push("called_at >= ?"); params.push(sinceMs); }
+    if (sessionId !== undefined) { filters.push("session_id = ?"); params.push(sessionId); }
+    const where = filters.length ? `WHERE ${filters.join(" AND ")}` : "";
     const stmt = this.db.prepare(
       `SELECT tool,
               COUNT(*) as calls,
@@ -998,12 +1065,16 @@ export class ContextPlusDB {
        GROUP BY tool
        ORDER BY calls DESC`,
     );
-    const rows = (sinceMs ? stmt.all(sinceMs) : stmt.all()) as ToolEfficiencyAggregate[];
+    const rows = stmt.all(...params) as ToolEfficiencyAggregate[];
     return rows.map((r) => ({ ...r, avgMs: Math.round(r.avgMs) }));
   }
 
-  getEfficiencyTotals(sinceMs?: number): Omit<ToolEfficiencyAggregate, "tool" | "avgMs" | "maxMs"> & { avgMs: number; maxMs: number } {
-    const where = sinceMs ? "WHERE called_at >= ?" : "";
+  getEfficiencyTotals(sinceMs?: number, sessionId?: string): Omit<ToolEfficiencyAggregate, "tool" | "avgMs" | "maxMs"> & { avgMs: number; maxMs: number } {
+    const filters: string[] = [];
+    const params: Array<number | string> = [];
+    if (sinceMs !== undefined) { filters.push("called_at >= ?"); params.push(sinceMs); }
+    if (sessionId !== undefined) { filters.push("session_id = ?"); params.push(sessionId); }
+    const where = filters.length ? `WHERE ${filters.join(" AND ")}` : "";
     const stmt = this.db.prepare(
       `SELECT COUNT(*) as calls,
               COALESCE(SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END), 0) as errors,
@@ -1017,7 +1088,7 @@ export class ContextPlusDB {
               COALESCE(SUM(represented_files), 0) as representedFiles
        FROM tool_calls ${where}`,
     );
-    const row = (sinceMs ? stmt.get(sinceMs) : stmt.get()) as Omit<ToolEfficiencyAggregate, "tool">;
+    const row = stmt.get(...params) as Omit<ToolEfficiencyAggregate, "tool">;
     return { ...row, avgMs: Math.round(row.avgMs) };
   }
 
@@ -1100,6 +1171,11 @@ export class ContextPlusDB {
     this.db.exec("VACUUM");
   }
 
+  /** Commit a synchronous group of related index writes, or roll them all back. */
+  transaction<T>(operation: () => T): T {
+    return this.db.transaction(operation)();
+  }
+
   /**
    * Flush the WAL into the main index.db so an on-disk copy of the file is fully
    * current. Used before seeding a worktree from this base index. TRUNCATE resets
@@ -1127,7 +1203,11 @@ export async function getDB(rootDir: string): Promise<ContextPlusDB> {
   const normalizedRoot = resolve(rootDir);
   const existing = dbInstances.get(normalizedRoot);
   if (existing) return existing;
+  await ensureNativeStorage();
   await ensureContextProDir(normalizedRoot);
+  // Another request may have opened this root while native repair was awaited.
+  const opened = dbInstances.get(normalizedRoot);
+  if (opened) return opened;
   const db = new ContextPlusDB(normalizedRoot);
   dbInstances.set(normalizedRoot, db);
   return db;

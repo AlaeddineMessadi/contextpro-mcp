@@ -1,0 +1,538 @@
+{
+  "schemaVersion": 1,
+  "corpusVersion": 1,
+  "generatedAt": "2026-09-07T17:07:29.057Z",
+  "runtime": "v26.0.0",
+  "methodology": {
+    "scope": "Deterministic retrieval quality on a small synthetic TS/Python/monorepo corpus, including stale-index recovery and a worktree seeded via the production helper.",
+    "baseline": "Two ordinary rg calls: literal case-insensitive path discovery in path order, then at most three matching snippets with two context lines per top-five file.",
+    "contextpro": "Production search, file mode, keyword_only, topK=5, JSON, crux excerpts. Structural index preparation is recorded separately; cold means empty retrieval caches, not a cold OS page cache.",
+    "graphExperiment": "Two optional task_pack variants with keyword_only, one ranked seed file, 2048 token response estimate budget, no tests/memory/diffs: graphHops=0 vs graphHops=2, at most four additional import neighbors. Measures bounded expansion benefit separately from default search.",
+    "tokens": "UTF-8 response bytes divided by 4, rounded up; approximate response-size proxy, not model tokenizer or billed usage.",
+    "precision": "Relevant results / 5; missing result slots count as nonrelevant.",
+    "excluded": [
+      "Tool schema/prompt input overhead",
+      "Agent reasoning and follow-up tool use",
+      "Real completed-task success",
+      "Live semantic-provider quality/cost",
+      "Full-process or OS-cache cold starts"
+    ],
+    "moneySavedUsd": null,
+    "agentTokensSaved": null
+  },
+  "summary": {
+    "tasks": 5,
+    "providerCalls": 0,
+    "baseline": {
+      "hitAt1": 1,
+      "reciprocalRank": 1,
+      "recallAt5": 1,
+      "precisionAt5": 0.44000000000000006,
+      "estimatedOutputTokens": 129.8,
+      "coldLatencyMs": 161.8221666,
+      "warmLatencyMs": 24.938550000000067
+    },
+    "packetDefault": {
+      "recallAt5": 0.6,
+      "precisionAt5": 0.2,
+      "estimatedOutputTokens": 622,
+      "coldLatencyMs": 110.72879160000002,
+      "warmLatencyMs": 31.36491680000008
+    },
+    "packetGraph": {
+      "recallAt5": 1,
+      "precisionAt5": 0.44000000000000006,
+      "estimatedOutputTokens": 704.8,
+      "coldLatencyMs": 86.9240252000001,
+      "warmLatencyMs": 21.222741800000016
+    },
+    "contextpro": {
+      "hitAt1": 1,
+      "reciprocalRank": 1,
+      "recallAt5": 1,
+      "precisionAt5": 0.44000000000000006,
+      "estimatedOutputTokens": 1004.8,
+      "coldLatencyMs": 18.098158000000012,
+      "warmLatencyMs": 8.364891800000056
+    }
+  },
+  "tasks": [
+    {
+      "project": "typescript",
+      "taskId": "locate-session-validation",
+      "task": "Locate session validation and its callers before changing expiry behavior.",
+      "query": "validateSession",
+      "expectedPaths": [
+        "src/auth/session.ts",
+        "src/auth/middleware.ts",
+        "test/session.test.ts"
+      ],
+      "indexPreparationMs": 230.94612499999997,
+      "baseline": {
+        "paths": [
+          "src/auth/middleware.ts",
+          "src/auth/session.ts",
+          "test/session.test.ts"
+        ],
+        "hitAt1": 1,
+        "reciprocalRank": 1,
+        "recallAt5": 1,
+        "precisionAt5": 0.6,
+        "outputBytes": 834,
+        "estimatedOutputTokens": 209,
+        "warmOutputBytes": 834,
+        "toolCalls": 2,
+        "coldLatencyMs": 84.9425,
+        "warmLatencyMs": 27.58125000000001
+      },
+      "packetDefault": {
+        "paths": [
+          "src/auth/session.ts"
+        ],
+        "hitAt1": 1,
+        "reciprocalRank": 1,
+        "recallAt5": 0.3333333333333333,
+        "precisionAt5": 0.2,
+        "outputBytes": 2481,
+        "estimatedOutputTokens": 621,
+        "warmOutputBytes": 2525,
+        "toolCalls": 1,
+        "coldLatencyMs": 117.68683299999998,
+        "warmLatencyMs": 56.871167000000014
+      },
+      "packetGraph": {
+        "paths": [
+          "src/auth/session.ts",
+          "src/auth/middleware.ts",
+          "test/session.test.ts"
+        ],
+        "hitAt1": 1,
+        "reciprocalRank": 1,
+        "recallAt5": 1,
+        "precisionAt5": 0.6,
+        "outputBytes": 2804,
+        "estimatedOutputTokens": 701,
+        "warmOutputBytes": 2848,
+        "toolCalls": 1,
+        "coldLatencyMs": 126.60516600000005,
+        "warmLatencyMs": 33.774,
+        "graphHops": 2,
+        "relatedFiles": 2
+      },
+      "contextpro": {
+        "paths": [
+          "src/auth/middleware.ts",
+          "test/session.test.ts",
+          "src/auth/session.ts",
+          "src/ui/session-label.ts"
+        ],
+        "hitAt1": 1,
+        "reciprocalRank": 1,
+        "recallAt5": 1,
+        "precisionAt5": 0.6,
+        "outputBytes": 4215,
+        "estimatedOutputTokens": 1054,
+        "warmOutputBytes": 4215,
+        "toolCalls": 1,
+        "coldLatencyMs": 15.09641600000009,
+        "warmLatencyMs": 8.10691600000007,
+        "providerCalls": 0,
+        "freshness": {
+          "staleCount": 0,
+          "refreshed": false,
+          "warning": null,
+          "indexGeneration": 1,
+          "indexedFiles": 5,
+          "lastIndexedAt": "2026-09-07T17:07:26.096Z",
+          "lastReindexAt": "2026-09-07T17:07:26.098Z",
+          "lastReindexDurationMs": 209,
+          "autoHubCount": 0,
+          "indexState": "fresh"
+        },
+        "concurrentQueries": 4,
+        "concurrentDurationMs": 19.140125000000012,
+        "concurrentQueriesPerSecond": 208.9850510380678
+      }
+    },
+    {
+      "project": "typescript",
+      "taskId": "recover-stale-index",
+      "task": "Locate the renamed session validator after an out-of-band source edit.",
+      "query": "validateAccessSession",
+      "expectedPaths": [
+        "src/auth/session.ts"
+      ],
+      "indexPreparationMs": 70.96516700000006,
+      "baseline": {
+        "paths": [
+          "src/auth/session.ts"
+        ],
+        "hitAt1": 1,
+        "reciprocalRank": 1,
+        "recallAt5": 1,
+        "precisionAt5": 0.2,
+        "outputBytes": 281,
+        "estimatedOutputTokens": 71,
+        "warmOutputBytes": 281,
+        "toolCalls": 2,
+        "coldLatencyMs": 57.496208000000024,
+        "warmLatencyMs": 14.905875000000037
+      },
+      "packetDefault": {
+        "paths": [
+          "src/auth/session.ts"
+        ],
+        "hitAt1": 1,
+        "reciprocalRank": 1,
+        "recallAt5": 1,
+        "precisionAt5": 0.2,
+        "outputBytes": 2504,
+        "estimatedOutputTokens": 626,
+        "warmOutputBytes": 2548,
+        "toolCalls": 1,
+        "coldLatencyMs": 49.937333999999964,
+        "warmLatencyMs": 12.922416999999996
+      },
+      "packetGraph": {
+        "paths": [
+          "src/auth/session.ts",
+          "src/auth/middleware.ts",
+          "test/session.test.ts"
+        ],
+        "hitAt1": 1,
+        "reciprocalRank": 1,
+        "recallAt5": 1,
+        "precisionAt5": 0.2,
+        "outputBytes": 2827,
+        "estimatedOutputTokens": 707,
+        "warmOutputBytes": 2871,
+        "toolCalls": 1,
+        "coldLatencyMs": 46.37633400000004,
+        "warmLatencyMs": 12.421542000000045,
+        "graphHops": 2,
+        "relatedFiles": 2
+      },
+      "contextpro": {
+        "paths": [
+          "src/auth/session.ts",
+          "src/auth/middleware.ts",
+          "test/session.test.ts",
+          "src/ui/session-label.ts"
+        ],
+        "hitAt1": 1,
+        "reciprocalRank": 1,
+        "recallAt5": 1,
+        "precisionAt5": 0.2,
+        "outputBytes": 4347,
+        "estimatedOutputTokens": 1087,
+        "warmOutputBytes": 4249,
+        "toolCalls": 1,
+        "coldLatencyMs": 8.72183300000006,
+        "warmLatencyMs": 4.2050839999999425,
+        "providerCalls": 0,
+        "freshness": {
+          "staleCount": 1,
+          "refreshed": true,
+          "warning": "Auto-refreshed 1 stale files.",
+          "indexGeneration": 2,
+          "indexedFiles": 5,
+          "lastIndexedAt": "2026-09-07T17:07:26.761Z",
+          "lastReindexAt": "2026-09-07T17:07:26.762Z",
+          "lastReindexDurationMs": 5,
+          "autoHubCount": 0,
+          "indexState": "refreshed"
+        },
+        "concurrentQueries": 4,
+        "concurrentDurationMs": 8.461166999999932,
+        "concurrentQueriesPerSecond": 472.74802636563396
+      }
+    },
+    {
+      "project": "python",
+      "taskId": "python-retry-dependencies",
+      "task": "Find the retry backoff implementation, dependent request code, and validation tests.",
+      "query": "retry_delay",
+      "expectedPaths": [
+        "app/retry.py",
+        "app/client.py",
+        "tests/test_retry.py"
+      ],
+      "indexPreparationMs": 46.69554199999993,
+      "baseline": {
+        "paths": [
+          "app/client.py",
+          "app/retry.py",
+          "tests/test_retry.py"
+        ],
+        "hitAt1": 1,
+        "reciprocalRank": 1,
+        "recallAt5": 1,
+        "precisionAt5": 0.6,
+        "outputBytes": 566,
+        "estimatedOutputTokens": 142,
+        "warmOutputBytes": 566,
+        "toolCalls": 2,
+        "coldLatencyMs": 45.365332999999964,
+        "warmLatencyMs": 28.99350000000004
+      },
+      "packetDefault": {
+        "paths": [
+          "app/retry.py"
+        ],
+        "hitAt1": 1,
+        "reciprocalRank": 1,
+        "recallAt5": 0.3333333333333333,
+        "precisionAt5": 0.2,
+        "outputBytes": 2442,
+        "estimatedOutputTokens": 611,
+        "warmOutputBytes": 2486,
+        "toolCalls": 1,
+        "coldLatencyMs": 84.50629100000015,
+        "warmLatencyMs": 15.157916999999998
+      },
+      "packetGraph": {
+        "paths": [
+          "app/retry.py",
+          "app/client.py",
+          "tests/test_retry.py"
+        ],
+        "hitAt1": 1,
+        "reciprocalRank": 1,
+        "recallAt5": 1,
+        "precisionAt5": 0.6,
+        "outputBytes": 2741,
+        "estimatedOutputTokens": 686,
+        "warmOutputBytes": 2785,
+        "toolCalls": 1,
+        "coldLatencyMs": 52.92104200000017,
+        "warmLatencyMs": 13.350374999999985,
+        "graphHops": 2,
+        "relatedFiles": 2
+      },
+      "contextpro": {
+        "paths": [
+          "app/client.py",
+          "tests/test_retry.py",
+          "app/retry.py"
+        ],
+        "hitAt1": 1,
+        "reciprocalRank": 1,
+        "recallAt5": 1,
+        "precisionAt5": 0.6,
+        "outputBytes": 3343,
+        "estimatedOutputTokens": 836,
+        "warmOutputBytes": 3343,
+        "toolCalls": 1,
+        "coldLatencyMs": 4.7940830000000005,
+        "warmLatencyMs": 4.487667000000101,
+        "providerCalls": 0,
+        "freshness": {
+          "staleCount": 0,
+          "refreshed": false,
+          "warning": null,
+          "indexGeneration": 1,
+          "indexedFiles": 4,
+          "lastIndexedAt": "2026-09-07T17:07:26.949Z",
+          "lastReindexAt": "2026-09-07T17:07:26.949Z",
+          "lastReindexDurationMs": 46,
+          "autoHubCount": 0,
+          "indexState": "fresh"
+        },
+        "concurrentQueries": 4,
+        "concurrentDurationMs": 7.1717499999999745,
+        "concurrentQueriesPerSecond": 557.7439258200599
+      }
+    },
+    {
+      "project": "monorepo",
+      "taskId": "monorepo-tax-change",
+      "task": "Find shared tax calculation, its checkout consumer, and tests before changing rounding.",
+      "query": "calculateTax",
+      "expectedPaths": [
+        "packages/billing/src/tax.ts",
+        "packages/billing/test/tax.test.ts",
+        "apps/store/src/checkout.ts"
+      ],
+      "indexPreparationMs": 28.08725000000004,
+      "baseline": {
+        "paths": [
+          "apps/store/src/checkout.ts",
+          "packages/billing/src/tax.ts",
+          "packages/billing/test/tax.test.ts"
+        ],
+        "hitAt1": 1,
+        "reciprocalRank": 1,
+        "recallAt5": 1,
+        "precisionAt5": 0.6,
+        "outputBytes": 681,
+        "estimatedOutputTokens": 171,
+        "warmOutputBytes": 681,
+        "toolCalls": 2,
+        "coldLatencyMs": 42.692124999999805,
+        "warmLatencyMs": 24.458499999999958
+      },
+      "packetDefault": {
+        "paths": [
+          "packages/billing/src/tax.ts"
+        ],
+        "hitAt1": 1,
+        "reciprocalRank": 1,
+        "recallAt5": 0.3333333333333333,
+        "precisionAt5": 0.2,
+        "outputBytes": 2466,
+        "estimatedOutputTokens": 617,
+        "warmOutputBytes": 2510,
+        "toolCalls": 1,
+        "coldLatencyMs": 150.01412500000015,
+        "warmLatencyMs": 43.78800000000001
+      },
+      "packetGraph": {
+        "paths": [
+          "packages/billing/src/tax.ts",
+          "apps/store/src/checkout.ts",
+          "packages/billing/test/tax.test.ts"
+        ],
+        "hitAt1": 1,
+        "reciprocalRank": 1,
+        "recallAt5": 1,
+        "precisionAt5": 0.6,
+        "outputBytes": 2822,
+        "estimatedOutputTokens": 706,
+        "warmOutputBytes": 2866,
+        "toolCalls": 1,
+        "coldLatencyMs": 113.46279200000004,
+        "warmLatencyMs": 25.983833000000004,
+        "graphHops": 2,
+        "relatedFiles": 2
+      },
+      "contextpro": {
+        "paths": [
+          "apps/store/src/checkout.ts",
+          "packages/billing/test/tax.test.ts",
+          "packages/billing/src/tax.ts",
+          "apps/admin/src/TaxPage.ts"
+        ],
+        "hitAt1": 1,
+        "reciprocalRank": 1,
+        "recallAt5": 1,
+        "precisionAt5": 0.6,
+        "outputBytes": 3999,
+        "estimatedOutputTokens": 1000,
+        "warmOutputBytes": 3999,
+        "toolCalls": 1,
+        "coldLatencyMs": 14.629083000000037,
+        "warmLatencyMs": 12.861582999999882,
+        "providerCalls": 0,
+        "freshness": {
+          "staleCount": 0,
+          "refreshed": false,
+          "warning": null,
+          "indexGeneration": 1,
+          "indexedFiles": 5,
+          "lastIndexedAt": "2026-09-07T17:07:27.241Z",
+          "lastReindexAt": "2026-09-07T17:07:27.242Z",
+          "lastReindexDurationMs": 28,
+          "autoHubCount": 0,
+          "indexState": "fresh"
+        },
+        "concurrentQueries": 4,
+        "concurrentDurationMs": 17.41187500000001,
+        "concurrentQueriesPerSecond": 229.72827452528793
+      }
+    },
+    {
+      "project": "monorepo",
+      "taskId": "worktree-local-implementation",
+      "task": "Find the new branch-specific calculator in a worktree seeded from the base index.",
+      "query": "calculateRegionalTax",
+      "expectedPaths": [
+        "packages/billing/src/tax.ts"
+      ],
+      "indexPreparationMs": 100.60049999999978,
+      "baseline": {
+        "paths": [
+          "packages/billing/src/tax.ts"
+        ],
+        "hitAt1": 1,
+        "reciprocalRank": 1,
+        "recallAt5": 1,
+        "precisionAt5": 0.2,
+        "outputBytes": 224,
+        "estimatedOutputTokens": 56,
+        "warmOutputBytes": 224,
+        "toolCalls": 2,
+        "coldLatencyMs": 578.6146670000003,
+        "warmLatencyMs": 28.753625000000284
+      },
+      "packetDefault": {
+        "paths": [
+          "packages/billing/src/tax.ts"
+        ],
+        "hitAt1": 1,
+        "reciprocalRank": 1,
+        "recallAt5": 1,
+        "precisionAt5": 0.2,
+        "outputBytes": 2539,
+        "estimatedOutputTokens": 635,
+        "warmOutputBytes": 2583,
+        "toolCalls": 1,
+        "coldLatencyMs": 151.49937499999987,
+        "warmLatencyMs": 28.085083000000395
+      },
+      "packetGraph": {
+        "paths": [
+          "packages/billing/src/tax.ts",
+          "apps/store/src/checkout.ts",
+          "packages/billing/test/tax.test.ts"
+        ],
+        "hitAt1": 1,
+        "reciprocalRank": 1,
+        "recallAt5": 1,
+        "precisionAt5": 0.2,
+        "outputBytes": 2895,
+        "estimatedOutputTokens": 724,
+        "warmOutputBytes": 2939,
+        "toolCalls": 1,
+        "coldLatencyMs": 95.25479200000018,
+        "warmLatencyMs": 20.58395900000005,
+        "graphHops": 2,
+        "relatedFiles": 2
+      },
+      "contextpro": {
+        "paths": [
+          "packages/billing/src/tax.ts",
+          "apps/store/src/checkout.ts",
+          "packages/billing/test/tax.test.ts",
+          "apps/admin/src/TaxPage.ts"
+        ],
+        "hitAt1": 1,
+        "reciprocalRank": 1,
+        "recallAt5": 1,
+        "precisionAt5": 0.2,
+        "outputBytes": 4185,
+        "estimatedOutputTokens": 1047,
+        "warmOutputBytes": 4087,
+        "toolCalls": 1,
+        "coldLatencyMs": 47.24937499999987,
+        "warmLatencyMs": 12.163209000000279,
+        "providerCalls": 0,
+        "freshness": {
+          "staleCount": 1,
+          "refreshed": true,
+          "warning": "Auto-refreshed 1 stale files.",
+          "indexGeneration": 2,
+          "indexedFiles": 5,
+          "lastIndexedAt": "2026-09-07T17:07:28.722Z",
+          "lastReindexAt": "2026-09-07T17:07:28.723Z",
+          "lastReindexDurationMs": 38,
+          "autoHubCount": 0,
+          "indexState": "refreshed"
+        },
+        "concurrentQueries": 4,
+        "concurrentDurationMs": 16.715458000000126,
+        "concurrentQueriesPerSecond": 239.29945562963155
+      }
+    }
+  ],
+  "externalAgentRuns": null
+}

@@ -1,14 +1,14 @@
 // Unified semantic search over files, identifiers, or both with metadata
 // FEATURE: Search — single entry point for structured and text discovery
 
-import { formatSemanticCodeSearchData, semanticCodeSearchResults, invalidateSearchCache, type SemanticSearchOptions, type SemanticCodeSearchData } from "./semantic-search.js";
+import { applySearchPreset, formatSemanticCodeSearchData, semanticCodeSearchResults, invalidateSearchCache, type SemanticSearchOptions, type SemanticCodeSearchData } from "./semantic-search.js";
 import { formatSemanticIdentifierSearchData, semanticIdentifierSearchResults, invalidateIdentifierSearchCache, type SemanticIdentifierSearchOptions, type SemanticIdentifierSearchData } from "./semantic-identifiers.js";
 import { quickRefresh } from "./reindex.js";
 import { loadProjectConfig } from "../core/project-config.js";
 import { persistArtifact, canonicalArtifactKey } from "../core/artifacts.js";
 import { buildFreshnessMetadata, buildTrustMetadata, getIndexState, type FreshnessMetadata, type TrustMetadata } from "../core/context-metadata.js";
 import { getDB } from "../core/db.js";
-import type { SearchResult } from "../core/embeddings.js";
+import { withQueryEmbeddingCache, matchesSearchConstraints, type SearchResult } from "../core/embeddings.js";
 
 export { invalidateSearchCache, invalidateIdentifierSearchCache };
 
@@ -32,6 +32,7 @@ export interface UnifiedSearchOptions {
   requireKeywordMatch?: boolean;
   requireSemanticMatch?: boolean;
   persistArtifact?: boolean;
+  expandCallers?: boolean;
   fusion?: "weighted" | "rrf";
   inlineCode?: "off" | "crux" | "full";
 }
@@ -243,8 +244,13 @@ async function applyExactSymbolFileBoosts(
   };
 }
 
-export async function unifiedSearchData(options: UnifiedSearchOptions): Promise<UnifiedSearchData> {
-  const refreshState = await quickRefresh(options.rootDir).catch(() => ({ staleCount: 0, refreshed: false, indexingTimedOut: false }));
+export function unifiedSearchData(options: UnifiedSearchOptions): Promise<UnifiedSearchData> {
+  return withQueryEmbeddingCache(() => unifiedSearchDataUncached(options));
+}
+
+async function unifiedSearchDataUncached(options: UnifiedSearchOptions): Promise<UnifiedSearchData> {
+  options = { ...options, ...applySearchPreset(options) };
+  const refreshState = await quickRefresh(options.rootDir, { includeEmbeddings: options.preset !== "keyword_only" }).catch(() => ({ staleCount: 0, refreshed: false, indexingTimedOut: false }));
   const { staleCount, refreshed } = refreshState;
   const mode = options.mode ?? "hybrid";
   let staleWarning: string | null = null;
@@ -282,6 +288,8 @@ export async function unifiedSearchData(options: UnifiedSearchOptions): Promise<
       rootDir: options.rootDir,
       query: options.query,
       topK: options.topK,
+      preset: options.preset,
+      expandCallers: options.expandCallers,
       topCallsPerIdentifier: options.topCallsPerIdentifier,
       includeKinds: options.includeKinds,
       semanticWeight: options.semanticWeight,
@@ -313,7 +321,9 @@ export async function unifiedSearchData(options: UnifiedSearchOptions): Promise<
         rootDir: options.rootDir,
         query: options.query,
         topK: options.topK,
-        topCallsPerIdentifier: options.topCallsPerIdentifier,
+        preset: options.preset,
+      expandCallers: options.expandCallers,
+      topCallsPerIdentifier: options.topCallsPerIdentifier,
         includeKinds: options.includeKinds,
         semanticWeight: options.semanticWeight,
         keywordWeight: options.keywordWeight,
@@ -325,7 +335,9 @@ export async function unifiedSearchData(options: UnifiedSearchOptions): Promise<
       }),
     ]);
   }
-  files = await applyExactSymbolFileBoosts(options.rootDir, options.query, files, options.topK);
+  files = await applyExactSymbolFileBoosts(options.rootDir, options.query, files, undefined);
+  if (files) files.results = files.results.filter((result) => matchesSearchConstraints(result, options)).slice(0, options.topK ?? 5);
+  if (identifiers) identifiers.results = identifiers.results.filter((result) => matchesSearchConstraints(result, options)).slice(0, options.topK ?? 5);
 
   const evidence = buildEvidence({ mode, files, identifiers, freshness });
   const ambiguities = buildAmbiguities({ files, identifiers });

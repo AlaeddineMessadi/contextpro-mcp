@@ -5,6 +5,7 @@ import { walkDirectory } from "../core/walker.js";
 import { analyzeContent, analyzeFile, flattenSymbols, isSupportedFile } from "../core/parser.js";
 import {
   fetchEmbedding,
+  matchesSearchConstraints,
   getEmbeddingBatchSize,
   deleteFileSearchEmbedding,
   SearchIndex,
@@ -41,6 +42,7 @@ export interface SemanticCodeSearchData {
 }
 
 let cachedIndex: SearchIndex | null = null;
+let cachedLexicalOnly = false;
 let cachedRootDir: string | null = null;
 let lastIndexTime = 0;
 
@@ -64,7 +66,7 @@ const MAX_TEXT_DOC_CHARS = 4000;
 const MAX_CODE_SEARCH_BODY_CHARS = 4000;
 const DEFAULT_MAX_EMBED_FILE_SIZE = 50 * 1024;
 
-function applySearchPreset(options: SemanticSearchOptions): SemanticSearchOptions {
+export function applySearchPreset(options: SemanticSearchOptions): SemanticSearchOptions {
   const preset = options.preset ?? "balanced";
   if (preset === "fast") {
     return {
@@ -98,8 +100,8 @@ function applySearchPreset(options: SemanticSearchOptions): SemanticSearchOption
     return {
       ...options,
       topK: options.topK ?? 5,
-      semanticWeight: options.semanticWeight ?? 0,
-      keywordWeight: options.keywordWeight ?? 1,
+      semanticWeight: 0,
+      keywordWeight: 1,
       requireKeywordMatch: options.requireKeywordMatch ?? true,
       fusion: options.fusion ?? "weighted",
     };
@@ -123,7 +125,10 @@ function toIntegerOr(value: string | undefined, fallback: number): number {
 }
 
 function getMaxEmbedFileSize(): number {
-  return Math.max(1024, toIntegerOr(process.env.CONTEXTPLUS_MAX_EMBED_FILE_SIZE, DEFAULT_MAX_EMBED_FILE_SIZE));
+  return Math.max(1024, toIntegerOr(
+    process.env.CONTEXTPRO_MAX_EMBED_FILE_SIZE ?? process.env.CONTEXTPLUS_MAX_EMBED_FILE_SIZE,
+    DEFAULT_MAX_EMBED_FILE_SIZE,
+  ));
 }
 
 function extractPlainTextHeader(content: string): string {
@@ -239,8 +244,8 @@ async function buildSearchDocumentsFromDB(rootDir: string): Promise<SearchDocume
   return Promise.all(files.map((file) => buildSearchDocumentFromIndexedFile(rootDir, file, db.getSymbolsByFile(file.id))));
 }
 
-async function buildIndex(rootDir: string): Promise<SearchIndex> {
-  if (cachedIndex && cachedRootDir === rootDir && Date.now() - lastIndexTime < INDEX_TTL_MS) {
+async function buildIndex(rootDir: string, skipEmbeddings = false): Promise<SearchIndex> {
+  if (cachedIndex && cachedRootDir === rootDir && cachedLexicalOnly === skipEmbeddings && Date.now() - lastIndexTime < INDEX_TTL_MS) {
     return cachedIndex;
   }
 
@@ -256,7 +261,8 @@ async function buildIndex(rootDir: string): Promise<SearchIndex> {
   }
 
   const index = new SearchIndex();
-  await index.index(docs, rootDir);
+  await index.index(docs, rootDir, skipEmbeddings);
+  cachedLexicalOnly = skipEmbeddings;
   cachedIndex = index;
   cachedRootDir = rootDir;
   lastIndexTime = Date.now();
@@ -438,7 +444,7 @@ async function addInlineCode(
 
 export async function semanticCodeSearchResults(options: SemanticSearchOptions): Promise<SemanticCodeSearchData> {
   const resolvedOptions = applySearchPreset(options);
-  const index = await buildIndex(options.rootDir);
+  const index = await buildIndex(options.rootDir, resolvedOptions.semanticWeight === 0);
   const searchOptions: SearchQueryOptions = {
     topK: resolvedOptions.topK,
     semanticWeight: resolvedOptions.semanticWeight,
@@ -452,7 +458,9 @@ export async function semanticCodeSearchResults(options: SemanticSearchOptions):
   };
   const rawResults = await index.search(options.query, searchOptions);
   const fusedResults = await fuseFtsMatches(options.rootDir, options.query, rawResults, Math.max((searchOptions.topK ?? 5) * 2, 10), resolvedOptions);
-  const rankedResults = rankSearchResults(options.query, fusedResults, searchOptions.topK);
+  const rankedResults = rankSearchResults(options.query, fusedResults, fusedResults.length)
+    .filter((result) => matchesSearchConstraints(result, resolvedOptions))
+    .slice(0, searchOptions.topK ?? 5);
   const results = await addInlineCode(options.rootDir, options.query, rankedResults, options.inlineCode ?? "off");
 
   return {

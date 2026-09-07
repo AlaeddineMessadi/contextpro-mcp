@@ -27,6 +27,11 @@ export interface CodeSymbol {
   endLine: number;
   signature: string;
   children: CodeSymbol[];
+  /** Exact UTF-16 offsets in the original source, when supplied by a structural parser. */
+  startIndex?: number;
+  endIndex?: number;
+  /** Multiple declared bindings share this span; destructive edits must refuse it. */
+  sharedDeclaration?: boolean;
 }
 
 export interface SymbolLocation {
@@ -524,6 +529,24 @@ export async function analyzeContent(filePath: string, raw: string): Promise<Fil
     }
   }
 
+  // Tree-sitter consumed normalized text; translate offsets back to the caller's original
+  // source so BOM, CRLF, and Unicode prefixes survive exact source mutations.
+  if (content !== raw) {
+    const offsets: number[] = [];
+    for (let i = raw.startsWith("﻿") ? 1 : 0; i < raw.length; i++) {
+      if (raw[i] === "\r" && raw[i + 1] === "\n") continue;
+      offsets.push(i);
+    }
+    offsets.push(raw.length);
+    const translate = (items: CodeSymbol[]): void => {
+      for (const item of items) {
+        if (item.startIndex !== undefined) item.startIndex = offsets[item.startIndex];
+        if (item.endIndex !== undefined) item.endIndex = offsets[item.endIndex];
+        translate(item.children);
+      }
+    };
+    translate(symbols);
+  }
   return {
     path: filePath,
     header: extractHeader(lines),

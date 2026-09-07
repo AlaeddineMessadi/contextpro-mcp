@@ -9,7 +9,7 @@ import { resolve, extname, dirname, relative } from "path";
 import { invalidateSearchCache, refreshFileSearchEmbeddings } from "./semantic-search.js";
 import { invalidateIdentifierSearchCache, refreshIdentifierEmbeddings } from "./semantic-identifiers.js";
 import { autoGenerateHubData } from "./feature-hub.js";
-import { toolUpsertMemoryNode } from "./memory-tools.js";
+import { refreshMemoryEmbeddings, toolUpsertMemoryNode } from "./memory-tools.js";
 import { resolveProjectPath } from "../core/path-guard.js";
 import { getEmbedProvider, getEmbedModel } from "../core/embeddings.js";
 import { getExtractorStamp } from "../core/extractor-stamp.js";
@@ -49,11 +49,6 @@ export interface ReindexResult {
 interface WaitForIndexingOptions {
   timeoutMs?: number;
   pollMs?: number;
-}
-
-interface PendingImportSet {
-  fileId: number;
-  imports: ReturnType<typeof extractImports>;
 }
 
 const INDEX_STATUS_KEY = "index_status";
@@ -207,6 +202,54 @@ function resolveImportPath(importSource: string, fromFile: string, allFiles: Set
   return firstExistingPath(candidates, allFiles, rootDir);
 }
 
+/** Called inside the source-file transaction: never publish a current content
+ * hash with missing or previous-version imports if a write fails. */
+function replaceFileImports(
+  db: ContextPlusDB, rootDir: string, fileId: number, path: string,
+  imports: ReturnType<typeof extractImports>, resolvablePaths: Set<string>,
+): void {
+  db.deleteImportsForFile(fileId);
+  for (const imp of imports) {
+    const targetPath = resolveImportPath(imp.source, path, resolvablePaths, rootDir, imp.specifiers);
+    const targetId = targetPath ? db.getFile(targetPath)?.id ?? null : null;
+    db.upsertImport(fileId, imp.source, targetId, imp.type, imp.specifiers.length ? imp.specifiers : undefined);
+  }
+}
+
+/** A failed multi-file finalization must be retried even when file hashes match. */
+function requireIndexRepair(db: ContextPlusDB): void {
+  db.setMeta("index_repair_required", "1");
+  db.bumpIndexGeneration();
+  invalidateSearchCache();
+  invalidateIdentifierSearchCache();
+}
+
+/** File additions/deletions can change edges of UNCHANGED importers, including
+ * resolved edges when extension/index precedence changes. Re-resolve stored
+ * import metadata only when the file set changes; no importer reads or parses. */
+function reconnectStoredImports(db: ContextPlusDB, rootDir: string): void {
+  const files = db.getAllFiles();
+  const filesById = new Map(files.map((file) => [file.id, file]));
+  const filesByPath = new Map(files.map((file) => [file.path, file]));
+  const paths = new Set(filesByPath.keys());
+  db.transaction(() => {
+  for (const imp of db.getAllImports()) {
+    const source = filesById.get(imp.source_file_id);
+    if (!source) continue;
+    let specifiers: string[] = [];
+    if (imp.symbols_imported) {
+      try {
+        const parsed: unknown = JSON.parse(imp.symbols_imported);
+        if (Array.isArray(parsed)) specifiers = parsed.filter((value): value is string => typeof value === "string");
+      } catch { /* Older indexes may contain malformed optional specifiers. */ }
+    }
+    const targetPath = resolveImportPath(imp.target_path, source.path, paths, rootDir, specifiers);
+    const targetId = targetPath ? filesByPath.get(targetPath)?.id ?? null : null;
+    if (targetId !== imp.target_file_id) db.updateImportTarget(imp.id, targetId);
+  }
+  });
+}
+
 function setIndexStatus(db: ContextPlusDB, status: string, input?: { targetPath?: string; error?: string | null }): void {
   if (status === INDEXING_STATUS) {
     db.setMetaBatch([
@@ -314,12 +357,13 @@ export async function reindex(options: ReindexOptions): Promise<string> {
     // Require force=true to delete previously indexed files in that case.
     const files = entries.filter((e) => !e.isDirectory);
     const sourceFiles = files.filter((file) => isSupportedFile(file.path));
-    const previouslyIndexed = db.getAllFiles().length;
+    const indexedPathsBefore = new Set(db.getAllFiles().map((file) => file.path));
+    const previouslyIndexed = indexedPathsBefore.size;
     const extractorStamp = getExtractorStamp();
     const extractorChanged = !options.targetPath
       && previouslyIndexed > 0
       && db.getMeta("extractor_stamp") !== extractorStamp;
-    const force = options.force === true || extractorChanged;
+    const force = options.force === true || extractorChanged || db.getMeta("index_repair_required") === "1";
     if (!options.targetPath && sourceFiles.length === 0 && previouslyIndexed > 0 && !options.force) {
       setIndexStatus(db, IDLE_STATUS, { targetPath: options.targetPath, error: null });
       return (
@@ -333,15 +377,16 @@ export async function reindex(options: ReindexOptions): Promise<string> {
     let totalSymbols = 0;
     let totalImports = 0;
     let indexed = 0;
+    let degradedCount = 0;
     let skipped = files.length - sourceFiles.length;
-    const pendingImports: PendingImportSet[] = [];
+    const resolvablePaths = new Set([...indexedPathsBefore, ...currentPaths]);
 
     for (const file of sourceFiles) {
       try {
         // Hard size cap to defend against checked-in minified bundles and other megabyte-scale
         // pseudo-source files. Default 5MB; env-var override for projects that genuinely need
         // a higher cap.
-        const sizeCapEnv = parseInt(process.env.CONTEXTPRO_MAX_FILE_SIZE ?? "", 10);
+        const sizeCapEnv = parseInt(process.env.CONTEXTPRO_MAX_FILE_SIZE ?? process.env.CONTEXTPLUS_MAX_FILE_SIZE ?? "", 10);
         const sizeCap = Number.isFinite(sizeCapEnv) && sizeCapEnv > 0 ? sizeCapEnv : 5 * 1024 * 1024;
         const fileStats = await stat(file.path).catch(() => null);
         if (fileStats && fileStats.size > sizeCap) {
@@ -373,10 +418,7 @@ export async function reindex(options: ReindexOptions): Promise<string> {
 
         const existing = db.getFile(file.relativePath);
         if (existing && existing.content_hash === hash && !force) {
-          pendingImports.push({
-            fileId: existing.id,
-            imports: extractImports(content, file.path),
-          });
+          totalImports += db.getImportsFrom(existing.id).length;
           skipped++;
           continue;
         }
@@ -387,54 +429,47 @@ export async function reindex(options: ReindexOptions): Promise<string> {
         const fileSize = fileStats?.size ?? buf.length;
         const fileMtimeMs = fileStats ? Math.trunc(fileStats.mtimeMs) : 0;
 
-        const fileId = db.upsertFile(file.relativePath, hash, analysis.header, lang, fileSize, fileMtimeMs);
-        db.upsertSymbols(fileId, flatSymbols.map((s) => ({
-          name: s.name,
-          kind: s.kind,
-          lineStart: s.line,
-          lineEnd: s.endLine,
-          signature: s.signature,
-          parentIndex: s.parentIndex,
-        })));
-        db.upsertFileSearchDocument({
-          path: file.relativePath,
-          header: analysis.header,
-          language: lang,
-          symbols: flatSymbols.map((s) => ({ name: s.name, kind: s.kind, signature: s.signature })),
-          content: buildSearchBody(content),
-        });
+        const imports = extractImports(content, file.path);
+        const callSites = extractCallSites(content, file.relativePath);
+        const fileId = db.transaction(() => {
+          const fileId = db.upsertFile(file.relativePath, hash, analysis.header, lang, fileSize, fileMtimeMs);
+          db.upsertSymbols(fileId, flatSymbols.map((s) => ({
+            name: s.name,
+            kind: s.kind,
+            lineStart: s.line,
+            lineEnd: s.endLine,
+            signature: s.signature,
+            parentIndex: s.parentIndex,
+          })));
+          db.upsertFileSearchDocument({
+            path: file.relativePath,
+            header: analysis.header,
+            language: lang,
+            symbols: flatSymbols.map((s) => ({ name: s.name, kind: s.kind, signature: s.signature })),
+            content: buildSearchBody(content),
+          });
 
-        pendingImports.push({
-          fileId,
-          imports: extractImports(content, file.path),
+          replaceFileImports(db, options.rootDir, fileId, file.relativePath, imports, resolvablePaths);
+          db.upsertCallSites(fileId, callSites);
+          return fileId;
         });
-
-        db.upsertCallSites(fileId, extractCallSites(content, file.relativePath));
+        totalImports += imports.length;
 
         totalSymbols += flatSymbols.length;
         indexed++;
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         process.stderr.write(`[contextpro/reindex] degraded: failed to process ${file.relativePath}: ${message}\n`);
+        degradedCount++;
         skipped++;
-      }
-    }
-
-    const resolvablePaths = new Set([...db.getAllFiles().map((file) => file.path), ...currentPaths]);
-    for (const pending of pendingImports) {
-      const sourceFile = db.getFileById(pending.fileId);
-      if (!sourceFile) continue;
-      db.deleteImportsForFile(pending.fileId);
-      for (const imp of pending.imports) {
-        const targetRel = resolveImportPath(imp.source, sourceFile.path, resolvablePaths, options.rootDir, imp.specifiers);
-        const targetFile = targetRel ? db.getFile(targetRel) : null;
-        db.upsertImport(pending.fileId, imp.source, targetFile?.id ?? null, imp.type, imp.specifiers.length > 0 ? imp.specifiers : undefined);
-        totalImports++;
       }
     }
 
     const removed = options.targetPath ? [] : db.getRemovedFiles(currentPaths);
     for (const path of removed) db.deleteFile(path);
+    if (removed.length > 0 || db.getAllFiles().some((file) => !indexedPathsBefore.has(file.path))) {
+      reconnectStoredImports(db, options.rootDir);
+    }
 
     let autoHubCount = 0;
     // Auto-hub generation makes a chat-model call per hub — off by default so reindex
@@ -448,9 +483,15 @@ export async function reindex(options: ReindexOptions): Promise<string> {
     const noEmbed = options.noEmbed === true || isReindexEmbedDisabled();
     let fileEmbedCount = 0;
     let identifierEmbedCount = 0;
+    let memoryEmbedCount = 0;
     let embedError: string | null = null;
 
-    if (!noEmbed && indexedRelativePaths.length > 0) {
+    // Validate the vector space before refreshers compare content hashes. Recording
+    // this afterward can reuse vectors from a previous same-dimension model and then
+    // incorrectly clear the stale flag without embedding anything.
+    db.recordEmbeddingProvider(getEmbedProvider(), getEmbedModel());
+
+    if (!noEmbed) {
       try {
         const [files, identifiers] = await Promise.all([
           refreshFileSearchEmbeddings({ rootDir: options.rootDir, relativePaths: indexedRelativePaths }),
@@ -458,24 +499,28 @@ export async function reindex(options: ReindexOptions): Promise<string> {
         ]);
         fileEmbedCount = files;
         identifierEmbedCount = identifiers;
+        memoryEmbedCount = await refreshMemoryEmbeddings(options.rootDir);
       } catch (error) {
         embedError = error instanceof Error ? error.message : String(error);
+        db.setMeta("embeddings_stale", "true");
+        db.setMeta("embeddings_stale_reason", embedError);
         process.stderr.write(`[contextpro/reindex] degraded: embedding population failed (${embedError}); index is structural-only until next reindex\n`);
       }
     }
 
     const duration = Date.now() - start;
     const structuralChanged = force || indexed > 0 || removed.length > 0;
-    if (structuralChanged) db.bumpIndexGeneration();
+    if (degradedCount > 0) requireIndexRepair(db);
+    else if (structuralChanged) db.bumpIndexGeneration();
     db.setMeta("last_reindex_at", String(Date.now()));
     db.setMeta("last_reindex_duration_ms", String(duration));
     db.setMeta("last_auto_hub_count", String(autoHubCount));
     db.setMeta("last_embed_files_populated", String(fileEmbedCount));
     db.setMeta("last_embed_identifiers_populated", String(identifierEmbedCount));
+    db.setMeta("last_embed_memories_populated", String(memoryEmbedCount));
     db.setMeta("last_embed_skipped", noEmbed ? "true" : "false");
     db.setMeta("last_embed_error", embedError ?? "");
-    db.recordEmbeddingProvider(getEmbedProvider(), getEmbedModel());
-    if (!embedError && !noEmbed) db.clearEmbeddingsStaleFlag();
+    if (!embedError && !noEmbed && !options.targetPath) db.clearEmbeddingsStaleFlag();
     setIndexStatus(db, IDLE_STATUS, { targetPath: options.targetPath, error: null });
 
     invalidateSearchCache();
@@ -483,12 +528,14 @@ export async function reindex(options: ReindexOptions): Promise<string> {
 
     if (!options.targetPath) {
       db.setMeta("extractor_stamp", extractorStamp);
-      toolUpsertMemoryNode({
+      if (degradedCount === 0) db.setMeta("index_repair_required", "");
+      await toolUpsertMemoryNode({
         rootDir: options.rootDir,
         type: "note",
         label: "index-snapshot",
         content: `Reindex completed at ${new Date().toISOString()}. Files: ${files.length} total, ${indexed} indexed, ${skipped} skipped. Symbols: ${totalSymbols}. Imports: ${totalImports}. Duration: ${duration}ms.`,
         scope: "project",
+        skipEmbedding: noEmbed,
       }).catch(() => undefined);
     }
 
@@ -504,16 +551,18 @@ export async function reindex(options: ReindexOptions): Promise<string> {
     } else if (embedError) {
       lines.push(`  Embeddings: failed (${embedError.slice(0, 120)}); search will fall back to keyword ranking`);
     } else {
-      lines.push(`  Embeddings: ${fileEmbedCount} files, ${identifierEmbedCount} identifiers`);
+      lines.push(`  Embeddings: ${fileEmbedCount} files, ${identifierEmbedCount} identifiers, ${memoryEmbedCount} memories`);
     }
     if (force) lines.push(extractorChanged
       ? "  Mode: force (extractor changed; all files re-processed)"
       : "  Mode: force (all files re-processed)");
-    if (!structuralChanged) lines.push("  Index generation: unchanged (no structural changes)");
+    if (degradedCount > 0) lines.push(`  Index repair required: ${degradedCount} files failed to process`);
+    else if (!structuralChanged) lines.push("  Index generation: unchanged (no structural changes)");
     if (options.targetPath) lines.push(`  Scope: ${options.targetPath}`);
 
     return lines.join("\n");
   } catch (error) {
+    requireIndexRepair(db);
     setIndexStatus(db, IDLE_STATUS, {
       targetPath: options.targetPath,
       error: error instanceof Error ? error.message : String(error),
@@ -558,14 +607,15 @@ async function quickRefreshAttempt(rootDir: string, options: QuickRefreshOptions
   const db = await getDB(rootDir);
   const indexedBefore = db.getAllFiles();
   const extractorStamp = getExtractorStamp();
-  if (indexedBefore.length > 0 && db.getMeta("extractor_stamp") !== extractorStamp) {
+  if (db.getMeta("index_repair_required") === "1"
+    || (indexedBefore.length > 0 && db.getMeta("extractor_stamp") !== extractorStamp)) {
     const generationBefore = db.getIndexGeneration();
     await reindex({ rootDir, force: true, noEmbed: true, autoHubs: false });
     return {
       staleCount: indexedBefore.length,
-      remainingStaleCount: db.getMeta("extractor_stamp") === extractorStamp ? 0 : indexedBefore.length,
+      remainingStaleCount: db.getMeta("extractor_stamp") === extractorStamp && db.getMeta("index_repair_required") !== "1" ? 0 : Math.max(1, indexedBefore.length),
       refreshed: db.getIndexGeneration() > generationBefore,
-      complete: db.getMeta("extractor_stamp") === extractorStamp,
+      complete: db.getMeta("extractor_stamp") === extractorStamp && db.getMeta("index_repair_required") !== "1",
       fullReindex: true,
       waitedForIndexing: waitState.waited,
       indexingTimedOut: false,
@@ -643,7 +693,7 @@ async function quickRefreshAttempt(rootDir: string, options: QuickRefreshOptions
     const maxStale = Math.max(1, parseInt(process.env.CONTEXTPRO_QUICKREFRESH_MAX_FILES ?? process.env.CONTEXTPLUS_QUICKREFRESH_MAX_FILES ?? "30", 10));
     if (totalStale <= maxStale) {
       const changedSymbols: string[] = [];
-      const pendingImports: PendingImportSet[] = [];
+      const resolvablePaths = new Set([...indexedPathsAfterLock, ...currentPaths]);
       const indexedPaths: string[] = [];
       let degradedCount = 0;
       for (const path of changedAfterLock) {
@@ -661,29 +711,30 @@ async function quickRefreshAttempt(rootDir: string, options: QuickRefreshOptions
         const existingFile = db.getFile(path);
         const oldSymbolNames = existingFile ? new Set(db.getSymbolsByFile(existingFile.id).map((s) => s.name)) : new Set<string>();
         const newSymbolNames = new Set(flatSymbols.map((s) => s.name));
+        const imports = extractImports(content, fullPath);
+        const callSites = extractCallSites(content, path);
+        const fileId = db.transaction(() => {
+          const fileId = db.upsertFile(path, hash, analysis.header, lang, fileSize, fileMtimeMs);
+          db.upsertSymbols(fileId, flatSymbols.map((s) => ({
+            name: s.name, kind: s.kind, lineStart: s.line, lineEnd: s.endLine, signature: s.signature, parentIndex: s.parentIndex,
+          })));
+          db.upsertFileSearchDocument({
+            path,
+            header: analysis.header,
+            language: lang,
+            symbols: flatSymbols.map((s) => ({ name: s.name, kind: s.kind, signature: s.signature })),
+            content: buildSearchBody(content),
+          });
+          replaceFileImports(db, rootDir, fileId, path, imports, resolvablePaths);
+          db.upsertCallSites(fileId, callSites);
+          return fileId;
+        });
         for (const name of newSymbolNames) {
           if (!oldSymbolNames.has(name)) changedSymbols.push(`+${path}:${name}`);
         }
         for (const name of oldSymbolNames) {
           if (!newSymbolNames.has(name)) changedSymbols.push(`-${path}:${name}`);
         }
-
-        const fileId = db.upsertFile(path, hash, analysis.header, lang, fileSize, fileMtimeMs);
-        db.upsertSymbols(fileId, flatSymbols.map((s) => ({
-          name: s.name, kind: s.kind, lineStart: s.line, lineEnd: s.endLine, signature: s.signature, parentIndex: s.parentIndex,
-        })));
-        db.upsertFileSearchDocument({
-          path,
-          header: analysis.header,
-          language: lang,
-          symbols: flatSymbols.map((s) => ({ name: s.name, kind: s.kind, signature: s.signature })),
-          content: buildSearchBody(content),
-        });
-        pendingImports.push({
-          fileId,
-          imports: extractImports(content, fullPath),
-        });
-        db.upsertCallSites(fileId, extractCallSites(content, path));
         indexedPaths.push(path);
       } catch (error) {
         // A failed quick-refresh of one file leaves its prior (stale) imports intact. Log it so
@@ -696,25 +747,22 @@ async function quickRefreshAttempt(rootDir: string, options: QuickRefreshOptions
     if (degradedCount > 0) {
       process.stderr.write(`[contextpro/quickrefresh] ${degradedCount} file(s) failed quick refresh; run reindex --force for a clean rebuild\n`);
     }
-    const resolvablePaths = new Set([...db.getAllFiles().map((file) => file.path), ...currentPaths]);
-    for (const pending of pendingImports) {
-      const sourceFile = db.getFileById(pending.fileId);
-      if (!sourceFile) continue;
-      db.deleteImportsForFile(pending.fileId);
-      for (const imp of pending.imports) {
-        const targetRel = resolveImportPath(imp.source, sourceFile.path, resolvablePaths, rootDir, imp.specifiers);
-        const targetFile = targetRel ? db.getFile(targetRel) : null;
-        db.upsertImport(pending.fileId, imp.source, targetFile?.id ?? null, imp.type, imp.specifiers.length > 0 ? imp.specifiers : undefined);
-      }
-    }
     for (const path of removedAfterLock) db.deleteFile(path);
+    if (removedAfterLock.length > 0 || indexedPaths.some((path) => !indexedPathsAfterLock.has(path))) {
+      reconnectStoredImports(db, rootDir);
+    }
     const structuralChanged = indexedPaths.length > 0 || removedAfterLock.length > 0;
-    if (structuralChanged) db.bumpIndexGeneration();
+    if (structuralChanged) {
+      db.bumpIndexGeneration();
+      invalidateSearchCache();
+      invalidateIdentifierSearchCache();
+    }
     db.setMeta("extractor_stamp", extractorStamp);
     db.setMeta("last_reindex_at", String(Date.now()));
     db.setMeta("last_reindex_duration_ms", String(Date.now() - startedAt));
 
     if (options.includeEmbeddings !== false) {
+      db.recordEmbeddingProvider(getEmbedProvider(), getEmbedModel());
       // Deleted paths cannot be reread structurally, but embedding refreshers use
       // them to purge their persistent vectors and invalidate cached indexes.
       const embeddingRefreshPaths = [...new Set([...changedAfterLock, ...removedAfterLock])];
@@ -738,6 +786,7 @@ async function quickRefreshAttempt(rootDir: string, options: QuickRefreshOptions
   return { staleCount: totalStale, remainingStaleCount: totalStale, refreshed: false, complete: false, waitedForIndexing: waitState.waited, indexingTimedOut: false };
   } catch (error) {
     refreshError = error instanceof Error ? error.message : String(error);
+    requireIndexRepair(db);
     throw error;
   } finally {
     setIndexStatus(db, IDLE_STATUS, { error: refreshError });
@@ -749,6 +798,8 @@ export interface StructuralRefreshResult {
   indexed: number;
   /** Files skipped because they are unsupported, missing, or unreadable. */
   skipped: number;
+  /** Indexed files confirmed absent under the writer lock and removed. */
+  removed?: number;
   /** `+path:name` / `-path:name` markers for symbols added/removed this pass. */
   changedSymbols: string[];
 }
@@ -765,10 +816,12 @@ export interface StructuralRefreshResult {
 export async function refreshFilesStructural(
   rootDir: string,
   relativePaths: string[],
+  options: { removedPaths?: string[]; includeEmbeddings?: boolean } = {},
 ): Promise<StructuralRefreshResult> {
   const unique = [...new Set(relativePaths.map((p) => p.replace(/\\/g, "/")))].filter((p) => p.length > 0);
   const targets = unique.filter((p) => isSupportedFile(p));
-  if (targets.length === 0) {
+  const removalCandidates = [...new Set(options.removedPaths ?? [])].filter(isSupportedFile);
+  if (targets.length === 0 && removalCandidates.length === 0) {
     return { indexed: 0, skipped: unique.length, changedSymbols: [] };
   }
 
@@ -786,9 +839,29 @@ export async function refreshFilesStructural(
   let refreshError: string | null = null;
   try {
   const changedSymbols: string[] = [];
-  const pendingImports: PendingImportSet[] = [];
   const indexedPaths: string[] = [];
+  const indexedPathsBefore = new Set(db.getAllFiles().map((file) => file.path));
+  const resolvablePaths = new Set([...indexedPathsBefore, ...targets]);
+  const removedPaths: string[] = [];
   let skipped = unique.length - targets.length;
+
+  for (const path of removalCandidates) {
+    const fullPath = resolveProjectPath(rootDir, path, "removed indexed file");
+    try {
+      await stat(fullPath);
+      // It was recreated while this refresh waited. Leave it for the next sweep.
+      continue;
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code !== "ENOENT" && code !== "ENOTDIR") continue;
+    }
+    const file = db.getFile(path);
+    if (!file) continue;
+    for (const symbol of db.getSymbolsByFile(file.id)) changedSymbols.push(`-${path}:${symbol.name}`);
+    db.deleteFile(path);
+    removedPaths.push(path);
+    resolvablePaths.delete(path);
+  }
 
   let processed = 0;
   for (const path of targets) {
@@ -810,26 +883,30 @@ export async function refreshFilesStructural(
       const existingFile = db.getFile(path);
       const oldSymbolNames = existingFile ? new Set(db.getSymbolsByFile(existingFile.id).map((s) => s.name)) : new Set<string>();
       const newSymbolNames = new Set(flatSymbols.map((s) => s.name));
+      const imports = extractImports(content, fullPath);
+      const callSites = extractCallSites(content, path);
+      const fileId = db.transaction(() => {
+        const fileId = db.upsertFile(path, hash, analysis.header, lang, fileSize, fileMtimeMs);
+        db.upsertSymbols(fileId, flatSymbols.map((s) => ({
+          name: s.name, kind: s.kind, lineStart: s.line, lineEnd: s.endLine, signature: s.signature, parentIndex: s.parentIndex,
+        })));
+        db.upsertFileSearchDocument({
+          path,
+          header: analysis.header,
+          language: lang,
+          symbols: flatSymbols.map((s) => ({ name: s.name, kind: s.kind, signature: s.signature })),
+          content: buildSearchBody(content),
+        });
+        replaceFileImports(db, rootDir, fileId, path, imports, resolvablePaths);
+        db.upsertCallSites(fileId, callSites);
+        return fileId;
+      });
       for (const name of newSymbolNames) {
         if (!oldSymbolNames.has(name)) changedSymbols.push(`+${path}:${name}`);
       }
       for (const name of oldSymbolNames) {
         if (!newSymbolNames.has(name)) changedSymbols.push(`-${path}:${name}`);
       }
-
-      const fileId = db.upsertFile(path, hash, analysis.header, lang, fileSize, fileMtimeMs);
-      db.upsertSymbols(fileId, flatSymbols.map((s) => ({
-        name: s.name, kind: s.kind, lineStart: s.line, lineEnd: s.endLine, signature: s.signature, parentIndex: s.parentIndex,
-      })));
-      db.upsertFileSearchDocument({
-        path,
-        header: analysis.header,
-        language: lang,
-        symbols: flatSymbols.map((s) => ({ name: s.name, kind: s.kind, signature: s.signature })),
-        content: buildSearchBody(content),
-      });
-      pendingImports.push({ fileId, imports: extractImports(content, fullPath) });
-      db.upsertCallSites(fileId, extractCallSites(content, path));
       indexedPaths.push(path);
     } catch (error) {
       skipped++;
@@ -838,33 +915,29 @@ export async function refreshFilesStructural(
     }
   }
 
-  // Rebuild import edges for the files we touched against the current file set.
-  const resolvablePaths = new Set(db.getAllFiles().map((file) => file.path));
-  for (const pending of pendingImports) {
-    const sourceFile = db.getFileById(pending.fileId);
-    if (!sourceFile) continue;
-    db.deleteImportsForFile(pending.fileId);
-    for (const imp of pending.imports) {
-      const targetRel = resolveImportPath(imp.source, sourceFile.path, resolvablePaths, rootDir, imp.specifiers);
-      const targetFile = targetRel ? db.getFile(targetRel) : null;
-      db.upsertImport(pending.fileId, imp.source, targetFile?.id ?? null, imp.type, imp.specifiers.length > 0 ? imp.specifiers : undefined);
-    }
+  if (removedPaths.length > 0 || indexedPaths.some((path) => !indexedPathsBefore.has(path))) {
+    reconnectStoredImports(db, rootDir);
   }
 
-  if (indexedPaths.length > 0) {
+  if (indexedPaths.length > 0 || removedPaths.length > 0) {
     db.bumpIndexGeneration();
     db.setMeta("last_reindex_at", String(Date.now()));
     invalidateSearchCache();
     invalidateIdentifierSearchCache();
-    await Promise.all([
-      refreshFileSearchEmbeddings({ rootDir, relativePaths: indexedPaths }).catch(() => 0),
-      refreshIdentifierEmbeddings({ rootDir, relativePaths: indexedPaths }).catch(() => 0),
-    ]);
+    if (options.includeEmbeddings !== false && !isReindexEmbedDisabled()) {
+      db.recordEmbeddingProvider(getEmbedProvider(), getEmbedModel());
+      const embeddingPaths = [...indexedPaths, ...removedPaths];
+      await Promise.all([
+        refreshFileSearchEmbeddings({ rootDir, relativePaths: embeddingPaths }).catch(() => 0),
+        refreshIdentifierEmbeddings({ rootDir, relativePaths: embeddingPaths }).catch(() => 0),
+      ]);
+    }
   }
 
-  return { indexed: indexedPaths.length, skipped, changedSymbols };
+  return { indexed: indexedPaths.length, skipped, removed: removedPaths.length, changedSymbols };
   } catch (error) {
     refreshError = error instanceof Error ? error.message : String(error);
+    requireIndexRepair(db);
     throw error;
   } finally {
     setIndexStatus(db, IDLE_STATUS, { error: refreshError });

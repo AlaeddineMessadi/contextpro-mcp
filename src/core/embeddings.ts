@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 // Multi-provider vector embedding engine with cosine similarity search
 // Supports Ollama (local) and OpenAI-compatible APIs (Gemini, OpenAI, etc.)
 // Indexes file headers and symbols, caches embeddings to disk for speed
@@ -103,9 +104,10 @@ const OPENAI_EMBED_MODEL = getEmbedModelName("openai");
 const OPENAI_API_KEY = getApiKey();
 const OPENAI_BASE_URL = getBaseUrl();
 const CACHE_DIR = ".contextpro";
-const MIN_EMBED_BATCH_SIZE = 5;
-const MAX_EMBED_BATCH_SIZE = 10;
-const DEFAULT_EMBED_BATCH_SIZE = 8;
+const MIN_EMBED_BATCH_SIZE = 1;
+const MAX_EMBED_BATCH_SIZE = 128;
+const DEFAULT_OLLAMA_EMBED_BATCH_SIZE = 32;
+const DEFAULT_REMOTE_EMBED_BATCH_SIZE = 8;
 const MIN_EMBED_INPUT_CHARS = 1;
 const SINGLE_INPUT_SHRINK_FACTOR = 0.75;
 const MAX_SINGLE_INPUT_RETRIES = 40;
@@ -201,7 +203,13 @@ function getEmbedRuntimeOptions(): EmbedRuntimeOptions | undefined {
 }
 
 export function getEmbeddingBatchSize(): number {
-  const requested = toIntegerOr(process.env.CONTEXTPRO_EMBED_BATCH_SIZE ?? process.env.CONTEXTPLUS_EMBED_BATCH_SIZE, DEFAULT_EMBED_BATCH_SIZE);
+  const defaultSize = EMBED_PROVIDER === "ollama"
+    ? DEFAULT_OLLAMA_EMBED_BATCH_SIZE
+    : DEFAULT_REMOTE_EMBED_BATCH_SIZE;
+  const requested = toIntegerOr(
+    process.env.CONTEXTPRO_EMBED_BATCH_SIZE ?? process.env.CONTEXTPLUS_EMBED_BATCH_SIZE,
+    defaultSize,
+  );
   return Math.min(MAX_EMBED_BATCH_SIZE, Math.max(MIN_EMBED_BATCH_SIZE, requested));
 }
 
@@ -569,11 +577,37 @@ function getMatchedSymbolEntries(symbols: SymbolSearchEntry[], queryTerms: Set<s
   return symbols.filter((symbol) => splitCamelCase(symbol.name).some((term) => queryTerms.has(term)));
 }
 
+// Query vectors are shared only inside one retrieval request, never across projects or turns.
+const queryEmbeddings = new AsyncLocalStorage<Map<string, Promise<number[]>>>();
+export function withQueryEmbeddingCache<T>(fn: () => Promise<T>): Promise<T> {
+  return queryEmbeddings.getStore() ? fn() : queryEmbeddings.run(new Map(), fn);
+}
+export function fetchQueryEmbedding(query: string): Promise<number[]> {
+  const cache = queryEmbeddings.getStore();
+  let pending = cache?.get(query);
+  if (!pending) {
+    pending = fetchEmbedding(query).then(([vector]) => vector ?? []);
+    cache?.set(query, pending);
+  }
+  return pending;
+}
+
+/** Hard constraints use the same public 0..100 scores returned to the caller. */
+export function matchesSearchConstraints(result: Pick<SearchResult, "semanticScore" | "keywordScore" | "score">, options: SearchQueryOptions): boolean {
+  const percent = (value: number | undefined) => value === undefined ? 0 : value > 1 ? value : value * 100;
+  return (!options.requireSemanticMatch || result.semanticScore > 0)
+    && (!options.requireKeywordMatch || result.keywordScore > 0)
+    && result.semanticScore >= percent(options.minSemanticScore)
+    && result.keywordScore >= percent(options.minKeywordScore)
+    && result.score >= percent(options.minCombinedScore);
+}
+
 export class SearchIndex {
   private documents: SearchDocument[] = [];
   private vectors: number[][] = [];
-  async index(docs: SearchDocument[], rootDir: string): Promise<void> {
+  async index(docs: SearchDocument[], rootDir: string, skipEmbeddings = false): Promise<void> {
     this.documents = docs;
+    if (skipEmbeddings) { this.vectors = new Array(docs.length); return; }
     const cache = await loadCache(rootDir);
     const uncached: { idx: number; text: string; hash: string }[] = [];
     const dirtyKeys = new Set<string>();
@@ -640,7 +674,7 @@ export class SearchIndex {
     const options = resolveSearchOptions(optionsOrTopK);
     let queryVec: number[];
     try {
-      [queryVec] = await fetchEmbedding(query);
+      queryVec = options.semanticWeight === 0 ? [] : await fetchQueryEmbedding(query);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       process.stderr.write(`[contextpro/embeddings] degraded: query embed failed (${message}); using keyword-only ranking\n`);
@@ -656,9 +690,8 @@ export class SearchIndex {
     }[] = [];
 
     for (let i = 0; i < this.vectors.length; i++) {
-      if (!this.vectors[i]) continue;
       const doc = this.documents[i];
-      const semanticScore = cosine(queryVec, this.vectors[i]);
+      const semanticScore = queryVec.length > 0 && this.vectors[i] ? cosine(queryVec, this.vectors[i]) : 0;
       const matchedEntries = doc.symbolEntries ? getMatchedSymbolEntries(doc.symbolEntries, queryTerms) : [];
       const matchedSymbols = matchedEntries.length > 0
         ? matchedEntries.map((entry) => entry.name)
