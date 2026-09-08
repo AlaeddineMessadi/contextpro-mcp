@@ -4,6 +4,9 @@ All notable changes to this project are recorded here. The project follows [Sema
 
 ## [Unreleased]
 
+- Reference evidence now labels individual calls/imports, deduplicates repeated snippets and includes bounded per-file call totals before result truncation. `exact_references` is immediately available in lean/workflow profiles.
+- Add opt-in local tool phase traces and repeated, alternating Codex trials with tool arguments, provider usage provenance and explicit index/compiler states. Add offline cold/warm compiler replays.
+
 ### Changed — Documentation and repository cleanup
 
 - Consolidated current setup, configuration, architecture, maintenance and agent guidance. Corrected profile defaults, isolated native repair and reference/efficiency limitations; removed mandatory extra-call and unsupported universal-savings claims.

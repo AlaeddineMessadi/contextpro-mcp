@@ -107,11 +107,15 @@ function formatReferencePayload(input: {
   warnings?: string[];
   scope?: unknown;
   counts?: Record<string, number>;
+  callsByFile?: Array<{ file: string; calls: number }>;
+  callFileCount?: number;
 }): string {
   const ambiguousCandidates = input.target?.ambiguousCandidates ?? [];
   const total = input.total ?? input.references.length;
   const truncated = total > input.references.length;
   const warnings = [...(input.warnings ?? []), ...(truncated ? ["Only the first results are shown; raise limit up to 500, or verify the remaining matches with native tools."] : [])];
+  const callFilesTruncated = input.callFileCount !== undefined && input.callFileCount > (input.callsByFile?.length ?? 0);
+  if (callFilesTruncated) warnings.push(`Call-file summary shows ${input.callsByFile?.length ?? 0} of ${input.callFileCount} files; aggregate call count includes all checked files.`);
   const scope = input.scope ?? { kind: "indexed_candidates", completeness: "not_guaranteed" };
   if (input.format === "json") {
     return JSON.stringify({
@@ -123,6 +127,7 @@ function formatReferencePayload(input: {
       scipSymbols: input.scipSymbols,
       references: input.references,
       total, returned: input.references.length, truncated, counts: input.counts, scope, warnings,
+      ...(input.callsByFile ? { callsByFile: input.callsByFile, callFileCount: input.callFileCount, callFilesTruncated } : {}),
     }, null, 2);
   }
   const ambiguityLines = ambiguousCandidates.length > 0
@@ -141,14 +146,22 @@ function formatReferencePayload(input: {
     ...(input.target ? [`Target: ${input.target.file}:${input.target.line}`] : []),
     `Evidence: ${input.confidence}; scope is limited to indexed files, not all possible runtime references.`,
     ...(input.counts ? [`Occurrences: ${Object.entries(input.counts).map(([kind, count]) => `${kind}=${count}`).join(", ")}`] : []),
+    ...(input.callsByFile?.length ? [`Calls by file (before result limit): ${input.callsByFile.map(entry => `${entry.file}=${entry.calls}`).join(", ")}`] : []),
     ...warnings.map(w => `Warning: ${w}`),
     "",
     ...ambiguityLines,
   ];
+  const shownSnippets = new Set<string>();
+  let repeatedSnippets = 0;
   for (const ref of input.references) {
-    lines.push(`${ref.file}:${ref.line}:${ref.column}${ref.isDefinition ? " [definition]" : ""}`);
-    if (ref.context) lines.push(`  ${ref.context}`);
+    lines.push(`${ref.file}:${ref.line}:${ref.column}${ref.kind ? ` [${ref.kind}]` : ref.isDefinition ? " [definition]" : ""}`);
+    if (ref.context) {
+      const key = JSON.stringify([ref.file, ref.context]);
+      if (shownSnippets.has(key)) repeatedSnippets++;
+      else { shownSnippets.add(key); lines.push(`  ${ref.context}`); }
+    }
   }
+  if (repeatedSnippets) lines.push(`Identical snippets shown once per file (${repeatedSnippets} repeats); all returned locations retained.`);
   return lines.join("\n");
 }
 
@@ -322,6 +335,7 @@ export async function exactReferencesTool(options: ExactReferencesOptions): Prom
   return formatReferencePayload({
     symbolName: options.symbolName, target, confidence: "LSP_RESOLVED",
     references,
-    total: found.total, counts: found.counts, warnings: found.warnings, scope: found.scope, format: options.format,
+    total: found.total, counts: found.counts, callsByFile: found.callsByFile, callFileCount: found.callFileCount,
+    warnings: found.warnings, scope: found.scope, format: options.format,
   });
 }

@@ -11,6 +11,8 @@ Results have different baselines and must not be combined into one savings claim
 | [Reference/freshness foundation](2026-09-08-reference-foundation.md) | Correct reference counts and cold/warm direct tool timings | No paired agent/native trial or billing measurement |
 | [Earlier synthetic retrieval fixture](../archive/2026-09-07/2026-09-07-retrieval-benchmark.json) | Fixed-corpus retrieval output | Full-file estimates are not actual agent billing |
 
+See the [repeatable benchmark procedure](methodology.md) for alternating agent trials, tool phase traces and offline cold/warm compiler replays.
+
 Adjacent JSON files retain the raw recorded results. Provider-usage trials and character/token estimates are labeled in their reports. Do not overwrite old results after moving a file; rerun into a new dated record and capture the source revision and method.
 
 For future comparisons, keep model/settings, task, repo revision and success checks matched, repeat and counterbalance trials, isolate resource contention, and measure cold/warm paths separately. Include all provider input/cache/output fields without double counting. Optional retrieval-provider costs are separate. Subscription quota reduction is not automatically an invoice saving.

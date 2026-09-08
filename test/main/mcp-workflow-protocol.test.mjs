@@ -2,7 +2,7 @@
 import { it } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
-import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -29,7 +29,7 @@ it('delivers bounded offline task packs and isolated final reports over MCP', { 
   transport.stderr?.on("data", chunk => { stderr += chunk.toString(); });
   try {
     await client.connect(transport);
-    assert.equal((await client.listTools()).tools.length, 13);
+    assert.equal((await client.listTools()).tools.length, 14);
     const args = { task: 'fix authenticate ' + 'requirements '.repeat(400), preset: 'keyword_only', max_tokens: 512, include_memory: false, include_recent_diffs: false, format: 'json' };
     const result = await client.callTool({ name: 'task_pack', arguments: args });
     assert.ok(!result.isError, JSON.stringify(result));
@@ -58,4 +58,31 @@ it('delivers bounded offline task packs and isolated final reports over MCP', { 
     await new Promise(resolve => provider.close(resolve));
     await rm(scratch, { recursive: true, force: true });
   }
+});
+
+it('answers references as the first lean call and records server timing without response metadata', { timeout: 30000 }, async () => {
+  const root = await mkdtemp(join(tmpdir(), 'contextpro-lean-refs-'));
+  const trace = join(root, 'trace.jsonl');
+  await writeFile(join(root, 'api.ts'), 'export function add() { return 1; }\nadd();\n');
+  const client = new Client({ name: 'lean-reference-integration', version: '1' });
+  const transport = new StdioClientTransport({ command: process.execPath, args: [join(process.cwd(), 'build/index.js'), '--root', root],
+    env: { ...process.env, CONTEXTPRO_TOOL_PROFILE: 'lean', CONTEXTPRO_REINDEX_NO_EMBED: 'true', CONTEXTPRO_TOOL_TRACE_PATH: trace }, stderr: 'pipe' });
+  transport.stderr?.on('data', () => {});
+  try {
+    await client.connect(transport);
+    assert.deepEqual((await client.listTools()).tools.map(t => t.name).sort(), ['context', 'discover_tools', 'exact_references']);
+    const result = await client.callTool({ name: 'exact_references', arguments: { symbol_name: 'add', file: 'api.ts', line: 1, format: 'json' } });
+    assert.ok(!result.isError, JSON.stringify(result));
+    const data = JSON.parse(result.content[0].text);
+    assert.equal(data.counts.call, 1);
+    assert.deepEqual(data.callsByFile, [{ file: 'api.ts', calls: 1 }]);
+    assert.equal(data.durationMs, undefined);
+    const records = (await readFile(trace, 'utf8')).trim().split('\n').map(JSON.parse);
+    assert.equal(records.length, 1);
+    assert.equal(records[0].tool, 'exact_references');
+    assert.equal(records[0].arguments.symbol_name, 'add');
+    assert.ok(records[0].handlerMs > 0);
+    assert.ok(records[0].preparationMs >= 0);
+    assert.equal(records[0].status, 'ok');
+  } finally { await client.close(); await transport.close(); await rm(root, { recursive: true, force: true }); }
 });

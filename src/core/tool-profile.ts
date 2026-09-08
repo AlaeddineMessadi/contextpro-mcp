@@ -54,7 +54,7 @@ const CORE_TOOLS = new Set([
 const WORKFLOW_TOOLS = new Set([
   "discover_tools",
   "status", "task_pack", "search", "grep", "skeleton", "explain",
-  "blast_radius", "validate_scope", "memory_record_task", "efficiency_report",
+  "blast_radius", "exact_references", "validate_scope", "memory_record_task", "efficiency_report",
   "artifact_read", "reindex",
 ]);
 
@@ -94,7 +94,7 @@ export function resolveToolProfile(value?: string): ToolProfile {
 }
 
 export function isToolEnabled(name: string, profile: ToolProfile): boolean {
-  if (profile === "lean") return name === "context" || name === "discover_tools";
+  if (profile === "lean") return name === "context" || name === "exact_references" || name === "discover_tools";
   return profile === "full" || (profile === "workflow" ? WORKFLOW_TOOLS : CORE_TOOLS).has(name);
 }
 

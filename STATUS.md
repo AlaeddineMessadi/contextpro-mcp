@@ -4,11 +4,11 @@ Updated 2026-09-08. This describes the checkout including [PR #9](https://github
 
 | Area | Current behavior | Remaining limit |
 | --- | --- | --- |
-| Tool catalog | Four profiles; workflow defaults to 13 tools, lean to two | Dynamic discovery depends on client support |
+| Tool catalog | Four profiles; workflow defaults to 14 tools, lean to three | Dynamic discovery depends on client support |
 | Structural index | SQLite schema v7; size/mtime/ctime probes, hash verification and per-file consistent reads | No atomic whole-repo or unsaved-buffer snapshot |
 | Background updates | Watcher plus periodic reconciliation; polling survives watcher failure | Large backlogs take time; inspect freshness |
 | Parser | Isolated WASM worker with bounded requests and fallback | Fallback reduces precision; syntax validation can fail closed |
-| TS/JS references | Reused compiler projects, aliases/project refs/indexed tests, categorized counts | Indexed scope only; 500 displayed results; cold initialization cost |
+| TS/JS references | Reused compiler projects, aliases/project refs/indexed tests, categorized counts and per-file call totals | Indexed scope only; 500 displayed results; cold initialization cost |
 | Other reference evidence | SCIP import and Python import/call candidates | SCIP revision verification and stronger Python resolution remain open |
 | Retrieval | Bounded context, batched reads, keyword fallback, optional graph pointers | No guarantee every task-relevant dependency is selected |
 | Embeddings | Independent optional provider; bounded query requests | Reindex needed for changed model/corpus vectors |

@@ -32,8 +32,8 @@ An embedding endpoint is optional for structural reads and keyword retrieval. Fo
 
 | Profile | Initial catalog | Use |
 | --- | --- | --- |
-| `workflow` (default) | 13 tools | Discovery, source reads, impact, validation and diagnostics |
-| `lean` | `context`, `discover_tools` | Minimal advertised catalog and batched source retrieval |
+| `workflow` (default) | 14 tools | Discovery, source reads, impact, validation and diagnostics |
+| `lean` | `context`, `exact_references`, `discover_tools` | Minimal advertised catalog and batched source retrieval |
 | `core` | Common workflows plus editing/graphs | More operations available immediately |
 | `full` | All registered tools and compatibility aliases | Clients that cannot refresh discovered tools |
 

@@ -60,7 +60,7 @@ describe("tool profiles and MCP annotations", () => {
 });
 
 describe('workflow profile budget', () => {
-  it('exposes thirteen tools and enables experts on demand', async () => {
+  it('exposes references immediately while keeping profiles bounded', async () => {
     const { McpServer } = await import('@modelcontextprotocol/sdk/server/mcp.js');
     const { Client } = await import('@modelcontextprotocol/sdk/client/index.js');
     const { InMemoryTransport } = await import('@modelcontextprotocol/sdk/inMemory.js');
@@ -78,13 +78,13 @@ describe('workflow profile budget', () => {
         const catalog = await client.listTools();
         sizes[profile] = Buffer.byteLength(JSON.stringify(catalog));
         if (profile === 'lean') {
-          assert.deepEqual(catalog.tools.map(t => t.name).sort(), ['context', 'discover_tools']);
+          assert.deepEqual(catalog.tools.map(t => t.name).sort(), ['context', 'discover_tools', 'exact_references']);
           const enabled = await client.callTool({ name: 'discover_tools', arguments: { enable: ['status'] } });
           assert.equal(enabled.isError, undefined);
-          assert.deepEqual((await client.listTools()).tools.map(t => t.name).sort(), ['context', 'discover_tools', 'status']);
+          assert.deepEqual((await client.listTools()).tools.map(t => t.name).sort(), ['context', 'discover_tools', 'exact_references', 'status']);
         }
         if (profile === 'workflow') {
-          assert.equal(catalog.tools.length, 13);
+          assert.equal(catalog.tools.length, 14);
           for (const name of ['task_pack', 'efficiency_report', 'reindex', 'artifact_read']) assert.ok(catalog.tools.some(t => t.name === name));
           assert.ok(!catalog.tools.some(t => t.name === 'rename_symbol'));
           const enabled = await client.callTool({ name: 'discover_tools', arguments: { enable: ['exact_references', 'rename_symbol'] } });
