@@ -1,97 +1,29 @@
-# ContextPro MCP — Status
+# ContextPro status
 
-> Live state of the project: what's working, what's known-broken, what's in flight.
-> Update on every release and after any audit. Pair with `CHANGELOG.md` (what changed, when) and `AUDIT.md` (deep findings).
+Updated 2026-09-08. This describes the checkout including [PR #9](https://github.com/AlaeddineMessadi/contextpro-mcp/pull/9), not a published release. Package metadata remains `1.3.0`; supported Node range is `>=20 <27`.
 
-**Last updated:** 2026-09-07
-**Current package version:** 1.3.0 (improvements in working tree; unreleased)
-**Branch:** `main`
-**Node target:** `>=20 <27`
+| Area | Current behavior | Remaining limit |
+| --- | --- | --- |
+| Tool catalog | Four profiles; workflow defaults to 13 tools, lean to two | Dynamic discovery depends on client support |
+| Structural index | SQLite schema v7; size/mtime/ctime probes, hash verification and per-file consistent reads | No atomic whole-repo or unsaved-buffer snapshot |
+| Background updates | Watcher plus periodic reconciliation; polling survives watcher failure | Large backlogs take time; inspect freshness |
+| Parser | Isolated WASM worker with bounded requests and fallback | Fallback reduces precision; syntax validation can fail closed |
+| TS/JS references | Reused compiler projects, aliases/project refs/indexed tests, categorized counts | Indexed scope only; 500 displayed results; cold initialization cost |
+| Other reference evidence | SCIP import and Python import/call candidates | SCIP revision verification and stronger Python resolution remain open |
+| Retrieval | Bounded context, batched reads, keyword fallback, optional graph pointers | No guarantee every task-relevant dependency is selected |
+| Embeddings | Independent optional provider; bounded query requests | Reindex needed for changed model/corpus vectors |
+| Memory | Project/session scopes, durable notes and graph traversal | Source/config evidence validation and robust offline retrieval remain work |
+| Source edits | Revision checks, serialized writes, restore points and preview | Multi-file publication is not transactional; rename is textual |
+| Efficiency | Session estimates plus separately recorded provider-usage trials | No automatic billing access or universal savings claim |
 
----
+## Verification and measurements
 
-## At a glance
+Reference/freshness commit `c5742ab` passed **644 main tests on Node v24.15.0 and v26.0.0**, TypeScript build and package dry-run. Node 24 used its isolated native dependency cache. See the [implementation report](docs/benchmarks/2026-09-08-reference-foundation.md).
 
-| Area | State | Notes |
-|---|---|---|
-| Core indexing (SQLite + sqlite-vec) | ✅ Stable | Model-dependent vector dimensions, FTS5 fallback, schema v6 |
-| Walker / parser (tree-sitter + regex) | ✅ Stable | 36 langs via WASM grammars, regex fallback |
-| Tool surface | ✅ Three profiles | workflow: 12, core: 37, full: 59; init selects workflow |
-| Memory graph | ✅ Stable | Auto-prune on access, decay-weighted edges |
-| Embeddings (Ollama / OpenAI-compatible) | ✅ Stable | Lazy tracker, dim-drift now surfaced to clients |
-| Restore points (`checkpoint` / `restore`) | ✅ Stable | JSON manifest under `.contextpro/backups/` |
-| Project graph + SCIP import | ✅ Stable | Confidence tags: SCIP/LSP/AST/HEURISTIC/AMBIGUOUS |
-| Exact references (TS/JS LSP) | ✅ Stable | LSP_RESOLVED evidence |
-| Multi-project / multi-client | ✅ Stable | Workspace registry, scope-aware memory |
-| Agent instructions resource | ✅ Stable | Now bundled locally; remote fetch optional |
-| CLI subcommands (`init`, `doctor`, `tree`, `skeleton`) | ✅ Stable | Explicit exit codes after writes |
-| Test suite | ✅ Green | Run `npm test` with the same Node ABI as the installed SQLite binary |
+The direct app-a reference replay returned 13 calls, three imports and a definition, with 12.743 s cold setup and 0.675–0.738 s repeated queries. These are tool timings, not agent savings. The [benchmark index](docs/benchmarks/README.md) separates provider records from estimates and incident replays.
 
----
+## Next work
 
-## Recent trajectory
+[TODO.md](TODO.md) and the [current roadmap](docs/roadmaps/contextpro-roadmap.md) track cold-start/freshness cost, evidence-aware routing, validated memory, pagination and held-out evaluations. Those items are not complete merely because the foundation passed its tests.
 
-- **1.2.2 — Dev-lifecycle audit fixes + literal grep.** Closes 8 issues from the 47-tool audit: empty-input validation across 25+ params, `change_impact` truncation explicit, `graph_query` not-found messaging, `reindex` non-existent target warning, `cluster` heuristic label fallback, `memory_delete` belt-and-suspenders edge cleanup. Adds the `grep` tool for fast literal/regex search.
-- **1.2.1 — Verification follow-up.** All three findings from the 1.2.0 verification pass resolved: reindex eagerly populates embeddings, `status` warning disambiguated, dual-Node ABI quirk documented.
-- **1.2.0 — Audit pass.** Comprehensive audit identified 25 issues across 5 severities. All Critical and High items resolved. New tracking docs (`STATUS.md`, `AUDIT.md`, expanded `CHANGELOG.md`) added so trajectory stays auditable.
-- **1.1.0 — Agent workflow + graph intelligence.** Added `start_task`, `plan_edit`, `impact`, `validate`, `remember`. Portable graph export, `impact_delta`, exact references, SCIP import, FTS5 fallback.
-- **1.0.x rebrand line.** Forked from Context+, renamed package and storage dir to `contextpro` with one-way migration from `.contextplus/` and `.mcp_data/`.
-
-See `CHANGELOG.md` for the full entry-by-entry history.
-
----
-
-## Known issues — open
-
-- See `plans/README.md` for the current audited implementation and verification. End-to-end agent-task savings have not been measured. Optional graph expansion remains off by default.
-- Native repair uses a separate ABI/version cache automatically; hosts on different Node majors do not rebuild the shared installation. Source writes serialize per project; multi-file writes have explicit recovery rather than transaction semantics.
-
-None blocking. Two deferred items remain for 2.0:
-
-- **Large `register-tools.ts`.** Co-locating Zod schemas with each tool will land in 2.0. (`AUDIT.md` 2026-06-18 #21.)
-- **Project's own files violating its own lint rules.** Scope reduced to `src/tools/*`; full cleanup tracked in `TODO.md` v2. (`AUDIT.md` 2026-06-18 #18.)
-
----
-
-## What's working well
-
-- **Token efficiency.** Bounded context, context deltas and the workflow profile are available. `efficiency_report` returns a full-file comparison estimate and optional price scenario. The fixed synthetic benchmark shows that rg is cheaper in output tokens for small exact-name lookups; completed-agent savings require paired measurements.
-- **Project safety.** All file-facing tools route through `resolveProjectPath` and reject path traversal. The `--root` flag is now also subject to unsafe-root checks (1.2.0).
-- **Confidence signaling.** Every agentic tool emits a freshness/trust envelope (index generation, last-indexed time, evidence kind).
-- **Reusable artifacts.** Tool outputs are content-addressed and retrievable by `artifact_list` / `artifact_read` so agents don't regenerate the same task pack twice.
-- **Memory decay.** Edges decay with weight × `exp(-0.05 × days)`; stale edges and orphan nodes are pruned automatically before reads.
-
-## What to watch
-
-- **Embedding model drift.** Switching providers/models drops cached vectors. As of 1.2.0, callers see a one-cycle `embeddings stale` warning instead of silent degradation.
-- **Reindex on huge repos.** Structural writes are single-writer and multi-process coordinated; normal reads use size/mtime probes and targeted refreshes, but a cold 5k+ file parse can still take minutes.
-- **Skill-score lint.** Default output lists every issue. For large repos consider running `lint` with a `target_path` to keep output focused. Consolidating to top-N is a v2 item.
-- **Lint targets running ContextPro itself.** Several `src/core/` files violate `max nesting 4`. The rule is advisory for now — an in-flight refactor is tracked as a v2 candidate.
-
-## Known limitations (by design)
-
-- **Per-request root routing.** One MCP process can serve verified worktrees through `root`; each retains its own index and memory.
-- **TS/JS LSP only for `exact_references`.** Other languages need a SCIP index imported via `scip_import`.
-- **Symbol-level call graph is approximate** outside of TS/JS or SCIP-imported indexes — call-site rows are heuristic regex matches and tagged `HEURISTIC` in confidence metadata.
-
----
-
-## Active work / v2 roadmap
-
-Tracked in `TODO.md` (do not edit without human approval — agents only check off completed tasks).
-
-- Cleaner alias tool surface (deprecated set in 1.2.0; full removal in 2.0).
-- Optional `cli/` package using Charm Bubbletea.
-- Smarter embedding watcher (promote `lazy` tracker to default, reduce reliance on `reindex`).
-- ACP integration to import sessions/memories from peer agents.
-- Better tree-sitter coverage and dedicated tooling.
-
----
-
-## How to read this file
-
-Three docs work together:
-
-- **`STATUS.md` (this file)** — *current* shape of the project. What works, what's flagged, what's in flight. Update on every release and audit.
-- **`CHANGELOG.md`** — *historical* per-version changes. Append on every release.
-- **`AUDIT.md`** — *deep findings* from audits with evidence and verification status.
+[CHANGELOG.md](CHANGELOG.md) records changes. [AUDIT.md](AUDIT.md) and [archived plans](docs/archive/README.md) preserve historical findings; their old counts and defaults are not the current configuration reference.

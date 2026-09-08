@@ -1,246 +1,127 @@
-# Install ContextPro for Coding Agents
+# Install ContextPro
 
-ContextPro is a project-scoped MCP server: one running server builds and maintains a compact index for one codebase (or worktree). It is designed to make an agent discover code through symbols, relationships, and ranked task context before it spends tokens on raw files.
+These instructions target the current checkout. Use the local build to get changes under review; do not assume an npm package with the same version contains them. Node.js 20–26 is supported by the package's engine range.
 
-This guide covers a practical default installation, optional model features, verification, and the small instruction policy that helps agents use the server consistently.
+## Local build
 
-## Choose the operating mode
-
-| Mode | What works | Requirements | Recommended when |
-| --- | --- | --- | --- |
-| Structural only | `tree`, `skeleton`, `blast_radius`, `task_pack`, impact tools, exact references, memory, and safe edits | Node only | You do not want another model endpoint or are offline |
-| Semantic search | Everything above plus embedding-ranked `search` | An embedding provider; local Ollama is the default | Most projects |
-| Chat-assisted refinement | Everything above plus optional hub labels and ambiguous planning reranks | A separately configured chat model | You have chosen the latency/cost/privacy trade-off |
-
-The structural index is always useful; a missing embedding provider degrades `search` to keyword ranking rather than disabling the server.
-
-## Prerequisites
-
-- Node.js 20 through 26. ContextPro automatically repairs incompatible SQLite bindings in a separate cache for each runtime ABI, without changing the shared installation. `doctor --fix` retries explicitly; first-time repair requires npm and network access.
-- A project root, never `/` or a home directory. ContextPro creates its local index in `.contextpro/`, which is already appropriate to add to `.gitignore`.
-- For semantic search, an embedding model. The no-cost local default is Ollama:
-
-```bash
-ollama serve
-ollama pull nomic-embed-text
+```sh
+git clone https://github.com/AlaeddineMessadi/contextpro-mcp.git
+cd contextpro-mcp
+npm ci
+npm run build
+node build/index.js doctor --root /absolute/path/to/target-project
 ```
 
-You do not need a chat model for the recommended setup.
+Keep the actual Node executable path printed by `node -p 'process.execPath'`. Using it in all clients avoids differences between an interactive shell's Node and a desktop client's PATH. The server repairs incompatible SQLite dependencies in an isolated cache for the launching Node ABI. First repair requires npm and network access; see [native-module recovery](#native-module-recovery).
 
-## Recommended configuration
+The target root is the repository being indexed, which can differ from the ContextPro checkout. Add `.contextpro/` to that project's `.gitignore`. The directory also contains memory and restore points; it is not entirely disposable.
 
-Use a pinned package version for reproducible team behavior. Upgrade it intentionally in the same way as any other developer tool. Replace `/absolute/path/to/project` with the repository or worktree that this server should index.
+## Client configuration
+
+Replace all placeholder paths. These examples launch the same local build and use the default workflow profile. Set the profile to `lean` for two initially advertised tools. Existing custom credentials and settings should be preserved.
 
 ### Codex
 
-Add this to `~/.codex/config.toml` (or the applicable project-level Codex configuration):
+Merge this entry into the applicable Codex configuration, such as `~/.codex/config.toml`:
 
 ```toml
 [mcp_servers.contextpro]
-command = "npx"
-args = ["-y", "contextpro-mcp@1.3.0", "--root", "/absolute/path/to/project"]
+command = "/absolute/path/to/node"
+args = ["/absolute/path/to/contextpro-mcp/build/index.js", "--root", "/absolute/path/to/target-project"]
 
 [mcp_servers.contextpro.env]
+CONTEXTPRO_TOOL_PROFILE = "workflow"
 CONTEXTPRO_PROVIDER = "ollama"
 CONTEXTPRO_EMBED_MODEL = "nomic-embed-text:latest"
-CONTEXTPRO_EMBED_TRACKER = "lazy"
-CONTEXTPRO_TOOL_PROFILE = "workflow"
 ```
 
-Restart Codex after saving the configuration. `workflow` exposes 12 everyday tools. Select `core` for editing and advanced graphs or `full` for all operations.
+### Claude Code
 
-### Claude Code and other `.mcp.json` clients
-
-Add this to the repository's `.mcp.json`:
+Merge into the target project's `.mcp.json`:
 
 ```json
 {
   "mcpServers": {
     "contextpro": {
-      "command": "npx",
-      "args": ["-y", "contextpro-mcp@1.3.0", "--root", "/absolute/path/to/project"],
+      "command": "/absolute/path/to/node",
+      "args": ["/absolute/path/to/contextpro-mcp/build/index.js", "--root", "/absolute/path/to/target-project"],
       "env": {
+        "CONTEXTPRO_TOOL_PROFILE": "workflow",
         "CONTEXTPRO_PROVIDER": "ollama",
-        "CONTEXTPRO_EMBED_MODEL": "nomic-embed-text:latest",
-        "CONTEXTPRO_EMBED_TRACKER": "lazy",
-        "CONTEXTPRO_TOOL_PROFILE": "workflow"
+        "CONTEXTPRO_EMBED_MODEL": "nomic-embed-text:latest"
       }
     }
   }
 }
 ```
 
-### Generated starter configuration
+### OpenCode
 
-From the target repository, ContextPro can generate a starter file for several clients:
+Merge into `opencode.json`:
 
-```bash
-npx -y contextpro-mcp@1.3.0 init claude
-npx -y contextpro-mcp@1.3.0 init opencode
-npx -y contextpro-mcp@1.3.0 init cursor
+```json
+{
+  "mcp": {
+    "contextpro": {
+      "type": "local",
+      "command": ["/absolute/path/to/node", "/absolute/path/to/contextpro-mcp/build/index.js", "--root", "/absolute/path/to/target-project"],
+      "enabled": true,
+      "environment": {
+        "CONTEXTPRO_TOOL_PROFILE": "workflow",
+        "CONTEXTPRO_PROVIDER": "ollama",
+        "CONTEXTPRO_EMBED_MODEL": "nomic-embed-text:latest"
+      }
+    }
+  }
+}
 ```
 
-`init` writes that client's config file, so inspect or commit any existing configuration first. It initializes embeddings only; add a chat model only when you want that feature.
+Restart the client after changes. A reconnect can reuse a cached launch command; `health` identifies the running executable and parser backend. Enable `health` through `discover_tools` if it is absent from the selected catalog.
 
-## Verify the installation
+### Generated starters and packaged installs
 
-1. Restart the coding agent so it reconnects to MCP servers.
-2. Ask the agent to call `status`. It should report the expected project root and index state.
-3. Ask it to call `task_pack` for a real small task, then `skeleton` on one returned file. This confirms the low-token workflow before relying on it for larger work.
-4. With Ollama installed, call `search` with a behavior question. `status` should show the active embedding provider and model. If the embedding provider is unavailable, structural tools still work and `search` reports keyword-only behavior.
+The CLI can generate starter configurations and managed project instructions:
 
-For local diagnosis outside an agent:
-
-```bash
-npx -y contextpro-mcp@1.3.0 doctor --root /absolute/path/to/project
+```sh
+node /absolute/path/to/contextpro-mcp/build/index.js init claude --root /absolute/path/to/target-project --runner npx
+node /absolute/path/to/contextpro-mcp/build/index.js init opencode --root /absolute/path/to/target-project --runner npx
 ```
 
-If `status` reports stale embeddings after changing providers or embedding models, run `reindex` once from the MCP client. Switching embedding models changes vector dimensions, so ContextPro intentionally discards incompatible vectors.
+Starters use a package runner, even when generated from a local checkout. Replace the generated launch command with the local examples above to run unreleased code. For a registry install, first verify access to the intended published package and pin its version deliberately.
 
-## Why ContextPro has model settings
+`init` merges JSON without replacing other servers or an existing customized ContextPro entry. It installs a managed `AGENTS.md` section and, for Claude, a `CLAUDE.md` section. `--no-agent-instructions` skips those sections. Repeated init preserves custom rules outside the markers. Codex configuration is manual; do not assume every client is supported by the generator.
 
-The coding agent and ContextPro are separate processes. ContextPro cannot reuse the host agent's private model session, context window, or provider credentials. Its model settings therefore describe an independent provider connection:
+## Verify once
 
-- `CONTEXTPRO_EMBED_MODEL` creates vectors for semantic retrieval. It receives the indexed search material needed by the configured provider; local Ollama keeps that processing on the machine.
-- `CONTEXTPRO_CHAT_MODEL` is optional. It is used only for hub naming and selected ambiguous planning reranks. It is not used to write code, conduct normal graph analysis, or replace the coding agent.
-- No chat model is configured by the recommended setup. This avoids surprise requests, latency, and cost.
-- A hosted embedding or chat provider receives the request content necessary for that operation. Use a local provider or structural-only mode when source-data egress is not acceptable.
+1. Restart the client and confirm the expected server is connected.
+2. Call `status` to inspect the root and index. In lean mode, enable it with `discover_tools(enable:["status"])`.
+3. Read a known small source target with `context` in lean mode, or `explain` in workflow mode.
+4. For first-time indexing or reported drift requiring a rebuild, enable/call `reindex`. `no_embed:true` builds structural evidence without eager corpus embeddings.
 
-For an intentional hosted setup, use an OpenAI-compatible endpoint and store the API key in the MCP client's secret/environment mechanism rather than committing it:
+This is installation diagnosis, not a checklist for every coding task. Missing embeddings do not disable structural tools. For retrieval with no query embedding attempt, use `search(preset:"keyword_only")` or direct `context(targets:[...])`.
 
-```toml
-[mcp_servers.contextpro.env]
-CONTEXTPRO_PROVIDER = "openai"
-CONTEXTPRO_BASE_URL = "https://api.openai.com/v1"
-CONTEXTPRO_API_KEY = "set-this-in-your-secret-manager"
-CONTEXTPRO_EMBED_MODEL = "text-embedding-3-small"
-# Optional; omit to keep chat-assisted features disabled.
-CONTEXTPRO_CHAT_MODEL = "gpt-4o-mini"
+## Optional model setup
+
+For local semantic retrieval, install and start Ollama, then pull the configured embedding model, for example `nomic-embed-text`. ContextPro needs its own embedding endpoint; it does not reuse a Claude or Codex session.
+
+Chat-assisted operations are optional. Leave `CONTEXTPRO_CHAT_RERANK` and `CONTEXTPRO_AUTO_HUBS` off unless needed. Hosted credentials can make a default chat model available even without an explicit chat-model setting, so omitting that setting is not a universal network-off switch. See [provider settings](docs/configuration.md#providers).
+
+## Native-module recovery
+
+On a `NODE_MODULE_VERSION` or ABI mismatch, inspect the executable named by the error and run doctor with that same executable:
+
+```sh
+/absolute/path/to/node /absolute/path/to/contextpro-mcp/build/index.js doctor --fix --root /absolute/path/to/target-project
 ```
 
-`openrouter`, `groq`, `vllm`, `lmstudio`, and LiteLLM are readable provider aliases for the same OpenAI-compatible API path. Set the corresponding base URL. A chat provider may be selected independently with `CONTEXTPRO_CHAT_PROVIDER`, but it currently shares the configured API key and base URL.
+Automatic isolated repair is enabled by default. `CONTEXTPRO_NATIVE_AUTO_REPAIR=false` disables it; `doctor --fix` provides the explicit repair path. The cache defaults to `~/.cache/contextpro/native` and separates ABI, platform, architecture, libc and dependency versions. `CONTEXTPRO_NATIVE_CACHE_DIR` can give multiple clients using the same runtime a stable location.
 
-## Make agents use ContextPro first
+Do not rebuild shared `node_modules` merely to satisfy one client: clients using another Node ABI can then break. After repair, restart the failing client. If offline and no compatible binding is installed or cached, restore access to the matching runtime/cache before expecting storage operations to work.
 
-The server publishes a compact manifest hint plus a full [agent workflow guide](agent-guide.md) at `contextpro://instructions`. The compact hint is intentional: some MCP clients repeat server instructions in every tool description, creating a large context cost. For reliable behavior, add the following short policy to the repository's own agent-instruction file—`AGENTS.md` for Codex, `CLAUDE.md` for Claude Code, or the equivalent used by your client. Append it; do not replace project-specific guidance.
+## Worktrees and common problems
 
-```md
-## ContextPro workflow
-
-ContextPro is available for this repository. Use it before broad filesystem discovery:
-
-1. Start implementation tasks with `task_pack` (and `status` once per session).
-2. Use `skeleton`, `explain`, `tree`, `repo_map`, or `search` before reading whole files or running broad grep/glob scans.
-3. Run `blast_radius` before renaming, deleting, or materially changing a symbol; use `change_impact` when a change spans files.
-4. Run independent ContextPro reads in parallel. Reuse fresh artifacts with `artifact_list` / `artifact_read` instead of rebuilding the same context.
-5. After a substantive task, record durable outcomes with `memory_record_task`; do not store secrets or transient speculation.
-
-Fall back to native tools only when ContextPro cannot answer the specific question, when validating an edit, or when direct file contents are necessary.
-```
-
-This is deliberately a preference hierarchy, not an instruction to ignore compiler output, tests, repository rules, or security controls. It saves tokens by replacing broad discovery with precise structural calls while preserving normal editing and validation tools.
-
-### Multiple agents and worktrees
-
-Give each worktree its own absolute `root`. A client that advertises the active workspace root is routed automatically; otherwise pass `root` on individual ContextPro calls. Each worktree gets an isolated index, while a new worktree can seed from its base repository's index to avoid reprocessing unchanged files. Do not let agents targeting different worktrees omit their roots: the usual symptom is an agent seeing results from the main checkout.
-
-## Environment reference
-
-Canonical names use `CONTEXTPRO_*`. Legacy `CONTEXTPLUS_*` aliases remain supported through 2.0 unless noted below; canonical names take precedence.
-
-### Provider and model settings
-
-| Variable | Default | Purpose |
-| --- | --- | --- |
-| `CONTEXTPRO_PROVIDER` | `ollama` | `ollama` or any OpenAI-compatible alias |
-| `CONTEXTPRO_API_KEY` | none | API key for the OpenAI-compatible path |
-| `CONTEXTPRO_BASE_URL` | `https://api.openai.com/v1` | OpenAI-compatible endpoint base URL |
-| `CONTEXTPRO_EMBED_MODEL` | provider-specific | Embedding model for semantic retrieval |
-| `CONTEXTPRO_CHAT_PROVIDER` | embedding provider | Optional chat-provider override |
-| `CONTEXTPRO_CHAT_MODEL` | unset in recommended config | Optional chat model for hub labels and ambiguous planning reranks |
-| `OLLAMA_HOST` | `http://127.0.0.1:11434` | Ollama endpoint |
-
-### Indexing and retrieval
-
-| Variable | Default | Purpose |
-| --- | --- | --- |
-| `CONTEXTPRO_EMBED_BATCH_SIZE` | `32` with Ollama, `8` remotely; clamped to 1–128 | Embedding inputs per request; reduce it on memory-constrained hardware |
-| `CONTEXTPRO_EMBED_CHUNK_CHARS` | `2000`, clamped to 256–8000 | Max source chunk size for embedding |
-| `CONTEXTPRO_EMBED_TRACKER` | `lazy` | Realtime update mode: `off`, `lazy`, or `eager` |
-| `CONTEXTPRO_EMBED_TRACKER_DEBOUNCE_MS` | `700` | Delay before processing changed files |
-| `CONTEXTPRO_EMBED_TRACKER_MAX_FILES` | `8` | Changed files processed per tracker tick |
-| `CONTEXTPRO_RECONCILE_INTERVAL_MS` | `30000` | Background drift-repair interval |
-| `CONTEXTPRO_RECONCILE_MAX_FILES` | `40` | Maximum repairs per reconciliation sweep |
-| `CONTEXTPRO_AUTO_REFRESH` | `true` | Refresh changed files before structural graph reads |
-| `CONTEXTPRO_REFRESH` | `stat` | `stat` fast path or `hash` for maximum freshness verification |
-| `CONTEXTPRO_QUICKREFRESH_MAX_FILES` | `30` | Maximum stale files patched synchronously per request |
-| `CONTEXTPRO_REINDEX_NO_EMBED` | `false` | Skip eager embeddings during reindex; semantic search becomes lazy/keyword-first |
-| `CONTEXTPRO_AUTO_HUBS` | `false` | Generate chat-labeled feature hubs during reindex; opt in because it can call the chat model |
-| `CONTEXTPRO_MAX_FILE_SIZE` | `5242880` | Skip indexing source files larger than this byte count |
-| `CONTEXTPRO_MAX_EMBED_FILE_SIZE` | `51200` | Skip oversized text files during semantic-search embedding |
-
-### Optional Ollama hardware tuning
-
-These options apply only to Ollama embedding requests. Leave them unset unless you have measured a need.
-
-| Variable | Purpose |
-| --- | --- |
-| `CONTEXTPRO_EMBED_NUM_GPU` | GPU layers/device count |
-| `CONTEXTPRO_EMBED_MAIN_GPU` | Primary GPU index |
-| `CONTEXTPRO_EMBED_NUM_THREAD` | CPU thread count |
-| `CONTEXTPRO_EMBED_NUM_BATCH` | Ollama runtime batch size |
-| `CONTEXTPRO_EMBED_NUM_CTX` | Ollama runtime context size |
-| `CONTEXTPRO_EMBED_LOW_VRAM` | Enable low-VRAM mode (`true`/`false`) |
-
-### Agent behavior, identity, and lifecycle
-
-| Variable | Default | Purpose |
-| --- | --- | --- |
-| `CONTEXTPRO_TOOL_PROFILE` | `full` | `workflow` has 12 daily tools; `core` adds editing/graphs; `full` includes all tools |
-| `CONTEXTPRO_EFFICIENCY_FOOTER` | `false` | Show conservative, estimated response-token savings footers |
-| `CONTEXTPRO_PROJECT_ID` | derived | Explicit project identity override |
-| `CONTEXTPRO_CLIENT_ID` | none | Opt-in client grouping for cross-project memory |
-| `CONTEXTPRO_SESSION_ID` | none | Session identity used to isolate session-scoped memory |
-| `CONTEXTPRO_SESSION_SOURCE` | `mcp` | Session source stored with project and memory metadata |
-| `CONTEXTPRO_NATIVE_AUTO_REPAIR` | `true` | Repair missing/incompatible bindings in an isolated ABI/version cache |
-| `CONTEXTPRO_NATIVE_CACHE_DIR` | `~/.cache/contextpro/native` | Location of per-runtime native dependencies; shared installation stays unchanged |
-| `CONTEXTPRO_IDLE_TIMEOUT_MS` | implementation default | Shut down an idle server after this duration |
-| `CONTEXTPRO_PARENT_POLL_MS` | implementation default | Parent-process liveness polling interval |
-| `CONTEXTPRO_ALLOW_UNSAFE_ROOT` | `false` | Permit dangerous root/home-level project roots |
-| `CONTEXTPRO_INSTRUCTIONS_REMOTE` | `false` | Fetch agent instructions from a remote URL; enable only for a trusted endpoint |
-| `CONTEXTPRO_INSTRUCTIONS_REMOTE_URL` | `https://contextpro.dev/api/instructions` | Remote instruction URL when the preceding flag is enabled |
-
-Provider-specific historical names (`CONTEXTPRO_EMBED_PROVIDER`, `CONTEXTPRO_OPENAI_*`, `OLLAMA_EMBED_MODEL`, `OLLAMA_CHAT_MODEL`, `OPENAI_API_KEY`, and `OPENAI_BASE_URL`) remain compatible. Prefer the canonical variables above in new configurations.
-
-## Common problems
-
-- **`NODE_MODULE_VERSION` mismatch:** run the server with the Node major that installed it, or run `npm rebuild better-sqlite3 sqlite-vec` in a local checkout. Automatic repair is off by default; `doctor --fix` is the explicit repair path.
-- **Ollama cannot be reached:** start `ollama serve`, pull `nomic-embed-text`, then restart the MCP server. Structural tools remain available while it is down.
-- **Search is not semantic:** inspect `status`; reindex after a provider/model change and confirm that the embedding model is installed or that the hosted endpoint accepts `/embeddings`.
-- **Wrong repository results in a worktree:** set the absolute worktree root in MCP configuration or pass `root` explicitly to the tools.
-- **A configuration includes a key:** remove it from committed config, rotate the key if exposed, and inject it through the client or OS secret mechanism.
-
-## Make agents use ContextPro first
-
-`contextpro init <agent>` now merges the ContextPro server into existing JSON
-configuration without replacing other servers or an already customized ContextPro
-entry. It installs a small managed section in `AGENTS.md`; Claude setup also
-installs it in `CLAUDE.md`. Existing rules outside the marked section remain intact,
-and rerunning init updates that section without duplicating it. `--root` targets a
-specific project; `--no-agent-instructions` skips the instruction installation.
-Malformed JSON or malformed managed markers produce an error instead of discarding
-user configuration. Existing customized server profiles are preserved; change
-`CONTEXTPRO_TOOL_PROFILE` to `workflow` manually to adopt the smaller menu.
-
-The section tells agents to use ContextPro first for repository discovery, inspect
-impact before shared-code changes, validate afterward, and quote the session
-`efficiency_report` once in their final answer. Agents must still fall back when
-the server is unavailable or its evidence is incomplete. MCP instructions guide
-host behavior; the server cannot force every client to follow them. Clients that
-do not read AGENTS.md should receive the same section in their native project rules.
-
-Session savings are estimates against a full-file baseline. Supply the actual
-model input rate to calculate a hypothetical dollar amount. Without that rate,
-the report says cost is unavailable. ContextPro does not infer revenue or claim
-access to the coding agent's billing account. See [the agent guide](agent-guide.md)
-for exact assumptions, context-delta recovery, and mutation guarantees.
+- **Wrong repository:** pass the absolute worktree `root` on calls or correct the launch root. Client-advertised roots can override the boot fallback; explicit tool roots remove ambiguity.
+- **Stale embeddings:** check provider/model settings, then reindex. Interactive search does not rebuild the whole vector corpus.
+- **Slow or failed calls:** inspect `health` and `status`; use bounded results and keyword-only discovery when the provider is unavailable. Do not loop blindly on connection errors.
+- **Agent ignores MCP:** install concise project rules from [INSTRUCTIONS.md](INSTRUCTIONS.md). Prefer MCP when it adds useful context; allow native reads for tiny known targets and incomplete evidence.
+- **Disk growth:** follow [maintenance](docs/maintenance.md). Preserve memory and restore points while cleaning regenerable artifacts.

@@ -9,84 +9,53 @@ export const dynamic = "force-dynamic";
 
 const toolRefRows = [
   {
-    name: "get_context_tree",
-    desc: "Get the structural AST tree of a project with file headers plus line-numbered function/class/method symbols. Dynamic token-aware pruning shrinks output automatically.",
-    input:
-      "{\n  target_path?: string,\n  depth_limit?: number,\n  include_symbols?: boolean,\n  max_tokens?: number\n}",
-    output:
-      '"src/\n  index.ts - Entry point\n    function: getStars() (L170-L181)\n    function: Home() (L183-L760)\n  utils/\n    parser.ts - AST parsing\n      function: parseFile() (L22-L84)\n      function: walkTree() (L86-L132)"',
+    "name": "context",
+    "desc": "In lean/full profiles, find and read bounded source in one call, or batch known targets without search. Expand explicit omissions only when needed.",
+    "input": "{\n  \"targets\": [\n    {\n      \"file\": \"src/api.ts\",\n      \"symbol\": \"create\"\n    }\n  ],\n  \"max_tokens\": 2000\n}",
+    "output": "Illustrative: source ranges with file/line provenance, plus omitted targets or spans."
   },
   {
-    name: "get_file_skeleton",
-    desc: "Get function signatures, class methods, and type definitions of a file with line ranges, without reading the full body.",
-    input: "{ file_path: string }",
-    output:
-      '"[function] L12-L58 export function parseFile(\n  filePath: string,\n  options?: ParseOptions\n): Promise<AST>;\n\n[class] L60-L130 export class Walker;\n  [method] L72-L94 walk(node: Node): void;\n  [method] L96-L118 getSymbols(): Symbol[];"',
+    "name": "search",
+    "desc": "Find files and symbols with hybrid ranking or provider-free keyword_only retrieval. Compact output avoids diagnostic verbosity.",
+    "input": "{\n  \"query\": \"authentication token validation\",\n  \"preset\": \"keyword_only\",\n  \"format\": \"compact\"\n}",
+    "output": "Illustrative: ranked definitions and source excerpts, with freshness and retrieval warnings."
   },
   {
-    name: "semantic_code_search",
-    desc: "Search the codebase by meaning, not exact text. Uses embeddings over file headers/symbols and returns matched definition lines.",
-    input: "{ query: string, top_k?: number }",
-    output:
-      '"1. src/auth/jwt.ts (94.0% total)\n   Semantic: 91.5% | Keyword: 96.2%\n   Definition lines: verifyToken@L20-L58, signToken@L60-L102\n2. src/auth/session.ts (87.4% total)\n   Definition lines: createSession@L12-L42"',
+    "name": "skeleton",
+    "desc": "Read signatures and public contracts without whole bodies. The exported-only option applies to TypeScript/JavaScript.",
+    "input": "{\n  \"file_path\": \"src/api.ts\",\n  \"exported_only\": true\n}",
+    "output": "Illustrative: export function create(input: Request): Promise<Response>;"
   },
   {
-    name: "semantic_identifier_search",
-    desc: "Find closest functions/classes/variables by meaning, then return ranked definition and call-chain locations with line numbers. Uses realtime-refreshed identifier embeddings.",
-    input:
-      "{\n  query: string,\n  top_k?: number,\n  top_calls_per_identifier?: number,\n  include_kinds?: string[]\n}",
-    output:
-      '"1. function verifyToken - src/auth/jwt.ts (L20-L58)\n   Score: 92.4%\n   Calls (3/3):\n     1. src/middleware/guard.ts:L33 (88.1%) verifyToken(token)\n     2. src/routes/api.ts:L12 (84.7%) const user = verifyToken(raw)\n2. variable tokenExpiry - src/auth/config.ts (L8)"',
+    "name": "exact_references",
+    "desc": "Use project-aware compiler references for TS/JS. Check direct-call counts, total/returned occurrences, truncation and declared scope. Enable through discover_tools when needed.",
+    "input": "{\n  \"symbol_name\": \"create\",\n  \"file\": \"src/api.ts\",\n  \"line\": 12,\n  \"format\": \"json\"\n}",
+    "output": "Illustrative: total=4, returned=4, truncated=false; definition=1, import=1, call=2. Dynamic/unindexed references are outside scope."
   },
   {
-    name: "get_blast_radius",
-    desc: "Before modifying code, trace every file and line where a symbol is imported or used. Prevents orphaned references.",
-    input: "{\n  symbol_name: string,\n  file_context?: string\n}",
-    output:
-      '"parseFile - 7 usages\n  src/index.ts:14  import { parseFile }\n  src/tools/tree.ts:8  const ast = parseFile(p)\n  src/tools/skeleton.ts:22  parseFile(path)\n  test/parser.test.ts:5  import { parseFile }"',
+    "name": "blast_radius",
+    "desc": "Collect textual usage candidates before a change. Matching lines and names are not a binding-resolved reference set.",
+    "input": "{\n  \"symbol_name\": \"create\",\n  \"mode\": \"summary\",\n  \"kind\": \"call\"\n}",
+    "output": "Illustrative: call-containing lines grouped by file and enclosing symbol; verify completeness warnings."
   },
   {
-    name: "run_static_analysis",
-    desc: "Run the native linter or compiler to find unused variables, dead code, and type errors. Supports TypeScript, Python, Rust, Go.",
-    input: "{ target_path?: string }",
-    output:
-      '"src/utils.ts:14:5\n  error TS2345: Argument of type string\n  is not assignable to parameter\n\nsrc/old.ts:1:1\n  warning: file has no exports"',
+    "name": "validate_scope",
+    "desc": "Suggest relevant validation for changed files. The agent must still execute and inspect the actual checks.",
+    "input": "{\n  \"task\": \"Update request validation\",\n  \"files\": [\n    \"src/api.ts\"\n  ],\n  \"format\": \"json\"\n}",
+    "output": "Illustrative: nearest regression tests and build/typecheck commands with reasons."
   },
   {
-    name: "propose_commit",
-    desc: "The only way to write code. Validates against strict rules before saving. Creates a shadow restore point before writing.",
-    input: "{\n  file_path: string,\n  new_content: string\n}",
-    output:
-      '"✓ Header comment present\n✓ No inline comments\n✓ Max nesting depth: 3\n✓ File length: 142 lines\n\nSaved src/tools/search.ts\nRestore point: rp-1719384000-a3f2"',
+    "name": "checkpoint",
+    "desc": "Write a file with a pre-write restore point and revision checks. Optional style checks do not replace the target project's conventions.",
+    "input": "{\n  \"file_path\": \"src/api.ts\",\n  \"new_content\": \"export const version = 2;\"\n}",
+    "output": "Illustrative: saved path and restore point, or a conflict that requires rereading current source."
   },
   {
-    name: "list_restore_points",
-    desc: "List all shadow restore points created by propose_commit. Each captures file state before AI changes.",
-    input: "{ }",
-    output:
-      '"rp-1719384000-a3f2 | 2025-06-26\n  src/tools/search.ts | refactor search\n\nrp-1719383000-b7c1 | 2025-06-26\n  src/index.ts | add new tool"',
-  },
-  {
-    name: "undo_change",
-    desc: "Restore files to their state before a specific AI change. Uses shadow restore points. Does not affect git.",
-    input: "{ point_id: string }",
-    output: '"Restored 1 file(s):\n  src/tools/search.ts"',
-  },
-  {
-    name: "semantic_navigate",
-    desc: "Browse codebase by meaning using spectral clustering. Groups semantically related files into labeled clusters.",
-    input: "{\n  max_depth?: number,\n  max_clusters?: number\n}",
-    output:
-      '"Authentication (4 files)\n  src/auth/jwt.ts\n  src/auth/session.ts\n  src/middleware/guard.ts\n  src/models/user.ts\n\nParsing (3 files)\n  src/core/parser.ts\n  src/core/tree-sitter.ts\n  src/core/walker.ts"',
-  },
-  {
-    name: "get_feature_hub",
-    desc: "Obsidian-style feature hub navigator. Hubs are .md files with [[wikilinks]] that map features to code files.",
-    input:
-      "{\n  hub_path?: string,\n  feature_name?: string,\n  show_orphans?: boolean\n}",
-    output:
-      '"## auth.md\n[[src/auth/jwt.ts]]\n  → verifyToken(token: string)\n  → signToken(payload: object)\n\n[[src/auth/session.ts]]\n  → createSession(userId: string)\n  → destroySession(id: string)"',
-  },
+    "name": "restore",
+    "desc": "Preview a restore before applying it. Applying a restore creates a recovery point; multi-file publication is not transactional.",
+    "input": "{\n  \"point_id\": \"rp-timestamp-hash\",\n  \"preview\": true\n}",
+    "output": "Illustrative: planned file overwrites/deletions and available recovery details."
+  }
 ];
 
 async function getStars(): Promise<number> {
@@ -157,10 +126,9 @@ export default async function Home() {
               backgroundClip: "text",
             }}
           >
-            ContextPro is an MCP server designed for developers who demand 99%
-            accuracy. By combining RAG, Treesitter AST & Spectral
-            Clustering, ContextPro turns a massive codebase into a searchable,
-            hierarchical graph.
+            ContextPro gives coding agents bounded source context, project-aware
+            references and explicit freshness signals. Discover unfamiliar code,
+            inspect contracts and validate changes with less repeated reading.
           </p>
         </section>
       </div>

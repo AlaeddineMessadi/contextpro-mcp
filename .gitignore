@@ -59,3 +59,7 @@ extension.vsix
 /test_*.mjs
 /trace-*.mjs
 /verify-*.mjs
+
+# npm is canonical for the MCP root and landing app; dashboard keeps Bun
+/bun.lock
+/landing/bun.lock

@@ -7,7 +7,7 @@
     "dev": "next dev -p 6868",
     "build": "next build",
     "start": "next start -p 6868",
-    "lint": "next lint"
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "contextpro-mcp": "file:..",

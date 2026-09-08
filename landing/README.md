@@ -1,43 +1,24 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# ContextPro website
 
-## Getting Started
+Optional Next.js website for ContextPro. It is not the MCP runtime. Development and production preview use port **6767**.
 
-First, run the development server:
+## Run
 
-```bash
+From this directory:
+
+```sh
+npm ci
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open `http://localhost:6767`. `npm run build` and `npm start` build and serve a production preview. The npm lockfile is canonical for this app.
 
-When running locally you can hit [http://localhost:3000/api/instructions](http://localhost:3000/api/instructions) to fetch the instructions file.
+## Instructions and setup samples
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+The copy panel and `/api/instructions` read `src/generated/agent-instructions.json`, generated from the repository's [INSTRUCTIONS.md](../INSTRUCTIONS.md). npm lifecycle hooks synchronize it before `dev`, `build`, `cf:build`, `cf:preview`, and `cf:deploy`. Use these npm scripts so synchronization runs before Next.js or OpenNext; calling the underlying CLIs directly bypasses the hooks. From the repository root, run `npm run docs:sync` after editing the policy and `npm run docs:check` before committing. Generated JSON is committed so both surfaces have identical content and deployment needs no runtime filesystem read.
 
-### Instructions API
+Configuration examples in `src/components/IdeSetup.tsx` use canonical provider keys and the workflow profile. They omit optional cloud chat settings and include a placeholder project root. Package-runner samples require access to the selected published package; for this checkout's unreleased code use the local launch instructions in [INSTALL.md](../INSTALL.md).
 
-An HTTP endpoint at `/api/instructions` serves the repository's
-`INSTRUCTIONS.md` file as `text/markdown`.
+## Deployment
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
-
-## Learn More
-
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Cloudflare build/preview/deploy scripts are defined in `package.json` and use OpenNext. Inspect the configured account and worker in `wrangler.jsonc` before deploying; this repository cleanup does not deploy the site. API behavior should be verified after a production build, not assumed from the markdown source alone.

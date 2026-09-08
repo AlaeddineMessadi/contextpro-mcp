@@ -4,6 +4,12 @@ All notable changes to this project are recorded here. The project follows [Sema
 
 ## [Unreleased]
 
+### Changed — Documentation and repository cleanup
+
+- Consolidated current setup, configuration, architecture, maintenance and agent guidance. Corrected profile defaults, isolated native repair and reference/efficiency limitations; removed mandatory extra-call and unsupported universal-savings claims.
+- Website instructions now derive from the project policy; configuration samples use canonical provider keys without an unsolicited cloud chat model. Added documentation synchronization and local-link checks.
+- Archived historical plans and backlog; retained raw benchmark evidence. Removed obsolete/duplicate lockfiles, unused starter SVGs, an empty Claude settings file and a superseded one-off audit probe.
+
 ### Fixed — Reference correctness and freshness (2026-09-08)
 
 - TS/JS references now use project configurations, inherited path aliases and source project references. Indexed tests remain in scope even when production builds exclude them. Results distinguish definitions, imports, direct calls and other references; totals precede truncation and incomplete scope is explicit. Python heuristic evidence carries an explicit limitation.
@@ -42,9 +48,9 @@ All notable changes to this project are recorded here. The project follows [Sema
 
 ### Changed — Defaults and compatibility
 
-- Per-call savings footers are off by default; agents report the net session estimate once at completion.
+- Per-call savings footers are off by default; agents request a net session estimate only when the user asks for usage reporting.
 - Native dependency repair is automatic in an isolated per-ABI/platform/architecture/libc/version cache. It leaves shared node_modules unchanged, pins npm lifecycle scripts to the launching Node runtime, and validates SQLite plus vectors before publication. `doctor --fix` uses the same cache; `CONTEXTPRO_NATIVE_AUTO_REPAIR=false` opts out.
-- Existing tool profiles and customized MCP config entries are preserved. New init configurations select `workflow`; unset runtime profiles still select `full`.
+- Existing tool profiles and customized MCP config entries are preserved. New init configurations and unset runtime profiles select `workflow`; `lean`, `core` and `full` are explicit alternatives.
 - Writes reject child symlinks. Multi-file publication is not transactional; partial failures identify recovery points. Root-level mutation serialization favors correctness over parallel-write throughput.
 
 
@@ -56,7 +62,7 @@ All notable changes to this project are recorded here. The project follows [Sema
 - **Graph analytics inside the existing `graph_query` tool.** New `path` mode uses confidence-weighted shortest paths, preferring exact SCIP/LSP/AST evidence over ambiguous name matches; `hotspots` ranks architectural choke points with weighted PageRank plus degree; `communities` runs a deterministic Louvain-style pass over file relationships and emits cohesion scores with LLM-free directory labels. Responses support `max_tokens` and remain valid JSON when truncated. (`src/core/graph-analytics.ts`, `src/core/project-graph.ts`, `src/tools/project-graph.ts`)
 - **Concurrent graph-build deduplication.** The per-generation project-graph cache now stores the in-flight promise, so simultaneous agents share one DB/git graph build instead of racing through duplicate work. Failed builds evict themselves for a clean retry. (`src/core/project-graph.ts`)
 - **Multi-process SQLite contention hardening.** WAL connections now use a five-second busy timeout so short writer collisions wait instead of failing immediately, with `synchronous=NORMAL` for WAL-appropriate throughput. The graph cache is an access-ordered LRU capped at 50 project roots. (`src/core/db.ts`, `src/core/project-graph.ts`)
-- **Focused tool profiles, MCP safety hints, and structured graph output.** `CONTEXTPRO_TOOL_PROFILE=core` exposes the daily coding-agent workflow while `full` remains the runtime default for backward compatibility; newly generated starter configs select `core`. Every tool now advertises read-only, destructive, idempotent, and closed-world hints through MCP annotations. `graph_query` additionally advertises an output schema and returns native `structuredContent` beside its human-readable text. (`src/core/tool-profile.ts`, `src/tools/register-tools.ts`, `src/index.ts`)
+- **Focused tool profiles, MCP safety hints, and structured graph output.** `CONTEXTPRO_TOOL_PROFILE=core` exposes the daily coding-agent workflow with `full` available explicitly for clients requiring every tool; newly generated starter configs now select `workflow`. Every tool now advertises read-only, destructive, idempotent, and closed-world hints through MCP annotations. `graph_query` additionally advertises an output schema and returns native `structuredContent` beside its human-readable text. (`src/core/tool-profile.ts`, `src/tools/register-tools.ts`, `src/index.ts`)
 - **Adaptive task-pack token budgets.** `task_pack.max_tokens` now applies utility-ordered pruning (diffs, memory, tests, secondary symbols/files, then redundant metadata) and returns an explicit budget/drop report. Even at the 512-token floor it preserves the two highest-ranked files, so tight agent contexts retain both the likely entry point and implementation instead of returning a syntactically small but unusable packet. Cached full artifacts can be re-rendered at different budgets without recomputation. (`src/tools/agentic-context.ts`, `src/tools/register-tools.ts`)
 
 ### Changed — Dependency security
