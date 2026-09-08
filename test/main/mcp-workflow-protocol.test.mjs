@@ -51,6 +51,15 @@ it('delivers bounded offline task packs and isolated final reports over MCP', { 
     assert.equal(report.actualBillingSavingsUsd, null);
     assert.ok(report.estimate.toolSchemaTokens > 0);
     assert.ok(pack.budget || pack.context || pack.files);
+    await writeFile(join(root, 'nearby.ts'), 'before\nneedle\nafter\n');
+    const nearby = await client.callTool({ name: 'grep', arguments: { root, pattern: 'needle', glob: '*.ts', context_lines: 1 } });
+    assert.ok(!nearby.isError, JSON.stringify(nearby));
+    assert.match(nearby.content[0].text, /L1-  before/);
+    assert.match(nearby.content[0].text, /L2:1  needle/);
+    assert.match(nearby.content[0].text, /L3-  after/);
+    const overLimit = await client.callTool({ name: 'grep', arguments: { root, pattern: 'needle', context_chars: 900 } });
+    assert.equal(overLimit.isError, true, 'reject oversized windows rather than silently ignoring them');
+    assert.equal(providerCalls, 0, 'surrounding-line grep remains provider-free');
   } catch (error) {
     throw new Error(`${error.message}\nServer diagnostics: ${stderr}`, { cause: error });
   } finally {

@@ -15,6 +15,15 @@ describe("file-skeleton", async () => {
   await setup();
 
   describe("getFileSkeleton", () => {
+    it("labels multiline signatures and array summaries as unsuitable for exact edit anchors", async () => {
+      await writeFile(join(FIXTURE_DIR, "multiline.ts"), "export function run({\n  first,\n  second,\n}: { first: string; second: string }) { return first; }\nexport const values = [\n  'first',\n  'second',\n];\n");
+      const result = await getFileSkeleton({ rootDir: FIXTURE_DIR, filePath: "multiline.ts" });
+      assert.match(result, /API summary \(normalized\/truncated\)/);
+      assert.match(result, /for exact edit text use context/);
+      assert.match(result, /run/);
+      assert.match(result, /values/);
+      assert.doesNotMatch(result, /return first/);
+    });
     it("returns skeleton for a TypeScript file", async () => {
       await writeFile(
         join(FIXTURE_DIR, "app.ts"),

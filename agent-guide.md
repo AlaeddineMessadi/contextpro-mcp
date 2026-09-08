@@ -32,8 +32,13 @@ needed. Do not automatically call status, reindex, report or memory on each task
 2. Use `search(mode:"file", format:"compact", include_dependencies:true)` to locate
    unfamiliar code and supporting imports. Use `grep` or `explain` directly for a known literal/name.
    The default crux excerpt often avoids a second read; verbose `json` is for diagnostics.
+   `grep` is literal by default: pass `regex:true` for `A|B` alternation or escapes.
+   `context_chars` controls the in-line character window (40–400); use
+   `context_lines:2` for neighboring lines (0–10, default 0). Overlaps are deduplicated.
 3. Use `skeleton` before reading a large file; use `explain` for one symbol body
    and its immediate dependencies. `exported_only:true` gives a TS/JS public API view.
+   Skeletons normalize/truncate signatures; do not use them as exact Edit anchors.
+   Read the needed source with `context(targets:[{file,start,end}])` before editing.
 4. Before changing a symbol, use `blast_radius` for textual scope; `kind:"call"`
    filters call-containing lines and explicit kind counts avoid manual recounts.
    Use `exact_references` for compiler-resolved TS/JS rename checks and `change_impact`

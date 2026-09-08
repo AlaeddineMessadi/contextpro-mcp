@@ -181,6 +181,7 @@ export async function getFileSkeleton(options: SkeletonOptions): Promise<string>
   const sections: string[] = [
     `File: ${options.filePath} (${analysis.lineCount} lines)`,
     `Symbols: ${analysis.symbols.length} top-level definitions`,
+    "API summary (normalized/truncated); for exact edit text use context(targets:[{file,start,end}]).",
   ];
   if (importsBlock.length > 0) {
     sections.push("", "Imports:");

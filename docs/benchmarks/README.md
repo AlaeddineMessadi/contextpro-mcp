@@ -4,6 +4,7 @@ Results have different baselines and must not be combined into one savings claim
 
 | Record | What it measures | Main limitation |
 | --- | --- | --- |
+| [Workflow follow-up audit](2026-09-08-workflow-rebenchmark.md) | Reported second implementation trial and inspected raw tool incidents | Single run; timings/correctness reported by the workflow; no new billing measurement |
 | [Worktree implementation audit](2026-09-08-worktree-routing-audit.md) | Actual transcript routing, timings and per-category usage | Unequal inherited contexts/caches; both implementations need fixes; not a controlled savings trial |
 | [Initial retrieval/agent report](2026-09-07.md) | Synthetic retrieval and recorded agent trials | Small task sets; read each experiment's method |
 | [Workflow improvements](2026-09-07-improvements.md) | Follow-up retrieval/workflow measurements | Not a universal benchmark win |

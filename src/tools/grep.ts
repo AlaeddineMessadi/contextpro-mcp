@@ -17,6 +17,7 @@ export interface GrepOptions {
   maxTotalMatches?: number;
   maxFileBytes?: number;
   contextChars?: number;
+  contextLines?: number;
 }
 
 export interface GrepMatch {
@@ -24,6 +25,7 @@ export interface GrepMatch {
   line: number;
   column: number;
   context: string;
+  surrounding?: Array<{ line: number; text: string }>;
 }
 
 interface GrepResult {
@@ -212,6 +214,7 @@ async function scanFile(
   maxPerFile: number,
   maxFileBytes: number,
   contextChars: number,
+  contextLines: number,
 ): Promise<GrepMatch[]> {
   let content: string;
   try {
@@ -238,6 +241,12 @@ async function scanFile(
       line: i + 1,
       column: match.index + 1,
       context: snippet.trim().substring(0, contextChars + 4),
+      surrounding: contextLines ? lines
+        .slice(Math.max(0, i - contextLines), i + contextLines + 1)
+        .map((text, offset) => ({
+          line: Math.max(0, i - contextLines) + offset + 1,
+          text: text.length > contextChars ? text.slice(0, contextChars) + "…" : text,
+        })) : undefined,
     });
   }
   return matches;
@@ -259,6 +268,7 @@ export async function grepProject(options: GrepOptions): Promise<string> {
   const maxTotal = Math.max(1, options.maxTotalMatches ?? DEFAULT_MAX_TOTAL);
   const maxFileBytes = Math.max(1024, options.maxFileBytes ?? DEFAULT_MAX_FILE_BYTES);
   const contextChars = Math.max(40, Math.min(400, options.contextChars ?? DEFAULT_CONTEXT_CHARS));
+  const contextLines = Math.max(0, Math.min(10, Math.floor(options.contextLines ?? 0)));
 
   const entries = await walkDirectory({ rootDir: options.rootDir, targetPath: options.targetPath, depthLimit: 0 });
   let candidates;
@@ -309,7 +319,7 @@ export async function grepProject(options: GrepOptions): Promise<string> {
     }
     result.filesScanned++;
     const fullPath = resolveProjectPath(options.rootDir, entry.relativePath, "candidate file");
-    const fileMatches = await scanFile(fullPath, entry.relativePath, pattern, maxPerFile, maxFileBytes, contextChars);
+    const fileMatches = await scanFile(fullPath, entry.relativePath, pattern, maxPerFile, maxFileBytes, contextChars, contextLines);
     if (fileMatches.length === 0) continue;
     result.filesMatched++;
     const remaining = maxTotal - result.matches.length;
@@ -327,7 +337,10 @@ export async function grepProject(options: GrepOptions): Promise<string> {
 
 function formatGrepResult(result: GrepResult, totalCandidates: number): string {
   if (result.matches.length === 0) {
-    return `grep: 0 matches for ${result.regex ? "regex" : "literal"} "${result.pattern}" (scanned ${result.filesScanned} of ${totalCandidates} files, case-${result.caseSensitive ? "sensitive" : "insensitive"})`;
+    const hint = !result.regex && /[|\\]/.test(result.pattern)
+      ? "\nPattern was searched literally. If you intended alternation or regex escapes, pass regex: true."
+      : "";
+    return `grep: 0 matches for ${result.regex ? "regex" : "literal"} "${result.pattern}" (scanned ${result.filesScanned} of ${totalCandidates} files, case-${result.caseSensitive ? "sensitive" : "insensitive"})${hint}`;
   }
 
   const grouped = new Map<string, GrepMatch[]>();
@@ -341,9 +354,16 @@ function formatGrepResult(result: GrepResult, totalCandidates: number): string {
   const lines = [header, ""];
   for (const [path, matches] of grouped) {
     lines.push(`${path}:`);
+    const displayed = new Map<number, string>();
     for (const match of matches) {
-      lines.push(`  L${match.line}:${match.column}  ${match.context}`);
+      for (const neighbor of match.surrounding ?? []) {
+        displayed.set(neighbor.line, `  L${neighbor.line}-  ${neighbor.text}`);
+      }
     }
+    for (const match of matches) {
+      displayed.set(match.line, `  L${match.line}:${match.column}  ${match.context}`);
+    }
+    lines.push(...[...displayed].sort(([a], [b]) => a - b).map(([, text]) => text));
   }
   if (result.truncated && result.truncatedReason) {
     lines.push("");

@@ -464,7 +464,7 @@ export function registerTools(
   server.tool(
     "skeleton",
     "Get detailed function signatures, class methods, and type definitions of a specific file WITHOUT reading the full body. " +
-    "Shows the API surface: function names, parameters, return types, and line ranges. Perfect for understanding how to use code without loading it all.",
+    "Shows the API surface and line ranges. Signatures are normalized summaries, not exact edit anchors; use context(targets:[{file,start,end}]) for source text before editing.",
     {
       file_path: z.string().min(1).describe("Path to the file to inspect (relative to project root)."),
       exported_only: z.boolean().optional().describe("Only public declarations (TS/JS). Default: false."),
@@ -539,14 +539,15 @@ export function registerTools(
     "Fast literal or regex string search across the project's indexed file set. Use this for log-message lookups, config-key searches, error-message tracing, or any time you know the exact characters you want to find. Use 'search' instead for semantic intent queries. Skips binary files; respects .gitignore via the indexed walker.",
     {
       pattern: z.string().min(1).describe("Literal string to search for (or regex when regex=true)."),
-      regex: z.boolean().optional().describe("Treat pattern as a regular expression. Default: false (literal match)."),
+      regex: z.boolean().optional().describe("Treat pattern as a line-based regular expression (set true for A|B alternation). Default: false, literal match."),
       case_sensitive: z.boolean().optional().describe("Match case-sensitively. Default: false."),
       target_path: z.string().optional().describe("Optional subdirectory to scope the search."),
       glob: z.string().optional().describe("Optional file glob filter, e.g. \"src/**/*.ts\" or \"*.md\". Comma-separated for multiple."),
       max_matches_per_file: z.number().optional().describe("Max matches per file. Default: 10."),
       max_total_matches: z.number().optional().describe("Max total matches across all files. Default: 200."),
       max_file_bytes: z.number().optional().describe("Skip files larger than this (bytes). Default: 1000000."),
-      context_chars: z.number().optional().describe("Characters of surrounding context per match. Default: 160."),
+      context_chars: z.number().int().min(40).max(400).optional().describe("Character window within the matched line; surrounding lines are clipped to this width. 40–400, default: 160. Use context_lines for nearby lines."),
+      context_lines: z.number().int().min(0).max(10).optional().describe("Lines before and after each match (0–10, default: 0). Overlapping ranges are deduplicated; L<line>- marks context, L<line>:<column> marks a hit."),
     },
     withRequestActivity(async (args) => ({
       content: [{
@@ -562,6 +563,7 @@ export function registerTools(
           maxTotalMatches: args.max_total_matches,
           maxFileBytes: args.max_file_bytes,
           contextChars: args.context_chars,
+          contextLines: args.context_lines,
         }),
       }],
     }), { toolName: "grep", waitForIndexing: false }),
