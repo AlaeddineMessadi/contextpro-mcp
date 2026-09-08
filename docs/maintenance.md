@@ -31,7 +31,7 @@ Direct imports of built tool modules inherit the shell environment, not the MCP 
 - `INSTRUCTIONS.md`: project policy, also used by the website copy panel and `/api/instructions`.
 - `STATUS.md` / `TODO.md`: current state and pending work. Historical results belong in dated reports.
 
-After changing `INSTRUCTIONS.md`, run `npm run docs:sync`. This generates `landing/src/generated/agent-instructions.json`; do not hand-edit it. Landing predev/prebuild also synchronize it. JSON imports keep the route usable in deployments that cannot read the repository filesystem at request time. `npm run docs:check` verifies synchronization and local links in current documentation.
+After changing `INSTRUCTIONS.md`, run `npm run docs:sync`. This generates `landing/src/generated/agent-instructions.json`; do not hand-edit it. Landing npm lifecycle hooks also synchronize it before `dev`, `build`, `cf:build`, `cf:preview`, and `cf:deploy`. Invoke these npm scripts rather than the underlying Next.js/OpenNext CLIs to run the hooks. JSON imports keep the route usable in deployments that cannot read the repository filesystem at request time. `npm run docs:check` verifies synchronization and local links in current documentation.
 
 Keep `AGENTS.md` and `CLAUDE.md` aligned with the managed template in `src/core/agent-setup.ts` if changing the installer policy. Never expand the manifest into the full guide merely for convenience.
 

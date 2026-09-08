@@ -11,7 +11,10 @@
     "cf:preview": "opennextjs-cloudflare build && wrangler dev",
     "cf:deploy": "opennextjs-cloudflare build && opennextjs-cloudflare deploy",
     "predev": "node ../scripts/sync-agent-instructions.mjs",
-    "prebuild": "node ../scripts/sync-agent-instructions.mjs"
+    "prebuild": "node ../scripts/sync-agent-instructions.mjs",
+    "precf:build": "node ../scripts/sync-agent-instructions.mjs",
+    "precf:preview": "node ../scripts/sync-agent-instructions.mjs",
+    "precf:deploy": "node ../scripts/sync-agent-instructions.mjs"
   },
   "dependencies": {
     "contextpro-mcp": "file:..",
