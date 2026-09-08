@@ -1,6 +1,6 @@
 # ContextPro status
 
-Updated 2026-09-08. This describes the checkout including [PR #9](https://github.com/AlaeddineMessadi/contextpro-mcp/pull/9), not a published release. Package metadata remains `1.3.0`; supported Node range is `>=20 <27`.
+Updated 2026-09-08. This describes the checkout including the direct-reference and benchmark follow-up, not a published release. Package metadata remains `1.3.0`; supported Node range is `>=20 <27`.
 
 | Area | Current behavior | Remaining limit |
 | --- | --- | --- |
@@ -17,6 +17,8 @@ Updated 2026-09-08. This describes the checkout including [PR #9](https://github
 | Efficiency | Session estimates plus separately recorded provider-usage trials | No automatic billing access or universal savings claim |
 
 ## Verification and measurements
+
+The reference-evidence follow-up passes **654 main tests on Node v26.0.0**. All 24 offline reference replay queries pass; compiler latency is essentially unchanged. The larger text fixture is 12.5% smaller, while the initial lean/workflow catalog grows by 1,071 bytes. These are output/schema measurements, not agent token savings. See the [evidence report](docs/benchmarks/2026-09-08-reference-evidence.md).
 
 Reference/freshness commit `c5742ab` passed **644 main tests on Node v24.15.0 and v26.0.0**, TypeScript build and package dry-run. Node 24 used its isolated native dependency cache. See the [implementation report](docs/benchmarks/2026-09-08-reference-foundation.md).
 

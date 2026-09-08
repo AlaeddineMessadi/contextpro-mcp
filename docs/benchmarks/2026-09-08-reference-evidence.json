@@ -1,0 +1,467 @@
+{
+  "method": "Alternating old/new isolated processes, identical generated corpus. Structural index prepared; cold/warm refers only to compiler reuse. OS caches are uncontrolled. Module load/indexing excluded. Bytes are not provider tokens or cost. No agent benchmark.",
+  "node": "v26.0.0",
+  "provenance": {
+    "baseline": {
+      "build": "baseline build (local path redacted)",
+      "fingerprint": {
+        "entry": "build/index.js",
+        "files": 96,
+        "sha256": "9b3a0b82848a1020958b2679bb4b5d4dbe1b2f7f0c934c041a8f020100e6ac68"
+      },
+      "commit": "3461e1c240cbb0ce614849b7bd6f8bbaad1ce436"
+    },
+    "contextpro": {
+      "build": "contextpro build (local path redacted)",
+      "fingerprint": {
+        "entry": "build/index.js",
+        "files": 97,
+        "sha256": "f000483ab92c45e40ffc2fee53c46f17499058964b8b000500fccd750d106160"
+      },
+      "commit": "3020a94398be0d0715711382f2d9f837815da277"
+    }
+  },
+  "records": [
+    {
+      "variant": "baseline",
+      "repeat": 1,
+      "fixture": "13-calls-alias-shadow",
+      "rows": [
+        {
+          "state": "cold_compiler",
+          "latencyMs": 527.303709,
+          "outputBytes": 4391,
+          "calls": 13,
+          "returned": 18,
+          "total": 18,
+          "correctness": "PASS"
+        },
+        {
+          "state": "warm_compiler",
+          "latencyMs": 3.905499999999961,
+          "outputBytes": 4391,
+          "calls": 13,
+          "returned": 18,
+          "total": 18,
+          "correctness": "PASS"
+        }
+      ],
+      "textBytes": 1150,
+      "hasCallLabels": false,
+      "hasFileCallTotals": false
+    },
+    {
+      "variant": "contextpro",
+      "repeat": 1,
+      "fixture": "13-calls-alias-shadow",
+      "rows": [
+        {
+          "state": "cold_compiler",
+          "latencyMs": 496.404125,
+          "outputBytes": 4592,
+          "calls": 13,
+          "returned": 18,
+          "total": 18,
+          "correctness": "PASS"
+        },
+        {
+          "state": "warm_compiler",
+          "latencyMs": 3.8627500000000055,
+          "outputBytes": 4592,
+          "calls": 13,
+          "returned": 18,
+          "total": 18,
+          "correctness": "PASS"
+        }
+      ],
+      "textBytes": 1164,
+      "hasCallLabels": true,
+      "hasFileCallTotals": true
+    },
+    {
+      "variant": "baseline",
+      "repeat": 1,
+      "fixture": "2009-calls-truncated",
+      "rows": [
+        {
+          "state": "cold_compiler",
+          "latencyMs": 781.583167,
+          "outputBytes": 20295,
+          "calls": 2009,
+          "returned": 100,
+          "total": 2014,
+          "correctness": "PASS"
+        },
+        {
+          "state": "warm_compiler",
+          "latencyMs": 268.671292,
+          "outputBytes": 20295,
+          "calls": 2009,
+          "returned": 100,
+          "total": 2014,
+          "correctness": "PASS"
+        }
+      ],
+      "textBytes": 3457,
+      "hasCallLabels": false,
+      "hasFileCallTotals": false
+    },
+    {
+      "variant": "contextpro",
+      "repeat": 1,
+      "fixture": "2009-calls-truncated",
+      "rows": [
+        {
+          "state": "cold_compiler",
+          "latencyMs": 759.1495,
+          "outputBytes": 20499,
+          "calls": 2009,
+          "returned": 100,
+          "total": 2014,
+          "correctness": "PASS"
+        },
+        {
+          "state": "warm_compiler",
+          "latencyMs": 268.167375,
+          "outputBytes": 20499,
+          "calls": 2009,
+          "returned": 100,
+          "total": 2014,
+          "correctness": "PASS"
+        }
+      ],
+      "textBytes": 3026,
+      "hasCallLabels": true,
+      "hasFileCallTotals": true
+    },
+    {
+      "variant": "contextpro",
+      "repeat": 2,
+      "fixture": "13-calls-alias-shadow",
+      "rows": [
+        {
+          "state": "cold_compiler",
+          "latencyMs": 485.299,
+          "outputBytes": 4592,
+          "calls": 13,
+          "returned": 18,
+          "total": 18,
+          "correctness": "PASS"
+        },
+        {
+          "state": "warm_compiler",
+          "latencyMs": 3.885958999999957,
+          "outputBytes": 4592,
+          "calls": 13,
+          "returned": 18,
+          "total": 18,
+          "correctness": "PASS"
+        }
+      ],
+      "textBytes": 1164,
+      "hasCallLabels": true,
+      "hasFileCallTotals": true
+    },
+    {
+      "variant": "baseline",
+      "repeat": 2,
+      "fixture": "13-calls-alias-shadow",
+      "rows": [
+        {
+          "state": "cold_compiler",
+          "latencyMs": 488.972792,
+          "outputBytes": 4391,
+          "calls": 13,
+          "returned": 18,
+          "total": 18,
+          "correctness": "PASS"
+        },
+        {
+          "state": "warm_compiler",
+          "latencyMs": 3.913250000000062,
+          "outputBytes": 4391,
+          "calls": 13,
+          "returned": 18,
+          "total": 18,
+          "correctness": "PASS"
+        }
+      ],
+      "textBytes": 1150,
+      "hasCallLabels": false,
+      "hasFileCallTotals": false
+    },
+    {
+      "variant": "contextpro",
+      "repeat": 2,
+      "fixture": "2009-calls-truncated",
+      "rows": [
+        {
+          "state": "cold_compiler",
+          "latencyMs": 779.6200000000001,
+          "outputBytes": 20499,
+          "calls": 2009,
+          "returned": 100,
+          "total": 2014,
+          "correctness": "PASS"
+        },
+        {
+          "state": "warm_compiler",
+          "latencyMs": 264.40479099999993,
+          "outputBytes": 20499,
+          "calls": 2009,
+          "returned": 100,
+          "total": 2014,
+          "correctness": "PASS"
+        }
+      ],
+      "textBytes": 3026,
+      "hasCallLabels": true,
+      "hasFileCallTotals": true
+    },
+    {
+      "variant": "baseline",
+      "repeat": 2,
+      "fixture": "2009-calls-truncated",
+      "rows": [
+        {
+          "state": "cold_compiler",
+          "latencyMs": 786.164125,
+          "outputBytes": 20295,
+          "calls": 2009,
+          "returned": 100,
+          "total": 2014,
+          "correctness": "PASS"
+        },
+        {
+          "state": "warm_compiler",
+          "latencyMs": 261.65362500000015,
+          "outputBytes": 20295,
+          "calls": 2009,
+          "returned": 100,
+          "total": 2014,
+          "correctness": "PASS"
+        }
+      ],
+      "textBytes": 3457,
+      "hasCallLabels": false,
+      "hasFileCallTotals": false
+    },
+    {
+      "variant": "baseline",
+      "repeat": 3,
+      "fixture": "13-calls-alias-shadow",
+      "rows": [
+        {
+          "state": "cold_compiler",
+          "latencyMs": 482.929042,
+          "outputBytes": 4391,
+          "calls": 13,
+          "returned": 18,
+          "total": 18,
+          "correctness": "PASS"
+        },
+        {
+          "state": "warm_compiler",
+          "latencyMs": 4.0903749999999945,
+          "outputBytes": 4391,
+          "calls": 13,
+          "returned": 18,
+          "total": 18,
+          "correctness": "PASS"
+        }
+      ],
+      "textBytes": 1150,
+      "hasCallLabels": false,
+      "hasFileCallTotals": false
+    },
+    {
+      "variant": "contextpro",
+      "repeat": 3,
+      "fixture": "13-calls-alias-shadow",
+      "rows": [
+        {
+          "state": "cold_compiler",
+          "latencyMs": 486.7168750000001,
+          "outputBytes": 4592,
+          "calls": 13,
+          "returned": 18,
+          "total": 18,
+          "correctness": "PASS"
+        },
+        {
+          "state": "warm_compiler",
+          "latencyMs": 3.858875000000012,
+          "outputBytes": 4592,
+          "calls": 13,
+          "returned": 18,
+          "total": 18,
+          "correctness": "PASS"
+        }
+      ],
+      "textBytes": 1164,
+      "hasCallLabels": true,
+      "hasFileCallTotals": true
+    },
+    {
+      "variant": "baseline",
+      "repeat": 3,
+      "fixture": "2009-calls-truncated",
+      "rows": [
+        {
+          "state": "cold_compiler",
+          "latencyMs": 798.191,
+          "outputBytes": 20295,
+          "calls": 2009,
+          "returned": 100,
+          "total": 2014,
+          "correctness": "PASS"
+        },
+        {
+          "state": "warm_compiler",
+          "latencyMs": 264.0792079999999,
+          "outputBytes": 20295,
+          "calls": 2009,
+          "returned": 100,
+          "total": 2014,
+          "correctness": "PASS"
+        }
+      ],
+      "textBytes": 3457,
+      "hasCallLabels": false,
+      "hasFileCallTotals": false
+    },
+    {
+      "variant": "contextpro",
+      "repeat": 3,
+      "fixture": "2009-calls-truncated",
+      "rows": [
+        {
+          "state": "cold_compiler",
+          "latencyMs": 785.736667,
+          "outputBytes": 20499,
+          "calls": 2009,
+          "returned": 100,
+          "total": 2014,
+          "correctness": "PASS"
+        },
+        {
+          "state": "warm_compiler",
+          "latencyMs": 268.48029199999996,
+          "outputBytes": 20499,
+          "calls": 2009,
+          "returned": 100,
+          "total": 2014,
+          "correctness": "PASS"
+        }
+      ],
+      "textBytes": 3026,
+      "hasCallLabels": true,
+      "hasFileCallTotals": true
+    }
+  ],
+  "summary": [
+    {
+      "fixture": "13-calls-alias-shadow",
+      "variant": "baseline",
+      "state": "cold_compiler",
+      "samples": 3,
+      "medianMs": 488.972792,
+      "minMs": 482.929042,
+      "maxMs": 527.303709
+    },
+    {
+      "fixture": "13-calls-alias-shadow",
+      "variant": "baseline",
+      "state": "warm_compiler",
+      "samples": 3,
+      "medianMs": 3.913250000000062,
+      "minMs": 3.905499999999961,
+      "maxMs": 4.0903749999999945
+    },
+    {
+      "fixture": "13-calls-alias-shadow",
+      "variant": "contextpro",
+      "state": "cold_compiler",
+      "samples": 3,
+      "medianMs": 486.7168750000001,
+      "minMs": 485.299,
+      "maxMs": 496.404125
+    },
+    {
+      "fixture": "13-calls-alias-shadow",
+      "variant": "contextpro",
+      "state": "warm_compiler",
+      "samples": 3,
+      "medianMs": 3.8627500000000055,
+      "minMs": 3.858875000000012,
+      "maxMs": 3.885958999999957
+    },
+    {
+      "fixture": "2009-calls-truncated",
+      "variant": "baseline",
+      "state": "cold_compiler",
+      "samples": 3,
+      "medianMs": 786.164125,
+      "minMs": 781.583167,
+      "maxMs": 798.191
+    },
+    {
+      "fixture": "2009-calls-truncated",
+      "variant": "baseline",
+      "state": "warm_compiler",
+      "samples": 3,
+      "medianMs": 264.0792079999999,
+      "minMs": 261.65362500000015,
+      "maxMs": 268.671292
+    },
+    {
+      "fixture": "2009-calls-truncated",
+      "variant": "contextpro",
+      "state": "cold_compiler",
+      "samples": 3,
+      "medianMs": 779.6200000000001,
+      "minMs": 759.1495,
+      "maxMs": 785.736667
+    },
+    {
+      "fixture": "2009-calls-truncated",
+      "variant": "contextpro",
+      "state": "warm_compiler",
+      "samples": 3,
+      "medianMs": 268.167375,
+      "minMs": 264.40479099999993,
+      "maxMs": 268.48029199999996
+    }
+  ],
+  "pathRedactions": "Absolute local build paths replaced; measurements, build hashes and commits unchanged.",
+  "catalogBytes": {
+    "baseline": {
+      "lean": {
+        "tools": 2,
+        "bytes": 2068
+      },
+      "workflow": {
+        "tools": 13,
+        "bytes": 18520
+      },
+      "core": {
+        "tools": 38,
+        "bytes": 47454
+      }
+    },
+    "contextpro": {
+      "lean": {
+        "tools": 3,
+        "bytes": 3139
+      },
+      "workflow": {
+        "tools": 14,
+        "bytes": 19591
+      },
+      "core": {
+        "tools": 38,
+        "bytes": 47125
+      }
+    }
+  }
+}
