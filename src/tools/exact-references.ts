@@ -152,7 +152,7 @@ function formatReferencePayload(input: {
   return lines.join("\n");
 }
 
-async function formatScipFallback(options: ExactReferencesOptions, target?: { file: string; line: number } | null): Promise<string | null> {
+async function formatScipFallback(options: ExactReferencesOptions, target?: ResolvedTarget | null, warnings: string[] = []): Promise<string | null> {
   const scip = await findScipReferences({
     rootDir: options.rootDir,
     symbolName: options.symbolName,
@@ -176,6 +176,8 @@ async function formatScipFallback(options: ExactReferencesOptions, target?: { fi
     format: options.format,
     scipSymbols: scip.symbols,
     total: scip.total,
+    warnings: [...warnings, "Imported SCIP evidence has not been checked against the current source revision; reimport after source changes."],
+    scope: { kind: "imported_scip", completeness: "not_guaranteed", freshness: "unverified" },
   });
 }
 
@@ -308,13 +310,18 @@ export async function exactReferencesTool(options: ExactReferencesOptions): Prom
     files: db.getAllFiles().filter(file => isTypeScriptLike(file.path)).map(file => resolveProjectPath(options.rootDir, file.path, "indexed file")),
     file: resolveProjectPath(options.rootDir, target.file, "reference target"),
     line: target.line, symbol: options.symbolName,
+    limit: Math.max(1, Math.min(options.limit ?? 100, 500)),
   });
+  if (found.total === 0) {
+    const scipResult = await formatScipFallback(options, target, [
+      ...found.warnings, "TypeScript returned no references; using imported SCIP evidence as a fallback.",
+    ]);
+    if (scipResult) return scipResult;
+  }
   const references: ExactReference[] = found.references.map(ref => ({ ...ref, confidence: "LSP_RESOLVED" }));
-  const counts: Record<string, number> = { definition: 0, import: 0, call: 0, reference: 0 };
-  for (const ref of references) counts[ref.kind ?? "reference"]++;
   return formatReferencePayload({
     symbolName: options.symbolName, target, confidence: "LSP_RESOLVED",
-    references: references.slice(0, Math.max(1, Math.min(options.limit ?? 100, 500))),
-    total: references.length, counts, warnings: found.warnings, scope: found.scope, format: options.format,
+    references,
+    total: found.total, counts: found.counts, warnings: found.warnings, scope: found.scope, format: options.format,
   });
 }

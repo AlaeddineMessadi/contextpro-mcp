@@ -134,7 +134,7 @@ function referenceKind(source: ts.SourceFile, position: number, definition: bool
   return "reference";
 }
 
-export function findTypeScriptReferences(input: { rootDir: string; files: string[]; file: string; line: number; symbol: string }) {
+export function findTypeScriptReferences(input: { rootDir: string; files: string[]; file: string; line: number; symbol: string; limit?: number }) {
   const root = resolve(input.rootDir);
   const target = resolve(input.file);
   const allFiles = [...new Set([...input.files, target].map(file => resolve(file)))].sort();
@@ -147,7 +147,14 @@ export function findTypeScriptReferences(input: { rootDir: string; files: string
   }
   const warnings: string[] = [];
   if (input.files.length === 0) warnings.push("The source index is empty; only the explicit target is in scope. Run reindex before trusting reference completeness.");
-  const results = new Map<string, TypedReference>();
+  const limit = Number.isFinite(input.limit) ? Math.max(1, Math.min(Math.floor(input.limit!), 500)) : 100;
+  // Exact totals require deduplicating every location across projects, but only
+  // the bounded display window needs source context or an IPC payload.
+  const locations = new Map<string, TypedReference["kind"]>();
+  const results: TypedReference[] = [];
+  const counts = { definition: 0, import: 0, call: 0, reference: 0 };
+  const compare = (a: Pick<TypedReference, "file" | "line" | "column">, b: TypedReference) =>
+    a.file.localeCompare(b.file) || a.line - b.line || a.column - b.column;
   const checkedFiles = new Set<string>();
   let reusedProjects = 0;
   let projectCount = 0;
@@ -213,16 +220,35 @@ export function findTypeScriptReferences(input: { rootDir: string; files: string
         if (!refSource) continue;
         const at = refSource.getLineAndCharacterOfPosition(ref.textSpan.start);
         const isDefinition = ref.isDefinition === true;
-        const item: TypedReference = { file: relative(root, ref.fileName).split("\\").join("/"), line: at.line + 1, column: at.character + 1,
-          context: refSource.text.split("\n")[at.line]?.trim().slice(0, 160) ?? "", isDefinition,
-          kind: referenceKind(refSource, ref.textSpan.start, isDefinition) };
-        const key = `${item.file}:${item.line}:${item.column}`;
-        if (!results.get(key)?.isDefinition) results.set(key, item);
+        const location = { file: relative(root, ref.fileName).split("\\").join("/"), line: at.line + 1, column: at.character + 1 };
+        const key = `${location.file}:${location.line}:${location.column}`;
+        const previous = locations.get(key);
+        if (previous === "definition") continue;
+        const kind = referenceKind(refSource, ref.textSpan.start, isDefinition);
+        if (previous === kind) continue;
+        if (previous) counts[previous]--;
+        locations.set(key, kind);
+        counts[kind]++;
+        let low = 0, high = results.length;
+        while (low < high) {
+          const mid = (low + high) >>> 1;
+          if (compare(location, results[mid]) > 0) low = mid + 1;
+          else high = mid;
+        }
+        if (low >= limit) continue;
+        const lineStarts = refSource.getLineStarts();
+        const item: TypedReference = { ...location, isDefinition, kind,
+          context: refSource.text.slice(lineStarts[at.line], lineStarts[at.line + 1] ?? refSource.text.length).trim().slice(0, 160) };
+        if (results[low] && compare(location, results[low]) === 0) results[low] = item;
+        else {
+          results.splice(low, 0, item);
+          if (results.length > limit) results.pop();
+        }
       }
     }
   }
   if (checkedFiles.size < allowed.size) warnings.push(`${allowed.size - checkedFiles.size} indexed TS/JS files could not be checked.`);
-  return { references: [...results.values()].sort((a,b) => a.file.localeCompare(b.file) || a.line-b.line || a.column-b.column),
+  return { references: results, total: locations.size, counts,
     warnings: [...new Set(warnings)], scope: { kind: "indexed_ts_js_files", files: allowed.size, checkedFiles: checkedFiles.size,
       configs: [...configs.keys()].filter(Boolean).map(file => relative(root, file)), includesIndexedTests: true },
     projectCount, reusedProjects };
