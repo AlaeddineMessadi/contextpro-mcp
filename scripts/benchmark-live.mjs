@@ -24,7 +24,7 @@ const tasks = [
   { id: 'failed-reindex', query: 'After a partially failed reindex mark the index stale and require repair', terms: ['reindex', 'repair', 'stale'], expected: ['src/tools/reindex.ts', 'src/core/index-freshness.ts'] },
   { id: 'token-accounting', query: 'Calculate session token savings subtracting tool schema overhead without claiming actual billing savings', terms: ['schemaTokens', 'savedTokens', 'billing'], expected: ['src/core/efficiency.ts', 'src/tools/efficiency-report.ts', 'src/core/runtime-session.ts'] },
   { id: 'worktree-snapshot', query: 'Seed a new git worktree index from a consistent SQLite snapshot of the base checkout', terms: ['worktree', 'snapshot', 'seed'], expected: ['src/core/worktree-seed.ts'] },
-  { id: 'parser-concurrency', query: 'Load and cache tree sitter WebAssembly grammars before parsing source code', terms: ['grammar', 'wasm', 'Parser'], expected: ['src/core/tree-sitter.ts'] },
+  { id: 'parser-concurrency', query: 'Load and cache tree sitter WebAssembly grammars before parsing source code', terms: ['grammar', 'wasm', 'Parser'], expected: ['src/core/tree-sitter-runtime.ts'] },
 ];
 const rows = [];
 const captures = [];

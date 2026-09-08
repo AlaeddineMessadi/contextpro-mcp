@@ -53,6 +53,14 @@ npm pack --dry-run
 
 ## Next batches
 
+### PR review follow-up
+
+The compiler worker now applies the requested display limit before IPC, retaining at most 500 context-bearing entries while counting and deduplicating all occurrences. Source snippets use line offsets instead of splitting an entire file for each result. Empty TypeScript results again fall back to imported SCIP evidence, preserving compiler warnings and explicitly marking SCIP freshness as unverified. The live retrieval benchmark's parser task now expects `tree-sitter-runtime.ts`, where grammar loading lives; historical measurements above remain unchanged.
+
+After these fixes, all **646 main tests pass on Node v26.0.0**. Added coverage exercises a real worker returning three of 2,002 occurrences, upper/lower/default limits, project deduplication under truncation, and malformed-config fallback to SCIP in text and JSON. The TypeScript build, scope validation's recommended tests and diff whitespace check pass.
+
+### Planned work
+
 1. Share freshness work within a request, add dependency-aware invalidation and reduce cold compiler setup. Keep negative results dependent on source inventory.
 2. Route common intents through the existing small catalog; select evidence and supporting types/tests within one bounded context packet.
 3. Validate memory against source/config revisions, preserve supersession and support scoped lexical retrieval offline.

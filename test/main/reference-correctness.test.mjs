@@ -7,6 +7,7 @@ import { reindex } from "../../build/tools/reindex.js";
 import { exactReferencesTool } from "../../build/tools/exact-references.js";
 import { clearTypeScriptReferenceCache, findTypeScriptReferences } from "../../build/core/typescript-references.js";
 import { closeDB } from "../../build/core/db.js";
+import { importScipIndex } from "../../build/core/scip-index.js";
 
 let root;
 const write = (file, content) => writeFile(join(root, file), typeof content === "string" ? content : JSON.stringify(content));
@@ -107,6 +108,33 @@ describe("reference correctness and incremental projects", () => {
     assert.ok(result.warnings.some(warning => warning.includes("Invalid configuration")));
   });
 
+  it("falls back from empty compiler results to SCIP without hiding configuration or freshness warnings", async () => {
+    const symbol = "local src/math.ts add().";
+    await write("scip.json", { documents: [
+      { relative_path: "src/math.ts", symbols: [{ symbol, display_name: "add", kind: "Function" }],
+        occurrences: [{ range: [0, 16, 19], symbol, symbol_roles: 1 }] },
+      { relative_path: "src/relative.ts", occurrences: [{ range: [1, 17, 20], symbol, symbol_roles: 0 }] },
+    ] });
+    await importScipIndex(root, "scip.json");
+    assert.equal((await refs()).confidence, "LSP_RESOLVED");
+    await write("tsconfig.json", '{ "compilerOptions": ');
+    const result = await refs({ limit: 1 });
+    assert.equal(result.confidence, "SCIP_RESOLVED");
+    assert.equal(result.total, 2);
+    assert.equal(result.returned, 1);
+    assert.equal(result.truncated, true);
+    assert.equal(result.references[0].confidence, "SCIP_RESOLVED");
+    assert.equal(result.scope.kind, "imported_scip");
+    assert.equal(result.scope.freshness, "unverified");
+    assert.ok(result.warnings.some(warning => warning.includes("Invalid configuration")));
+    assert.ok(result.warnings.some(warning => warning.includes("fallback")));
+    assert.ok(result.warnings.some(warning => warning.includes("current source revision")));
+    const text = await exactReferencesTool({ rootDir: root, symbolName: "add", file: "src/math.ts", line: 1 });
+    assert.match(text, /SCIP_RESOLVED/);
+    assert.match(text, /Invalid configuration/);
+    assert.match(text, /current source revision/);
+  });
+
   it("uses separate configurations for referenced workspace projects", async () => {
     await write("tsconfig.json", { files: [], references: [{ path: "./src" }, { path: "./tests" }] });
     await write("src/tsconfig.json", { compilerOptions: { composite: true }, include: ["*.ts"] });
@@ -114,6 +142,10 @@ describe("reference correctness and incremental projects", () => {
     const result = await refs();
     assert.equal(result.total, 6);
     assert.equal(result.scope.configs.length, 2);
+    const limited = await refs({ limit: 1 });
+    assert.deepEqual(limited.references, result.references.slice(0, 1));
+    assert.equal(limited.total, result.total);
+    assert.deepEqual(limited.counts, result.counts);
   });
 
   it("invalidates a consumer when a referenced project's configuration changes", async () => {
