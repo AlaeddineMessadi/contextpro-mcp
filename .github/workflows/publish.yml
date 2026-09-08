@@ -1,0 +1,88 @@
+name: Publish npm
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: npm-publication
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    # Dispatch on the reviewed tag so npm provenance names the source commit,
+    # rather than the latest main commit at the time someone clicks Run.
+    if: startsWith(github.ref, 'refs/tags/v') && github.event.repository.private == false && vars.NPM_PUBLISH_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      dist-tag: ${{ steps.metadata.outputs.dist-tag }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - name: Validate and resolve the release tag
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          node --input-type=module -e 'import { isReleaseVersion } from "./scripts/check-release.mjs"; const t=process.env.RELEASE_TAG; if (!t?.startsWith("v") || !isReleaseVersion(t.slice(1))) process.exit(1);'
+          release_commit=$(git rev-parse --verify "refs/tags/${RELEASE_TAG}^{commit}")
+          test "$release_commit" = "$GITHUB_SHA"
+          git merge-base --is-ancestor "$release_commit" origin/main
+          git checkout --detach "$release_commit"
+          node scripts/check-release.mjs "$RELEASE_TAG"
+      - name: Install benchmark prerequisite
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes ripgrep
+      - run: npm ci
+      - run: npm run build
+      - run: node --test --test-concurrency=4 test/main/*.test.mjs
+      - run: npm run docs:check
+      - run: npm audit --omit=dev --audit-level=high
+      - name: Prepare and inspect the tarball
+        id: metadata
+        run: |
+          mkdir -p release-artifact
+          npm pack --ignore-scripts --json --pack-destination release-artifact > "$RUNNER_TEMP/pack.json"
+          node scripts/check-package.mjs "$RUNNER_TEMP/pack.json"
+          node --input-type=module -e 'import fs from "node:fs"; const p=JSON.parse(fs.readFileSync("package.json","utf8")); fs.appendFileSync(process.env.GITHUB_OUTPUT, "dist-tag=" + (p.version.includes("-") ? "next" : "latest") + "\n");'
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: npm-package
+          path: release-artifact/*.tgz
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: npm
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: npm-package
+          path: release-artifact
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+      - name: Publish the reviewed tarball with provenance
+        env:
+          DIST_TAG: ${{ needs.prepare.outputs.dist-tag }}
+        run: |
+          packages=(release-artifact/*.tgz)
+          test "${#packages[@]}" -eq 1
+          npm publish "${packages[0]}" --access public --provenance --ignore-scripts --tag "$DIST_TAG"

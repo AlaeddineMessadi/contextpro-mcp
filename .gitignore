@@ -16,8 +16,8 @@ coverage/
 
 # Environment
 .env
-.env.local
-.env.*.local
+.env.*
+!.env.example
 
 # Development
 .mcp_data/
@@ -60,6 +60,7 @@ extension.vsix
 /trace-*.mjs
 /verify-*.mjs
 
-# npm is canonical for the MCP root and landing app; dashboard keeps Bun
+# npm lockfiles are canonical for the MCP and optional apps
 /bun.lock
 /landing/bun.lock
+/dashboard/bun.lock

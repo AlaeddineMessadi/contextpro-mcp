@@ -24,8 +24,8 @@ and the page **auto-refreshes** status + tool activity every few seconds.
 
 ```bash
 cd dashboard
-bun install --frozen-lockfile
-bun run dev        # → http://localhost:6868
+npm ci
+npm run dev        # → http://localhost:6868
 ```
 
 The dashboard imports the MCP's built modules from `../build`, so build the MCP first
@@ -45,7 +45,8 @@ The dashboard imports the MCP's built modules from `../build`, so build the MCP 
   a connection problem.
 - It's a **local operator tool**, not a deployed site — it reads local SQLite files.
 
-The dashboard remains a separate app with a Bun lockfile. Use `bun run typecheck` and `bun run build` for validation. The obsolete
+The dashboard remains a separate app with an npm lockfile. Use `npm run typecheck` and `npm run build` for validation.
+Development and production scripts bind to `127.0.0.1`; there is no authentication layer. The obsolete
 `next lint` script has been replaced with the TypeScript check; a dedicated linter
 configuration remains follow-up work. See the
 repository [maintenance guide](../docs/maintenance.md) before deleting database state

@@ -4,7 +4,7 @@ import { dirname, resolve, relative, extname } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const files = ["README.md", "INSTALL.md", "INSTRUCTIONS.md", "STATUS.md", "TODO.md", "agent-guide.md", "AGENTS.md", "CLAUDE.md", "landing/README.md", "dashboard/README.md"];
+const files = ["CONTRIBUTING.md", "SECURITY.md", "SUPPORT.md", "CODE_OF_CONDUCT.md", "README.md", "INSTALL.md", "INSTRUCTIONS.md", "STATUS.md", "TODO.md", "agent-guide.md", "AGENTS.md", "CLAUDE.md", "landing/README.md", "dashboard/README.md"];
 async function collect(dir) {
   for (const entry of await readdir(resolve(root, dir), { withFileTypes: true })) {
     const path = `${dir}/${entry.name}`;

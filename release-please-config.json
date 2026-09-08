@@ -1,0 +1,11 @@
+{
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "bootstrap-sha": "6cea20c80d2be8b2569d8f43678ba6e833c158cc",
+  "packages": {
+    ".": {
+      "release-type": "node",
+      "package-name": "contextpro-mcp",
+      "include-component-in-tag": false
+    }
+  }
+}

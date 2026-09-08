@@ -1,6 +1,6 @@
 # ContextPro status
 
-Updated 2026-09-08. This describes the checkout including the direct-reference and benchmark follow-up, not a published release. Package metadata remains `1.3.0`; supported Node range is `>=20 <27`.
+Updated 2026-09-08. This describes the checkout including open-source launch preparation, not a published release. Package metadata remains `1.3.0`; supported Node range is `>=20 <27`.
 
 | Area | Current behavior | Remaining limit |
 | --- | --- | --- |
@@ -17,6 +17,8 @@ Updated 2026-09-08. This describes the checkout including the direct-reference a
 | Efficiency | Session estimates plus separately recorded provider-usage trials | No automatic billing access or universal savings claim |
 
 ## Verification and measurements
+
+Open-source preparation adds contributor/security guides, gated release workflows, package-content checks and a source-install website path. **656 main tests pass on Node v26.0.0**; both optional apps build with Next.js 16.3.4 / React 19.2.8, and all three production dependency audits report zero known vulnerabilities at this check. Workflow syntax and documentation/package checks pass locally. Public visibility, npm publication and GitHub security settings remain explicit [launch gates](docs/launch/checklist.md).
 
 The reference-evidence follow-up passes **654 main tests on Node v26.0.0**. All 24 offline reference replay queries pass; compiler latency is essentially unchanged. The larger text fixture is 12.5% smaller, while the initial lean/workflow catalog grows by 1,071 bytes. These are output/schema measurements, not agent token savings. See the [evidence report](docs/benchmarks/2026-09-08-reference-evidence.md).
 

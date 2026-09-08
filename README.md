@@ -1,85 +1,105 @@
-# ContextPro MCP
+# ContextPro
 
-ContextPro gives coding agents bounded repository context: source slices, symbol contracts, references, likely affected files and reusable task packets. It runs locally over MCP stdio, stores each worktree's index in SQLite, and supports optional embeddings for semantic retrieval.
+**Find the code. Keep the context small.**
 
-This is a private evolution of [Context+](https://github.com/ForLoopCodes/contextplus). The checkout includes unreleased improvements from [PR #9](https://github.com/AlaeddineMessadi/contextpro-mcp/pull/9). The `1.3.0` package version is metadata; it does not establish that this checkout has been published to a registry.
+ContextPro gives coding agents the source evidence they need: bounded code slices, symbol contracts, references and reusable task context. It runs locally over MCP, so your agent can explore a repository without repeatedly loading whole files into its conversation.
 
-## Start here
+[Get started](INSTALL.md) · [Agent guide](agent-guide.md) · [Documentation](docs/README.md) · [Contribute](https://github.com/AlaeddineMessadi/contextpro-mcp/blob/main/CONTRIBUTING.md) · [Security](SECURITY.md)
 
-- [Install and connect clients](INSTALL.md): local build, Codex, Claude Code, OpenCode, native-module repair.
-- [Agent guide](agent-guide.md): choose the smallest useful call, verify evidence and avoid repeated context.
-- [Configuration](docs/configuration.md): profiles, providers, indexing and runtime settings.
-- [Current status](STATUS.md) and [next work](TODO.md).
-- [Documentation index](docs/README.md): architecture, maintenance, benchmarks and historical records.
+## Why ContextPro?
 
-## Build and run
+- **Read less, learn more.** Find code and retrieve relevant source together. Batch known targets in one call and expand only what the task needs.
+- **Follow the binding, not just the name.** TypeScript and JavaScript references use the compiler to distinguish aliases, exports and same-named symbols. Counts, scope and truncation are explicit.
+- **Keep the tool catalog small.** The lean profile starts with three tools. Discover additional tools when they become useful.
+- **Stay aware of changes.** Worktree-scoped indexes check saved-file drift and reconcile in the background. Responses expose freshness and evidence limits.
+- **Carry useful context forward.** Reuse task packets and record durable decisions in project memory. Notes remain evidence to review, not instructions to trust blindly.
+- **Use models when they help.** Structural reads work without an embedding service. Add local or hosted embeddings for semantic retrieval.
 
-Use Node.js 20–26 and npm. Keep the same Node executable for installation and launching when possible.
+ContextPro is built for agents that need to inspect code, explain an API, trace references and plan changes. It also leaves room for the simplest useful operation: a native read can be best when the exact small source range is already known.
+
+## Get started
+
+Use **Node.js 24 LTS** and npm. Install from source until a registry release is announced; the version in `package.json` is not proof of a published npm package.
 
 ```sh
 git clone https://github.com/AlaeddineMessadi/contextpro-mcp.git
 cd contextpro-mcp
 npm ci
 npm run build
-node build/index.js doctor --root /absolute/path/to/target-project
+node build/index.js doctor --root /absolute/path/to/your-project
+node -p 'process.execPath'
 ```
 
-Configure the client with an absolute Node executable, this checkout's `build/index.js`, and the target project's root. See [client examples](INSTALL.md#client-configuration). An already running MCP process needs a restart to load a new build. Checking out or merging a branch does not update an existing process.
+Use the printed Node executable and your checkout path in the client configuration. For example, in Claude Code's project `.mcp.json`:
 
-An embedding endpoint is optional for structural reads and keyword retrieval. For local semantic search, start Ollama and install the model selected in your configuration. Source sent to a hosted embedding or chat endpoint leaves the machine. The MCP's provider settings are separate from the coding agent's account.
+```json
+{
+  "mcpServers": {
+    "contextpro": {
+      "command": "/absolute/path/to/node",
+      "args": ["/absolute/path/to/contextpro-mcp/build/index.js", "--root", "/absolute/path/to/your-project"],
+      "env": { "CONTEXTPRO_TOOL_PROFILE": "lean" }
+    }
+  }
+}
+```
 
-## Choose a tool profile
+Replace every placeholder, add `.contextpro/` to the target project's `.gitignore`, then restart the client. [Installation instructions](INSTALL.md) cover Codex, Claude Code, OpenCode, indexing and native-module recovery. [Project instructions](INSTRUCTIONS.md) teach agents when ContextPro is useful and when to verify with native tools.
 
-| Profile | Initial catalog | Use |
+## A small interface for real coding work
+
+| Task | Start with | What to check |
 | --- | --- | --- |
-| `workflow` (default) | 14 tools | Discovery, source reads, impact, validation and diagnostics |
-| `lean` | `context`, `exact_references`, `discover_tools` | Minimal advertised catalog and batched source retrieval |
-| `core` | Common workflows plus editing/graphs | More operations available immediately |
-| `full` | All registered tools and compatibility aliases | Clients that cannot refresh discovered tools |
+| Locate unfamiliar code and read evidence | `context(query:...)` | Retrieval is a ranked selection, not an exhaustive search |
+| Read several known targets | `context(targets:[...])` | Follow explicit omissions if more evidence is needed |
+| Find TS/JS references | `exact_references` | Declared scope, reference kinds and truncation |
+| Inspect an exported API | Discover `skeleton`, then use `exported_only:true` | Signatures do not prove behavior |
+| Assess a change | Discover `blast_radius` or `validate_scope` | Text matches are candidates; recommended checks still need to run |
+| Preserve a decision | Discover `memory_record_task` | Keep supporting evidence and revisit stale assumptions |
 
-Set `CONTEXTPRO_TOOL_PROFILE` in the MCP process environment. `discover_tools` can enable expert tools during a session; enabling a tool does not run it.
+Tool schemas are the argument reference. See the [agent guide](agent-guide.md) for examples, batching and context reuse.
 
-## Useful operations
+| Profile | Initial interface |
+| --- | --- |
+| `lean` | `context`, `exact_references`, `discover_tools` |
+| `workflow` (default) | 14 tools for discovery, reads, impact and diagnostics |
+| `core` | Common workflows plus editing and graphs |
+| `full` | All registered tools, including compatibility aliases |
 
-| Need | Operation | Evidence limits |
-| --- | --- | --- |
-| Find unfamiliar code and read it together | `context(query:...)` in lean/full, or `task_pack` / `search` | Ranked selection can omit relevant files |
-| Read known targets together | `context(targets:[...])` or batched `explain` | Omissions are explicit; expand if needed |
-| Inspect the public API | `skeleton(exported_only:true)` for TS/JS | Signatures are not behavioral proof |
-| Find references before a change | `exact_references` | Compiler-backed TS/JS within declared scope; imported SCIP and Python heuristics have different provenance |
-| Find textual usage candidates | `blast_radius` | Matching lines and names, not binding-resolved calls |
-| Plan checks | `validate_scope`, `change_impact`, `test_impact` | Recommendations; run actual tests/compiler checks |
-| Reuse task context | `task_pack(previous_context_id:...)`, `artifact_read` | Reuse a baseline only while the client still holds it |
-| Keep durable decisions | `memory_record_task` and memory tools | Retrieved notes require evidence review; automatic evidence validation is future work |
-| Inspect efficiency | `efficiency_report` when requested | Full-file comparison estimates, not measured billing |
+Set `CONTEXTPRO_TOOL_PROFILE` in the server environment. Discovery enables tools for the session without executing them.
 
-For a tiny known source range, a native read may be fastest. Do not force a fixed sequence of MCP calls for every task. Tool schemas and the [agent guide](agent-guide.md) document arguments; use discovery rather than loading a large catalog into each prompt.
+## Evidence you can inspect
 
-## Freshness and failure handling
+ContextPro distinguishes source evidence, compiler-resolved references, textual candidates and heuristic fallbacks. Parser and TypeScript workers run in bounded child processes so a worker failure can be reported and recovered from without inherently terminating the MCP server.
 
-Graph-backed reads check source drift and repair changes. Background reconciliation continues if file watching fails. Schema v7 uses size, modification time and change time as fast fingerprints; explicit hash refresh is also available. Hashing and parsing share a verified source read. This is per-file consistency, not an atomic snapshot of a continuously edited repository or unsaved editor buffers.
+Freshness checks cover saved files, not unsaved editor buffers. Per-file reconciliation is not an atomic snapshot of a repository being edited concurrently. Reference precision depends on language and scope; imported SCIP data and Python heuristics have different provenance from live TS/JS compiler results.
 
-Parser and TypeScript compiler work run in bounded child processes. Worker failures reject the affected request and allow recovery without inherently terminating MCP. Structural fallbacks have reduced precision. Syntax-checked edits fail closed if the required parser is unavailable. Cold compilation and whole-machine resource pressure remain limitations.
+Local-first does not mean sandboxed. Tools run with your user permissions. Hosted embedding or chat providers receive the inputs sent to them, and chat-assisted operations are optional. Read the [security model](SECURITY.md) and [provider configuration](docs/configuration.md) before using sensitive repositories.
 
-Interactive search reuses existing corpus vectors. A missing or timed-out embedding request can fall back to keyword ranking; use `preset:"keyword_only"` when no query-provider call is wanted. Reindex after an embedding-model change. See [configuration and recovery](docs/configuration.md).
+## Performance: measure completed work
 
-## Measurements
+We optimize for useful evidence per call and successful tasks, not just small responses. The [benchmark guide](https://github.com/AlaeddineMessadi/contextpro-mcp/blob/main/docs/benchmarks/README.md) separates direct tool timings, synthetic retrieval tests, agent runs and estimates.
 
-All **644 main tests passed on Node 24 and Node 26** for the reference/freshness implementation. A direct app-a replay found **13 call expressions**, three imports and one definition. Cold compiler setup took **12.743 seconds**; repeated calls took **0.675–0.738 seconds**.
+One [24-query offline reference experiment](https://github.com/AlaeddineMessadi/contextpro-mcp/blob/main/docs/benchmarks/2026-09-08-reference-evidence.md) passed every query and reduced the larger text response by approximately **12.5%**. Small responses grew approximately **1.2%**, and server latency was essentially unchanged. This is a scoped serialization result, not measured agent token or billing savings.
 
-Those are direct tool measurements, not end-to-end agent savings or a universal performance guarantee. [Benchmark records](docs/benchmarks/README.md) distinguish synthetic retrieval, provider-usage trials, manual estimates and incident replays. Savings depend on the task, model, cache behavior and successful completion; small outputs alone do not prove cheaper agent work.
+Comparisons with native tools, Graft, Graphify or Serena should report versions, correctness, cold and warm runs, provider usage and repeated trials. See [how we compare](https://github.com/AlaeddineMessadi/contextpro-mcp/blob/main/docs/comparison.md). We welcome reproducible results, including tasks where another approach wins.
 
-## Development and maintenance
+## Build with us
+
+Useful contributions include small bug reproductions, language fixtures, reference-completeness tests, realistic benchmarks, clearer setup guides and performance fixes with before/after evidence.
 
 ```sh
 npm run build
 npm test
 npm run docs:check
-npm pack --dry-run
+npm run release:check
+npm run pack:check
 ```
 
-See [maintenance](docs/maintenance.md) for runtime-specific test caches, optional demo/provider tests, cleanup boundaries and documentation generation. `landing/` is an optional website; `dashboard/` is a local operator app. Neither is required to run MCP.
+Start with [CONTRIBUTING.md](https://github.com/AlaeddineMessadi/contextpro-mcp/blob/main/CONTRIBUTING.md), [open issues](https://github.com/AlaeddineMessadi/contextpro-mcp/issues) or the [roadmap](https://github.com/AlaeddineMessadi/contextpro-mcp/blob/main/TODO.md). The optional `landing/` website and local `dashboard/` have their own npm lockfiles. [Maintenance](docs/maintenance.md) explains safe cleanup and runtime-specific testing.
 
-## License
+For questions, see [support](https://github.com/AlaeddineMessadi/contextpro-mcp/blob/main/SUPPORT.md). Report vulnerabilities privately through the process in [SECURITY.md](SECURITY.md). Community participation follows our [code of conduct](https://github.com/AlaeddineMessadi/contextpro-mcp/blob/main/CODE_OF_CONDUCT.md).
 
-[MIT](LICENSE). Preserve upstream attribution when redistributing derivatives.
+## License and origins
+
+ContextPro is an independent evolution of [Context+](https://github.com/ForLoopCodes/contextplus), distributed under the [MIT license](LICENSE). The original ForLoop copyright notice is preserved. See [NOTICE](NOTICE) for attribution. References to other projects do not imply endorsement.

@@ -10,87 +10,24 @@ const ides = [
   { id: "opencode", label: "OpenCode", file: "opencode.json" },
 ];
 
-const runners = [
-  { id: "npx", label: "npx" },
-  { id: "bunx", label: "bunx" },
-];
-
-function buildConfig(runner: string, ideId: string): string {
-  const isNpx = runner === "npx";
-
+function buildConfig(ideId: string): string {
+  const command = "/absolute/path/to/node";
+  const args = ["/absolute/path/to/contextpro-mcp/build/index.js", "--root", "/absolute/path/to/project"];
+  const env = { CONTEXTPRO_TOOL_PROFILE: "lean" };
   if (ideId === "opencode") {
-    return JSON.stringify(
-      {
-        $schema: "https://opencode.ai/config.json",
-        mcp: {
-          contextpro: {
-            type: "local",
-            command: isNpx
-              ? ["npx", "-y", "contextpro-mcp", "--root", "/absolute/path/to/project"]
-              : ["bunx", "contextpro-mcp", "--root", "/absolute/path/to/project"],
-            enabled: true,
-            environment: {
-              CONTEXTPRO_PROVIDER: "ollama",
-              CONTEXTPRO_EMBED_MODEL: "nomic-embed-text:latest",
-              CONTEXTPRO_TOOL_PROFILE: "workflow",
-              CONTEXTPRO_EMBED_TRACKER: "lazy",
-            },
-          },
-        },
-      },
-      null,
-      2,
-    );
+    return JSON.stringify({ mcp: { contextpro: { type: "local", command: [command, ...args], enabled: true, environment: env } } }, null, 2);
   }
-
   if (ideId === "vscode") {
-    return JSON.stringify(
-      {
-        servers: {
-          contextpro: {
-            type: "stdio",
-            command: isNpx ? "npx" : "bunx",
-            args: isNpx ? ["-y", "contextpro-mcp", "--root", "/absolute/path/to/project"] : ["contextpro-mcp", "--root", "/absolute/path/to/project"],
-            env: {
-              CONTEXTPRO_PROVIDER: "ollama",
-              CONTEXTPRO_EMBED_MODEL: "nomic-embed-text:latest",
-              CONTEXTPRO_TOOL_PROFILE: "workflow",
-              CONTEXTPRO_EMBED_TRACKER: "lazy",
-            },
-          },
-        },
-        inputs: [],
-      },
-      null,
-      2,
-    );
+    return JSON.stringify({ servers: { contextpro: { type: "stdio", command, args, env } } }, null, 2);
   }
-
-  return JSON.stringify(
-    {
-      mcpServers: {
-        contextpro: {
-          command: isNpx ? "npx" : "bunx",
-          args: isNpx ? ["-y", "contextpro-mcp", "--root", "/absolute/path/to/project"] : ["contextpro-mcp", "--root", "/absolute/path/to/project"],
-          env: {
-            CONTEXTPRO_PROVIDER: "ollama",
-            CONTEXTPRO_EMBED_MODEL: "nomic-embed-text:latest",
-            CONTEXTPRO_TOOL_PROFILE: "workflow",
-            CONTEXTPRO_EMBED_TRACKER: "lazy",
-          },
-        },
-      },
-    },
-    null,
-    2,
-  );
+  return JSON.stringify({ mcpServers: { contextpro: { command, args, env } } }, null, 2);
 }
 
-function buildInitCommand(runner: string, agent: string): string {
-  return runner === "npx"
-    ? `npx -y contextpro-mcp init ${agent}`
-    : `bunx contextpro-mcp init ${agent}`;
-}
+const buildCommand = `git clone https://github.com/AlaeddineMessadi/contextpro-mcp.git
+cd contextpro-mcp
+npm ci
+npm run build
+node -p 'process.execPath'`;
 
 function highlightJson(json: string): ReactNode[] {
   const tokenRegex =
@@ -150,13 +87,12 @@ function highlightJson(json: string): ReactNode[] {
 
 export default function IdeSetup() {
   const [activeIde, setActiveIde] = useState("claude");
-  const [activeRunner, setActiveRunner] = useState("npx");
   const [copied, setCopied] = useState(false);
   const [copiedInit, setCopiedInit] = useState(false);
 
   const ide = ides.find((i) => i.id === activeIde)!;
-  const config = buildConfig(activeRunner, activeIde);
-  const initCommand = buildInitCommand(activeRunner, activeIde);
+  const config = buildConfig(activeIde);
+  const initCommand = buildCommand;
 
   const handleCopy = () => {
     navigator.clipboard.writeText(config).then(() => {
@@ -211,10 +147,10 @@ export default function IdeSetup() {
               marginBottom: 40,
             }}
           >
-            &ldquo;ContextPro is the best thing that has happened to my
-            agent.&rdquo; Give it the semantic understanding it deserves. Add
-            ContextPro to your IDE by pasting the following JSON into your MCP
-            configuration file.
+            Connect ContextPro to your coding agent. Build the project locally,
+            replace the example paths with your own, and add the configuration
+            below to your MCP client. See the installation guide for setup and
+            troubleshooting.
           </p>
 
           <div
@@ -257,36 +193,7 @@ export default function IdeSetup() {
                 </button>
               ))}
             </div>
-            <div style={{ display: "flex", gap: 0 }}>
-              {runners.map((r) => (
-                <button
-                  key={r.id}
-                  onClick={() => setActiveRunner(r.id)}
-                  style={{
-                    padding: "10px 16px",
-                    fontSize: 13,
-                    fontWeight: 300,
-                    fontFamily: "var(--font-geist-mono)",
-                    color:
-                      activeRunner === r.id
-                        ? "var(--text-primary)"
-                        : "var(--text-faint)",
-                    background:
-                      activeRunner === r.id ? "var(--code-bg)" : "none",
-                    backdropFilter:
-                      activeRunner === r.id ? "blur(8px)" : "none",
-                    WebkitBackdropFilter:
-                      activeRunner === r.id ? "blur(8px)" : "none",
-                    border: "none",
-                    borderRadius: 8,
-                    cursor: "pointer",
-                    transition: "color 0.15s, background 0.15s",
-                  }}
-                >
-                  {r.label}
-                </button>
-              ))}
-            </div>
+
           </div>
 
           <div
@@ -377,7 +284,7 @@ export default function IdeSetup() {
                   fontFamily: "var(--font-geist-mono)",
                 }}
               >
-                Terminal
+                Build from source (Node.js 24 LTS)
               </span>
               <button
                 onClick={handleCopyInit}
@@ -416,8 +323,8 @@ export default function IdeSetup() {
           </div>
 
           <p style={{ fontSize: 13, color: "var(--text-faint)", marginTop: 16 }}>
-            Replace the project-root placeholder before connecting. Package examples
-            require access to a published release; use a local checkout for unreleased changes.
+            Replace all absolute-path placeholders before connecting. These examples
+            run your local build; restart your MCP client after rebuilding.
           </p>
 
           <a

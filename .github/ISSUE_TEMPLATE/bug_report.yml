@@ -1,0 +1,28 @@
+name: Bug report
+description: A crash, missing evidence, incorrect result or reproducible failure
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Do not include secrets, private source or personal paths. Security vulnerabilities need private reporting through SECURITY.md.
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: ContextPro commit/version, OS, Node executable/version, MCP client, profile and provider/model names (no credentials).
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal reproduction
+      description: Commands or tool arguments and a small public fixture. Include scope, freshness and truncation warnings if relevant.
+    validations:
+      required: true
+  - type: textarea
+    id: behavior
+    attributes:
+      label: Expected and actual behavior
+      description: Include redacted errors and evidence for an incorrect or missing result.
+    validations:
+      required: true

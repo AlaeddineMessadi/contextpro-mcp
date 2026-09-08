@@ -1,6 +1,6 @@
 # Install ContextPro
 
-These instructions target the current checkout. Use the local build to get changes under review; do not assume an npm package with the same version contains them. Node.js 20–26 is supported by the package's engine range.
+These instructions target the current checkout. Use the local build to get changes under review; do not assume an npm package with the same version contains them. Use Node.js 24 LTS and npm; the package engine range is 20–26. Install from source until a registry release is announced.
 
 ## Local build
 
@@ -18,7 +18,7 @@ The target root is the repository being indexed, which can differ from the Conte
 
 ## Client configuration
 
-Replace all placeholder paths. These examples launch the same local build and use the default workflow profile. Set the profile to `lean` for two initially advertised tools. Existing custom credentials and settings should be preserved.
+Replace all placeholder paths. These examples launch the same local build and use the default workflow profile. Set the profile to `lean` for three initially advertised tools. Existing custom credentials and settings should be preserved.
 
 ### Codex
 

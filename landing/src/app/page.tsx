@@ -107,10 +107,10 @@ export default async function Home() {
               fontFamily: "var(--font-geist-sans)",
             }}
           >
-            Semantic Intelligence for
+            Find the code.
             <br />
             <span style={{ color: "var(--text-primary)" }}>
-              Large-Scale Engineering.
+              Keep the context small.
             </span>
           </h1>
           <p
@@ -186,10 +186,9 @@ export default async function Home() {
             marginBottom: 40,
           }}
         >
-          ContextPro guarantees minimal context bloat. It gives your agent deep
-          semantic understanding of your codebase, from AST parsing and symbol
-          navigation to blast radius analysis and commit validation. Nothing
-          misses the context, with RAG.
+          Give your agent source slices, symbol contracts and reference evidence
+          in one place. Start with a small tool catalog, expand when needed,
+          and use freshness and scope warnings to decide what to verify next.
         </p>
         <table
           style={{
@@ -395,19 +394,12 @@ export default async function Home() {
         </span>
         <div style={{ display: "flex", gap: 16, alignItems: "center" }}>
           <a
-            href="https://www.npmjs.com/package/contextpro-mcp"
+            href="https://github.com/AlaeddineMessadi/contextpro-mcp/blob/main/CONTRIBUTING.md"
             target="_blank"
             rel="noopener noreferrer"
-            className="flex items-center"
+            style={{ color: "var(--text-primary)", fontSize: 14 }}
           >
-            <svg
-              width="20"
-              height="20"
-              viewBox="0 0 256 256"
-              fill="var(--icon-color)"
-            >
-              <path d="M0 256V0h256v256H0zm41-41h57.5V71.2H141V215h34V41H41v174z" />
-            </svg>
+            Contribute
           </a>
           <a
             href="https://github.com/AlaeddineMessadi/contextpro-mcp"

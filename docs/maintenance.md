@@ -2,7 +2,7 @@
 
 ## Build and validate
 
-The MCP root and `landing/` use npm lockfiles. `dashboard/` currently has a Bun lockfile and remains a separate optional app. Use Node to launch MCP and the same executable across clients where possible.
+The MCP root, `landing/` and `dashboard/` use npm lockfiles. The apps remain optional. Use Node to launch MCP and the same executable across clients where possible. The full test suite also needs Git and ripgrep (`rg`) for its offline native-search baseline; see [contributor setup](https://github.com/AlaeddineMessadi/contextpro-mcp/blob/main/CONTRIBUTING.md#development-setup).
 
 ```sh
 npm ci

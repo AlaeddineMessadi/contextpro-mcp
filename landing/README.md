@@ -17,7 +17,7 @@ Open `http://localhost:6767`. `npm run build` and `npm start` build and serve a 
 
 The copy panel and `/api/instructions` read `src/generated/agent-instructions.json`, generated from the repository's [INSTRUCTIONS.md](../INSTRUCTIONS.md). npm lifecycle hooks synchronize it before `dev`, `build`, `cf:build`, `cf:preview`, and `cf:deploy`. Use these npm scripts so synchronization runs before Next.js or OpenNext; calling the underlying CLIs directly bypasses the hooks. From the repository root, run `npm run docs:sync` after editing the policy and `npm run docs:check` before committing. Generated JSON is committed so both surfaces have identical content and deployment needs no runtime filesystem read.
 
-Configuration examples in `src/components/IdeSetup.tsx` use canonical provider keys and the workflow profile. They omit optional cloud chat settings and include a placeholder project root. Package-runner samples require access to the selected published package; for this checkout's unreleased code use the local launch instructions in [INSTALL.md](../INSTALL.md).
+Configuration examples in `src/components/IdeSetup.tsx` use an absolute local Node executable, checkout path and project root with the three-tool lean profile. Replace every placeholder. Registry runners are not advertised until a package release is verified. See [INSTALL.md](../INSTALL.md).
 
 ## Deployment
 

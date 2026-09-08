@@ -1,0 +1,28 @@
+name: Benchmark result
+description: Reproducible performance, token usage or correctness evidence
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: Read docs/comparison.md. Include failures, use redistributable inputs and redact private data. Token estimates are not measured billing.
+  - type: textarea
+    id: setup
+    attributes:
+      label: Setup and reproduction
+      description: Repository commit, task prompts, tools/models/clients and versions, hardware, commands, index and process/cache state.
+    validations:
+      required: true
+  - type: textarea
+    id: correctness
+    attributes:
+      label: Correctness and reliability
+      description: Ground truth, missing/false-positive evidence, truncation, errors and retries for every approach.
+    validations:
+      required: true
+  - type: textarea
+    id: results
+    attributes:
+      label: Results and raw evidence
+      description: Repetition/order, median and spread, wall/server time, tool calls, provider input/cache/output usage and sanitized records. Leave unavailable fields unavailable.
+    validations:
+      required: true
