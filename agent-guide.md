@@ -60,11 +60,16 @@ phase timings for performance diagnosis.
 
 ## Routing and freshness
 
-Every tool accepts `root`. Pass the absolute worktree root when the client has
-multiple roots, cannot advertise roots, or is controlling another worktree.
-Otherwise the server resolves the client workspace, then falls back to its boot
-root. Each worktree has an isolated index; a wrong or missing root is the usual
-cause of seeing code from another checkout.
+Every tool accepts `root`. Subagents must pass their own absolute worktree root
+on every call, including discovery and reindex. A shell `cd` does not retarget a
+shared MCP server. When the effective Git repository has linked worktrees, an
+omitted root is rejected with a request to specify it explicitly. A single client
+root can still describe the parent agent, so it does not bypass this guard.
+Linked checkouts require root even when attached to a bare Git store.
+For a single main checkout, the server uses client roots then its boot root. Separate
+clones cannot be detected through shared Git metadata; still pass root explicitly.
+Each worktree has an isolated index. If source appears stale, verify the selected
+root against a native read before rebuilding or changing provider settings.
 
 Structural tools probe freshness and refresh small changes automatically. Do not
 run full `reindex` routinely. Use it when the freshness gate cannot finish a large change or when `status`

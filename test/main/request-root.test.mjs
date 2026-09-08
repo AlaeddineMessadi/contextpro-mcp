@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -32,13 +32,21 @@ describe("request-root resolution", () => {
   afterEach(async () => {
     const router = await import("../../build/core/workspace-router.js");
     router.resetWorkspaceRouter();
+    const { closeDB } = await import("../../build/core/db.js");
+    closeDB(baseRepo);
+    closeDB(worktreeDir);
     await rm(scratch, { recursive: true, force: true });
   });
 
-  it("uses the default root when no root arg is present", async () => {
+  it("rejects an omitted root when the shared MCP could target another worktree", async () => {
     const mod = await import("../../build/core/request-root.js");
-    const ws = await mod.resolveRequestRoot({}, baseRepo);
-    assert.equal(ws.rootDir, baseRepo);
+    await assert.rejects(() => mod.resolveRequestRoot({}, baseRepo), (error) => {
+      assert.match(error.message, /Ambiguous worktree/);
+      assert.match(error.message, /Pass root as the absolute directory/);
+      assert.ok(error.message.includes(baseRepo));
+      assert.ok(error.message.includes(worktreeDir));
+      return true;
+    });
   });
 
   it("routes an explicit root arg to the worktree workspace", async () => {
@@ -53,6 +61,85 @@ describe("request-root resolution", () => {
     const { handlerArgs } = await mod.resolveRequestRoot({ root: worktreeDir, file: "x.ts" }, baseRepo);
     assert.equal(handlerArgs.root, undefined);
     assert.equal(handlerArgs.file, "x.ts");
+  });
+
+  it("allows an explicit main-checkout root despite another worktree", async () => {
+    const mod = await import("../../build/core/request-root.js");
+    const ws = await mod.resolveRequestRoot({ root: baseRepo }, worktreeDir);
+    assert.equal(ws.rootDir, baseRepo);
+  });
+
+  it("rejects omitted roots for linked checkouts backed by a separate Git directory", async () => {
+    const mod = await import("../../build/core/request-root.js");
+    const separateMain = join(scratch, "separate-main");
+    const separateChild = join(scratch, "separate-child");
+    await git(scratch, "init", "-q", "-b", "main", "--separate-git-dir", join(scratch, "store.git"), separateMain);
+    await git(separateMain, "config", "user.email", "t@t.dev");
+    await git(separateMain, "config", "user.name", "Tester");
+    await writeFile(join(separateMain, "a.txt"), "a\n");
+    await git(separateMain, "add", ".");
+    await git(separateMain, "commit", "-q", "-m", "init");
+    await git(separateMain, "worktree", "add", "-q", separateChild, "-b", "child");
+    await assert.rejects(() => mod.resolveRequestRoot({}, separateChild), /Ambiguous worktree/);
+    assert.equal((await mod.resolveRequestRoot({ root: separateChild }, separateMain)).rootDir, separateChild);
+    await assert.rejects(() => mod.resolveRequestRoot({}, separateChild), /Ambiguous worktree/, "cached explicit routing must not bypass later validation");
+  });
+
+  it("rejects an ambiguous root before copying the base index into the guessed checkout", async () => {
+    const mod = await import("../../build/core/request-root.js");
+    const { getDB } = await import("../../build/core/db.js");
+    const db = await getDB(baseRepo);
+    db.upsertFile("a.txt", "base-hash", null, "text");
+    await assert.rejects(() => mod.resolveRequestRoot({}, worktreeDir), /Ambiguous worktree/);
+    await assert.rejects(() => stat(join(worktreeDir, ".contextpro")), { code: "ENOENT" });
+    await mod.resolveRequestRoot({ root: worktreeDir }, baseRepo);
+    assert.equal((await stat(join(worktreeDir, ".contextpro", "index.db"))).isFile(), true);
+  });
+
+  it("does not trust a client's root list to identify a shared-connection subagent", async () => {
+    const mod = await import("../../build/core/request-root.js");
+    for (const uris of [[baseRepo], [worktreeDir], [baseRepo, worktreeDir]]) {
+      await assert.rejects(() => mod.resolveRequestRoot({}, baseRepo, {
+        rootsProvider: async () => uris.map((root) => new URL(`file://${root}`).href),
+        requestCwd: baseRepo,
+      }), /Ambiguous worktree/);
+    }
+  });
+
+  it("detects added and removed worktrees while the workspace resolution remains cached", async () => {
+    const mod = await import("../../build/core/request-root.js");
+    await git(baseRepo, "worktree", "remove", worktreeDir);
+    assert.equal((await mod.resolveRequestRoot({}, baseRepo)).rootDir, baseRepo);
+    await git(baseRepo, "worktree", "add", "-q", worktreeDir, "wt");
+    await assert.rejects(() => mod.resolveRequestRoot({}, baseRepo), /Ambiguous worktree/);
+    await git(baseRepo, "worktree", "remove", worktreeDir);
+    assert.equal((await mod.resolveRequestRoot({}, baseRepo)).rootDir, baseRepo);
+  });
+
+  it("ignores stale Git registry entries whose checkout was removed manually", async () => {
+    const mod = await import("../../build/core/request-root.js");
+    await rm(worktreeDir, { recursive: true, force: true });
+    assert.equal((await mod.resolveRequestRoot({}, baseRepo)).rootDir, baseRepo);
+  });
+
+  it("retains no-root behavior for a non-Git directory", async () => {
+    const mod = await import("../../build/core/request-root.js");
+    const plain = join(scratch, "plain");
+    await mkdir(plain);
+    assert.equal((await mod.resolveRequestRoot({}, plain)).rootDir, plain);
+  });
+
+  it("bounds diagnostics and work when the registry is too large to verify", async () => {
+    const mod = await import("../../build/core/request-root.js");
+    await git(baseRepo, "worktree", "remove", worktreeDir);
+    for (let i = 0; i < 66; i++) await mkdir(join(baseRepo, ".git", "worktrees", `stale-${i}`), { recursive: true });
+    await assert.rejects(() => mod.resolveRequestRoot({}, baseRepo), (error) => {
+      assert.match(error.message, /unverified linked worktrees/);
+      assert.ok(error.message.length < 1600);
+      return true;
+    });
+    // Explicit routing needs no registry enumeration, even when it is malformed.
+    assert.equal((await mod.resolveRequestRoot({ root: baseRepo }, baseRepo)).rootDir, baseRepo);
   });
 
   it("ignores a root arg that escapes into an unsafe location", async () => {

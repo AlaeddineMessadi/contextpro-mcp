@@ -15,7 +15,8 @@ This is the current implementation backlog. Earlier upstream proposals are prese
 
 - [ ] Reduce cold compiler initialization and duplicate freshness work per request.
 - [ ] Make cache invalidation dependency-aware, including file inventory for negative results.
-- [ ] Improve one-call routing and retain supporting types, guards and tests in small packets.
+- [ ] Improve one-call routing and retain supporting types, guards and tests in small packets; add a held-out fixture where exact scaffolding identifiers compete with generic UI matches.
+- [ ] Evaluate complete feature implementations against a shared adverse-state suite (revoked entitlements, feature flags, locale coverage), not only lookup accuracy.
 - [ ] Add bounded reference pagination and validate imported SCIP source revisions.
 - [ ] Validate memory against source/config revisions; preserve supersession and add scoped offline lexical retrieval.
 - [ ] Benchmark held-out repos with matched agent settings, repeated trials, correctness scoring and actual provider usage.

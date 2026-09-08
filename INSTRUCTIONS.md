@@ -12,7 +12,7 @@ Batch independent reads, request bounded output and stop when the evidence suffi
 
 Use `blast_radius` for textual candidates and `exact_references` for compiler-backed TS/JS references. `exact_references` is available immediately in lean and workflow profiles; inspect per-file call totals and occurrence labels before repeating searches. Discover/enable other expert tools with `discover_tools` when needed. Inspect category counts, returned totals, truncation, scope and warnings; textual matches are not proof of binding identity or rename safety. Python heuristic and imported SCIP evidence have separate limitations.
 
-Pass the absolute `root` for another worktree. Review the resulting diff after an edit; use `validate_scope` to suggest relevant checks, then run the actual compiler/tests. Follow the target project's coding conventions. ContextPro's optional style checks do not override those conventions.
+Subagents must pass their absolute worktree `root` on every call, including discovery, reads and reindex. A shell `cd` does not retarget a shared MCP server. When a Git repository has linked worktrees, omitted roots are rejected rather than silently reading another checkout. Review the resulting diff after an edit; use `validate_scope` to suggest relevant checks, then run the actual compiler/tests. Follow the target project's coding conventions. ContextPro's optional style checks do not override those conventions.
 
 ## Reuse context and memory carefully
 

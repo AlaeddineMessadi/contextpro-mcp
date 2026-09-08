@@ -120,7 +120,7 @@ Do not rebuild shared `node_modules` merely to satisfy one client: clients using
 
 ## Worktrees and common problems
 
-- **Wrong repository:** pass the absolute worktree `root` on calls or correct the launch root. Client-advertised roots can override the boot fallback; explicit tool roots remove ambiguity.
+- **Wrong repository/worktree:** subagents must pass their absolute worktree `root` on every call. Shell `cd` does not retarget a shared MCP server. Linked worktrees require explicit roots, including reindex calls; verify the chosen checkout before attempting recovery. Client-advertised roots may describe the parent agent.
 - **Stale embeddings:** check provider/model settings, then reindex. Interactive search does not rebuild the whole vector corpus.
 - **Slow or failed calls:** inspect `health` and `status`; use bounded results and keyword-only discovery when the provider is unavailable. Do not loop blindly on connection errors.
 - **Agent ignores MCP:** install concise project rules from [INSTRUCTIONS.md](INSTRUCTIONS.md). Prefer MCP when it adds useful context; allow native reads for tiny known targets and incomplete evidence.

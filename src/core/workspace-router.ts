@@ -42,15 +42,30 @@ function normalizeRequestRoot(requestRoot: string | undefined, defaultRoot?: str
 export async function resolveWorkspace(
   requestRoot: string | undefined,
   defaultRoot?: string,
+  beforeInitialize?: (workspace: ResolvedWorkspace) => Promise<void>,
 ): Promise<ResolvedWorkspace> {
   const normalized = normalizeRequestRoot(requestRoot, defaultRoot);
   const cached = workspaces.get(normalized);
-  if (cached) return cached;
+  if (cached) {
+    // Routing must be checked for every request: worktrees may have appeared
+    // since this metadata was cached, or the prior caller passed an explicit root.
+    if (beforeInitialize) await beforeInitialize(cached);
+    return cached;
+  }
 
   // Guard before touching git or the filesystem for storage.
   validateSelectedRoot({ rootDir: normalized, source: requestRoot ? "flag" : "cwd" });
 
   const info = await detectWorktreeInfo(normalized);
+  const workspace: ResolvedWorkspace = {
+    rootDir: info.worktreeRoot,
+    baseRoot: info.baseRoot,
+    gitCommonDir: info.gitCommonDir,
+    isWorktree: info.isWorktree,
+    resolvedAt: new Date().toISOString(),
+  };
+  // A rejected request must not create or copy an index into a guessed checkout.
+  if (beforeInitialize) await beforeInitialize(workspace);
 
   // Stage-2 churn optimization: a brand-new worktree clones the base checkout's
   // already-built index so the follow-up incremental reindex only touches its
@@ -64,13 +79,6 @@ export async function resolveWorkspace(
     }
   }
 
-  const workspace: ResolvedWorkspace = {
-    rootDir: info.worktreeRoot,
-    baseRoot: info.baseRoot,
-    gitCommonDir: info.gitCommonDir,
-    isWorktree: info.isWorktree,
-    resolvedAt: new Date().toISOString(),
-  };
   // Cache under both the request-normalized path and the resolved worktree root,
   // since git may realpath the toplevel to a different string than the request.
   workspaces.set(normalized, workspace);

@@ -4,8 +4,8 @@ import { isAbsolute } from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { runtimeSessionId } from "./runtime-session.js";
 
-interface TracePhases { handlerStarted(): void; handlerFinished(): void }
-const disabled: TracePhases = { handlerStarted() {}, handlerFinished() {} };
+interface TracePhases { handlerStarted(): void; handlerFinished(): void; rootResolved(root: string, explicit: boolean): void }
+const disabled: TracePhases = { handlerStarted() {}, handlerFinished() {}, rootResolved() {} };
 let warned = false;
 
 function boundedArguments(args: unknown): unknown {
@@ -21,11 +21,14 @@ export async function withToolTrace<T>(tool: string, args: unknown, operation: (
   const startedAt = Date.now();
   const started = performance.now();
   let handlerStart: number | undefined, handlerEnd: number | undefined;
+  let resolvedRoot: string | null = null;
+  let rootSelection: "explicit" | "automatic" | null = null;
   let status: "ok" | "error" = "error";
   try {
     const result = await operation({
       handlerStarted: () => { handlerStart = performance.now(); },
       handlerFinished: () => { handlerEnd = performance.now(); },
+      rootResolved: (root, explicit) => { resolvedRoot = root; rootSelection = explicit ? "explicit" : "automatic"; },
     });
     status = result && typeof result === "object" && "isError" in result && result.isError ? "error" : "ok";
     return result;
@@ -35,6 +38,7 @@ export async function withToolTrace<T>(tool: string, args: unknown, operation: (
     try {
       if (!isAbsolute(path)) throw new Error("trace path must be absolute");
       const event = { version: 1, sessionId: runtimeSessionId, requestId: randomUUID(), tool, arguments: boundedArguments(args), status,
+        resolvedRoot, rootSelection,
         startedAt, endedAt: startedAt + ended - started, durationMs: ended - started,
         preparationMs: (handlerStart ?? ended) - started,
         handlerMs: handlerStart === undefined ? null : (handlerEnd ?? ended) - handlerStart,

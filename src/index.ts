@@ -214,13 +214,12 @@ async function getClientRoots(): Promise<string[]> {
 
 function withRequestActivity<TArgs, TResult>(
   handler: (args: TArgs) => Promise<TResult>,
-  options?: { useEmbeddingTracker?: boolean; toolName?: string; waitForIndexing?: boolean; ensureFreshIndex?: boolean },
+  options?: { useEmbeddingTracker?: boolean; toolName?: string; waitForIndexing?: boolean; ensureFreshIndex?: boolean; skipProjectVerification?: boolean },
 ): (args: TArgs) => Promise<TResult> {
   return async (args: TArgs): Promise<TResult> => withToolTrace(options?.toolName ?? "unknown", args, async (trace) => {
     const started = Date.now();
     noteServerActivity();
     const lexicalOnly = args && typeof args === "object" && "preset" in args && args.preset === "keyword_only";
-    if (options?.useEmbeddingTracker && !lexicalOnly) ensureTrackerRunning();
     // Resolve the workspace this request targets. Precedence: an explicit `root`
     // arg → the MCP client's advertised roots (auto-detected) → the server's boot
     // ROOT_DIR. The resolved root is made active for the handler via
@@ -230,10 +229,15 @@ function withRequestActivity<TArgs, TResult>(
       requestCwd: process.cwd(),
     });
     const effectiveRoot = resolution.rootDir;
+    trace.rootResolved(effectiveRoot, typeof (args as Record<string, unknown> | undefined)?.root === "string"
+      && String((args as Record<string, unknown>).root).trim().length > 0);
+    // Reject ambiguous routing before starting project work. This controller is
+    // bound to the boot checkout; another worktree must not start its tracker.
+    if (options?.useEmbeddingTracker && !lexicalOnly && effectiveRoot === ROOT_DIR) ensureTrackerRunning();
     const handlerArgs = resolution.handlerArgs as TArgs;
     return runWithRequestRoot(effectiveRoot, async () => {
       try {
-        await verifyProjectContext(effectiveRoot);
+        if (!options?.skipProjectVerification) await verifyProjectContext(effectiveRoot);
         let freshness: IndexFreshnessResult | undefined;
         if (options?.ensureFreshIndex) {
           freshness = await ensureFreshIndex(effectiveRoot);
@@ -412,7 +416,10 @@ const server = new McpServer({
 server.resource(
   "contextpro_instructions",
   INSTRUCTIONS_RESOURCE_URI,
-  withRequestActivity(async (uri: URL) => {
+  async (uri: URL) => {
+    // This bundled guide is independent of the repository. Resource reads have
+    // no tool root argument, so they must remain available during routing errors.
+    noteServerActivity();
     if (isInstructionsRemoteEnabled()) {
       try {
         const response = await fetch(INSTRUCTIONS_REMOTE_URL);
@@ -438,10 +445,10 @@ server.resource(
         text: agentGuide ?? agentInstructions ?? "ContextPro instructions are not bundled with this build.",
       }],
     };
-  }, { toolName: "instructions_resource", waitForIndexing: false }),
+  },
 );
 
-registerTools(server, ROOT_DIR, withRequestActivity, noteServerActivity);
+registerTools(server, ROOT_DIR, withRequestActivity);
 
 // Persist every tool call to the per-root DB so a separate dashboard process can
 // show real tool-call history across restarts. Best-effort and fire-and-forget:

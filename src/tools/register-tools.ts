@@ -37,7 +37,6 @@ import { buildTaskPack, buildChangeImpact, buildEditScope, buildDecisionBrief, b
 import { findSymbol, replaceSymbolBody, insertAroundSymbol, renameSymbol } from "./symbolic-edit.js";
 import { listArtifacts, readArtifact, garbageCollectArtifacts } from "../core/artifacts.js";
 import { formatStartupHealthReport, runStartupHealthCheck } from "../core/startup-health.js";
-import { recordToolTiming } from "../core/tool-metrics.js";
 import { currentRoot } from "../core/request-context.js";
 import { annotationsForTool, isToolEnabled, resolveToolProfile } from "../core/tool-profile.js";
 import { garbageCollectDeadWorktrees } from "../core/worktree-gc.js";
@@ -45,7 +44,7 @@ import { getEfficiencyReport } from "./efficiency-report.js";
 
 type ActivityWrapper = <TArgs, TResult>(
   handler: (args: TArgs) => Promise<TResult>,
-  options?: { useEmbeddingTracker?: boolean; toolName?: string; waitForIndexing?: boolean; ensureFreshIndex?: boolean },
+  options?: { useEmbeddingTracker?: boolean; toolName?: string; waitForIndexing?: boolean; ensureFreshIndex?: boolean; skipProjectVerification?: boolean },
 ) => (args: TArgs) => Promise<TResult>;
 
 const MAX_ARTIFACT_LIST_KEY_CHARS = 240;
@@ -71,14 +70,13 @@ const rootArg = z
   .string()
   .optional()
   .describe(
-    "Absolute worktree root. Omit for the server's project.",
+    "Absolute project root. Required with linked worktrees; subagents must pass their own worktree root on every call.",
   );
 
 export function registerTools(
   serverInput: McpServer,
   bootRoot: string,
   withRequestActivity: ActivityWrapper,
-  noteServerActivity: () => void,
 ): void {
   // Per-request effective root, evaluated at handler execution time.
   // withRequestActivity establishes the resolved worktree root via
@@ -202,23 +200,16 @@ export function registerTools(
     {
       format: z.enum(["text", "json"]).optional().describe("Return plain text or structured JSON. Default: text."),
     },
-    async ({ format }) => {
-      const started = Date.now();
-      noteServerActivity();
-      try {
-        const report = await runStartupHealthCheck(rootDir());
-        recordToolTiming(rootDir(), "health", Date.now() - started, "ok");
-        return {
-          content: [{
-            type: "text" as const,
-            text: format === "json" ? JSON.stringify(report, null, 2) : formatStartupHealthReport(report),
-          }],
-        };
-      } catch (error) {
-        recordToolTiming(rootDir(), "health", Date.now() - started, "error");
-        throw error;
-      }
-    },
+    // Health must report broken project/storage state, not fail before diagnosis.
+    withRequestActivity(async ({ format }) => {
+      const report = await runStartupHealthCheck(rootDir());
+      return {
+        content: [{
+          type: "text" as const,
+          text: format === "json" ? JSON.stringify(report, null, 2) : formatStartupHealthReport(report),
+        }],
+      };
+    }, { toolName: "health", waitForIndexing: false, skipProjectVerification: true }),
   );
 
   server.tool(

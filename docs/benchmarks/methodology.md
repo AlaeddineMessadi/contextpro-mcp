@@ -38,3 +38,14 @@ node scripts/benchmark-references.mjs \
 This runs no agent or model. It alternates versions on identical generated fixtures: 13 calls split 4+9 with barrel aliases and unrelated same-named bindings, and a 2,009-call case exceeding the display limit. Each version/repeat gets a fresh process and structural index. The first query has a cold compiler, followed immediately by a warm query. Module load and index preparation are excluded; OS caches are uncontrolled. Counts, exact call locations for the small case, and exclusion of unrelated bindings must pass or the replay fails. Both successes and their byte sizes are recorded; these are not provider tokens or money saved.
 
 The bounded real-worker regression additionally checks that only the requested entries cross IPC while full counts remain accurate. Agent protocol tests verify that exact references work as the first lean call without discovery or enable calls. These test specific contracts; they do not prove every agent will choose the shortest workflow.
+
+
+## Shared clients and implementation tasks
+
+A Git worktree isolates source files, not necessarily the agent conversation, provider cache or MCP connection. In shared-client/subagent trials, include the absolute target `root` on every ContextPro call. A shell `cd` does not change an inherited stdio server. New opt-in server traces include `resolvedRoot` and `rootSelection` (`explicit` or `automatic`); verify those fields against the edited worktree. Older traces leave this information unavailable.
+
+Start arms from equivalent minimal prompts, not a long parent conversation. Record the initial input and cache state; fresh subagents can inherit hundreds of thousands of tokens. Time externally until final completion, including post-edit tests, retries and report generation. Self-reported stop times can exclude subsequent work. Use one shared, independent validation suite rather than comparing different self-selected test totals.
+
+For Claude JSONL evidence, group streaming records by response/message ID before summing usage. Report input, cache creation, cache reads and output separately; do not add nested cache or reasoning subtotals twice. Check streaming semantics and missing fields before aggregation. A sum across requests includes repeated cached context and is not a single context window or dollar cost. See the [worktree incident audit](2026-09-08-worktree-routing-audit.md).
+
+Include an MCP-preferred hybrid policy that allows cheap native reads. A forced MCP-only policy is a different product configuration and must be labeled separately. Accept a performance win only alongside the same correctness criteria, including adverse states such as revoked access and changed feature flags where relevant.

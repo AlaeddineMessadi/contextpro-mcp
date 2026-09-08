@@ -5,6 +5,7 @@
 
 import { resolveWorkspace, type ResolvedWorkspace } from "./workspace-router.js";
 import { resolveAutoRoot, type RootsProvider } from "./roots-detect.js";
+import { requireExplicitRootForSharedWorktrees } from "./worktree-root-guard.js";
 
 export interface RequestRootResolution extends ResolvedWorkspace {
   /** Original args minus the `root` field, ready to forward to the handler. */
@@ -38,7 +39,9 @@ export async function resolveRequestRoot(
     ? await resolveAutoRoot(explicitRoot, defaultRoot, options.rootsProvider, options.requestCwd ?? defaultRoot)
     : explicitRoot;
 
-  const workspace = await resolveWorkspace(effectiveRoot, defaultRoot);
+  const workspace = await resolveWorkspace(
+    effectiveRoot, defaultRoot, explicitRoot ? undefined : requireExplicitRootForSharedWorktrees,
+  );
   const { root: _omit, ...handlerArgs } = safeArgs;
   return { ...workspace, handlerArgs };
 }

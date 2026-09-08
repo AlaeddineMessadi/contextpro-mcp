@@ -16,7 +16,7 @@ it('records separate tool phases locally, bounds/redacts arguments and preserves
     process.env.CONTEXTPRO_TOOL_TRACE_PATH = path;
     const response = { content: [{ type: 'text', text: 'answer' }] };
     assert.equal(await withToolTrace('exact_references', { symbol_name: 'add', token: 'not-a-credential', api_key: 'secret', nested: { password: 'secret' } }, async phase => {
-      phase.handlerStarted(); phase.handlerFinished(); return response;
+      phase.rootResolved(root, true); phase.handlerStarted(); phase.handlerFinished(); return response;
     }), response);
     const original = new Error('original');
     await assert.rejects(withToolTrace('failed', {}, async phase => { phase.handlerStarted(); throw original; }), error => error === original);
@@ -24,6 +24,9 @@ it('records separate tool phases locally, bounds/redacts arguments and preserves
     const events = (await readFile(path, 'utf8')).trim().split('\n').map(JSON.parse);
     assert.deepEqual(events.map(e => e.status), ['ok', 'error', 'error']);
     assert.equal(events[0].arguments.symbol_name, 'add');
+    assert.equal(events[0].resolvedRoot, root);
+    assert.equal(events[0].rootSelection, 'explicit');
+    assert.equal(events[1].resolvedRoot, null, 'failed routing must not invent a resolved workspace');
     assert.equal(events[0].arguments.api_key, '[redacted]');
     assert.equal(events[0].arguments.nested.password, '[redacted]');
     assert.equal(events[2].arguments.omitted, true);

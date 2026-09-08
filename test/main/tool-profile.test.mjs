@@ -44,7 +44,7 @@ describe("tool profiles and MCP annotations", () => {
     process.env.CONTEXTPRO_TOOL_PROFILE = "core";
     try {
       const server = new McpServer({ name: "profile-test", version: "0.0.0" });
-      registerTools(server, process.cwd(), (handler) => handler, () => {});
+      registerTools(server, process.cwd(), (handler) => handler);
       const registered = server._registeredTools;
       assert.ok(registered.search);
       assert.ok(registered.graph_query);
@@ -71,7 +71,7 @@ describe('workflow profile budget', () => {
       for (const profile of ['lean', 'workflow', 'core', 'full']) {
         process.env.CONTEXTPRO_TOOL_PROFILE = profile;
         const server = new McpServer({ name: 'profile', version: '0' });
-        registerTools(server, process.cwd(), handler => handler, () => {});
+        registerTools(server, process.cwd(), handler => handler);
         const client = new Client({ name: 'test', version: '0' });
         const [a, b] = InMemoryTransport.createLinkedPair();
         await Promise.all([server.connect(a), client.connect(b)]);
