@@ -35,6 +35,13 @@ describe("reference correctness and incremental projects", () => {
     assert.equal(result.references.filter(ref => ref.file === "tests/math.test.ts").length, 2);
     assert.equal(result.scope.checkedFiles, 3);
     assert.equal(result.truncated, false);
+    assert.deepEqual(result.callsByFile, [{ file: "src/relative.ts", calls: 2 }, { file: "tests/math.test.ts", calls: 1 }]);
+    assert.equal(result.callFileCount, 2);
+    assert.equal(result.callFilesTruncated, false);
+    const text = await exactReferencesTool({ rootDir: root, symbolName: "add", file: "src/math.ts", line: 1 });
+    assert.match(text, /src\/relative.ts=2, tests\/math.test.ts=1/);
+    assert.match(text, /src\/relative.ts:1:\d+ \[import\]/);
+    assert.match(text, /src\/relative.ts:2:\d+ \[call\]/);
   });
 
   it("reports totals before truncation, including more than the maximum display limit", async () => {
@@ -44,8 +51,14 @@ describe("reference correctness and incremental projects", () => {
     assert.equal(result.returned, 500);
     assert.equal(result.truncated, true);
     assert.equal(result.counts.call, 601);
+    assert.deepEqual(result.callsByFile, [{ file: "src/relative.ts", calls: 600 }, { file: "tests/math.test.ts", calls: 1 }]);
     const text = await exactReferencesTool({ rootDir: root, symbolName: "add", file: "src/math.ts", line: 1, limit: 1 });
     assert.match(text, /1 returned of 604.*TRUNCATED/);
+    assert.match(text, /src\/relative.ts=600, tests\/math.test.ts=1/);
+    const many = await exactReferencesTool({ rootDir: root, symbolName: "add", file: "src/math.ts", line: 1, limit: 100 });
+    assert.equal(many.split("  add(1, 2);").length - 1, 1);
+    assert.equal((many.match(/src\/relative.ts:\d+:\d+ \[call\]/g) ?? []).length, 98);
+    assert.match(many, /Identical snippets shown once per file/);
   });
 
   it("excludes shadowed bindings and distinguishes a callback reference from a call", async () => {
@@ -146,6 +159,7 @@ describe("reference correctness and incremental projects", () => {
     assert.deepEqual(limited.references, result.references.slice(0, 1));
     assert.equal(limited.total, result.total);
     assert.deepEqual(limited.counts, result.counts);
+    assert.deepEqual(limited.callsByFile, result.callsByFile);
   });
 
   it("invalidates a consumer when a referenced project's configuration changes", async () => {

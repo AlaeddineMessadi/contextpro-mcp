@@ -153,6 +153,7 @@ export function findTypeScriptReferences(input: { rootDir: string; files: string
   const locations = new Map<string, TypedReference["kind"]>();
   const results: TypedReference[] = [];
   const counts = { definition: 0, import: 0, call: 0, reference: 0 };
+  const callsByFile = new Map<string, number>();
   const compare = (a: Pick<TypedReference, "file" | "line" | "column">, b: TypedReference) =>
     a.file.localeCompare(b.file) || a.line - b.line || a.column - b.column;
   const checkedFiles = new Set<string>();
@@ -229,6 +230,9 @@ export function findTypeScriptReferences(input: { rootDir: string; files: string
         if (previous) counts[previous]--;
         locations.set(key, kind);
         counts[kind]++;
+        const fileCalls = (callsByFile.get(location.file) ?? 0) + Number(kind === "call") - Number(previous === "call");
+        if (fileCalls) callsByFile.set(location.file, fileCalls);
+        else callsByFile.delete(location.file);
         let low = 0, high = results.length;
         while (low < high) {
           const mid = (low + high) >>> 1;
@@ -249,6 +253,8 @@ export function findTypeScriptReferences(input: { rootDir: string; files: string
   }
   if (checkedFiles.size < allowed.size) warnings.push(`${allowed.size - checkedFiles.size} indexed TS/JS files could not be checked.`);
   return { references: results, total: locations.size, counts,
+    callsByFile: [...callsByFile].sort(([a], [b]) => a.localeCompare(b)).slice(0, 50).map(([file, calls]) => ({ file, calls })),
+    callFileCount: callsByFile.size,
     warnings: [...new Set(warnings)], scope: { kind: "indexed_ts_js_files", files: allowed.size, checkedFiles: checkedFiles.size,
       configs: [...configs.keys()].filter(Boolean).map(file => relative(root, file)), includesIndexedTests: true },
     projectCount, reusedProjects };

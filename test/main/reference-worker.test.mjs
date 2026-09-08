@@ -19,6 +19,7 @@ it("bounds the real worker's IPC result while preserving all occurrence counts",
     assert.equal(small.references.length, 3);
     assert.equal(small.total, 2002);
     assert.deepEqual(small.counts, { definition: 1, import: 1, call: 2000, reference: 0 });
+    assert.deepEqual(small.callsByFile, [{ file: "a-caller.ts", calls: 2000 }]);
     assert.deepEqual(small.references.map(ref => [ref.file, ref.line]), [
       ["a-caller.ts", 1], ["a-caller.ts", 2], ["a-caller.ts", 3],
     ]);
@@ -30,6 +31,28 @@ it("bounds the real worker's IPC result while preserving all occurrence counts",
     assert.deepEqual(capped.counts, small.counts);
     assert.equal((await pool.query({ ...input, limit: 0 })).references.length, 1);
     assert.equal((await pool.query(input)).references.length, 100);
+  } finally { pool.close(); await rm(root, { recursive: true, force: true }); }
+});
+
+it("bounds per-file call summaries without hiding aggregate totals", async () => {
+  const root = await mkdtemp(join(tmpdir(), "contextpro-reference-files-"));
+  const target = join(root, "definition.ts");
+  const pool = new TypeScriptReferenceProcess();
+  try {
+    await writeFile(target, "export function value() { return 1; }\n");
+    const files = [target];
+    for (let i = 0; i < 52; i++) {
+      const file = join(root, `caller-${String(i).padStart(2, "0")}.ts`);
+      await writeFile(file, "import { value } from './definition';\nvalue();\n");
+      files.push(file);
+    }
+    const result = await pool.query({ rootDir: root, files, file: target, line: 1, symbol: "value", limit: 1 });
+    assert.equal(result.references.length, 1);
+    assert.equal(result.total, 105);
+    assert.equal(result.counts.call, 52);
+    assert.equal(result.callFileCount, 52);
+    assert.equal(result.callsByFile.length, 50);
+    assert.equal(result.callsByFile.at(-1).file, "caller-49.ts");
   } finally { pool.close(); await rm(root, { recursive: true, force: true }); }
 });
 

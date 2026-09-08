@@ -15,8 +15,9 @@ shared code, inspect blast_radius (textual candidates). For TS/JS renames use
 exact_references for binding-resolved results. After edits, call validate_scope and run the
 recommended checks. Pass root explicitly for another worktree.
 
-The default workflow catalog is deliberately small. Use discover_tools to find
-and enable expert tools such as exact_references and symbolic edits when needed.
+exact_references is immediately available in lean and workflow profiles; no discovery
+is needed. Check its per-file call totals, occurrence labels, scope and warnings.
+Use discover_tools to find and enable other expert tools such as symbolic edits.
 Prefer text or compact search output; verbose json is for diagnostics.
 Batch independent symbol reads with explain(symbols:[{symbol,file},...], depth:0)
 instead of paying for another model turn per symbol. Request dependencies only

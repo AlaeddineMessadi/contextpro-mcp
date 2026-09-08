@@ -17,6 +17,7 @@ import { ensureProjectConfig, registerWorkspace, verifyProjectContext } from "./
 import { formatStartupHealthReport, runStartupHealthCheck } from "./core/startup-health.js";
 import { formatDoctorReport, runDoctor } from "./core/doctor.js";
 import { recordToolTiming, setToolCallSink } from "./core/tool-metrics.js";
+import { withToolTrace } from "./core/tool-trace.js";
 import { runtimeSessionId } from "./core/runtime-session.js";
 import { installAgentInstructions, mergeMcpConfig } from "./core/agent-setup.js";
 import { registerTools } from "./tools/register-tools.js";
@@ -215,7 +216,7 @@ function withRequestActivity<TArgs, TResult>(
   handler: (args: TArgs) => Promise<TResult>,
   options?: { useEmbeddingTracker?: boolean; toolName?: string; waitForIndexing?: boolean; ensureFreshIndex?: boolean },
 ): (args: TArgs) => Promise<TResult> {
-  return async (args: TArgs): Promise<TResult> => {
+  return async (args: TArgs): Promise<TResult> => withToolTrace(options?.toolName ?? "unknown", args, async (trace) => {
     const started = Date.now();
     noteServerActivity();
     const lexicalOnly = args && typeof args === "object" && "preset" in args && args.preset === "keyword_only";
@@ -243,7 +244,10 @@ function withRequestActivity<TArgs, TResult>(
             throw new Error("Indexing is still in progress and did not settle before timeout.");
           }
         }
-        const result = await handler(handlerArgs);
+        trace.handlerStarted();
+        let result: TResult;
+        try { result = await handler(handlerArgs); }
+        finally { trace.handlerFinished(); }
         const toolName = options?.toolName ?? "unknown";
         // Budgeted tools include their own freshness; do not add unbudgeted prose.
         const bounded = toolName === "task_pack" || toolName === "context" || (handlerArgs && typeof handlerArgs === "object" && "max_tokens" in handlerArgs);
@@ -277,7 +281,7 @@ function withRequestActivity<TArgs, TResult>(
         throw error;
       }
     });
-  };
+  });
 }
 
 function parseAgentTarget(input?: string): AgentTarget {

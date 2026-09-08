@@ -6,8 +6,8 @@ known exact target or when retrieved context is incomplete.
 
 ## Lean workflow (opt-in)
 
-Set `CONTEXTPRO_TOOL_PROFILE=lean` for two advertised tools: `context` and
-`discover_tools`. Start with `context(query:"your repository question")`: search,
+Set `CONTEXTPRO_TOOL_PROFILE=lean` for three advertised tools: `context`, `exact_references` and
+`discover_tools`. Call `exact_references` directly for TS/JS caller questions. Start with `context(query:"your repository question")`: search,
 source reading and deduplication run together on the server. Known targets use
 `context(targets:[{file:"src/api.ts",symbol:"create"},{file:"src/types.ts"}])`
 without search, index waits or embeddings. Short forwarding functions can include
@@ -47,9 +47,9 @@ For several known symbols, prefer one `explain(symbols:[{symbol,file},...], dept
 call. It accepts up to six targets and reports any whole bodies omitted by its
 response budget. Batch requests reduce model turns and repeated input history.
 
-The default catalog exposes 13 workflow tools. Call `discover_tools(query:"exact references")`
-to find an expert tool, then `discover_tools(enable:["exact_references"])` to expose its
-schema for this session. Enabling does not execute the tool. Clients without dynamic
+The default catalog exposes 14 workflow tools, including `exact_references`.
+For other experts, call `discover_tools(query:"rename")`, then
+`discover_tools(enable:["rename_symbol"])` to expose its schema for this session. Enabling does not execute the tool. Clients without dynamic
 catalog support can configure `CONTEXTPRO_TOOL_PROFILE=full` before startup.
 
 Do not repeat the entire workflow for a one-line lookup. Check supporting import
@@ -157,7 +157,12 @@ separate worker with a 30-second active deadline and idle disposal. Cold initial
 can still be slow; retry or use native/compiler tools when analysis cannot complete.
 
 Check `total`, `returned`, `truncated`, `counts`, `scope` and `warnings` in JSON output.
-A direct-call count is different from all identifier occurrences or matching lines.
+Text output labels each occurrence as definition, import, call or reference, and
+shows identical snippets once per file while retaining every returned location. `callsByFile`
+reports call totals before the result limit; at most 50 call-file summaries are shown,
+with `callFileCount` and `callFilesTruncated` exposing omissions. These summaries
+exist only for compiler-classified evidence. A direct-call count differs from all
+identifier occurrences or matching lines.
 The current maximum display is 500; verify omitted results separately. Dynamic and
 unindexed references are outside this declared scope. Python candidates are heuristic;
 imported SCIP evidence still needs source-revision verification.

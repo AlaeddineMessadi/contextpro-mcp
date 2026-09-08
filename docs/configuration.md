@@ -4,7 +4,7 @@ Defaults below describe this checkout's MCP launch path. Set environment variabl
 
 ## Profiles
 
-`CONTEXTPRO_TOOL_PROFILE` defaults to `workflow` (13 initial tools). `lean` advertises only `context` and `discover_tools`; `core` includes common editing/graph operations; `full` advertises everything. Existing custom profiles survive `init`. Discovering or enabling tools does not execute them, and the host must support catalog updates.
+`CONTEXTPRO_TOOL_PROFILE` defaults to `workflow` (14 initial tools). `lean` advertises `context`, `exact_references` and `discover_tools`; `core` includes common editing/graph operations; `full` advertises everything. Existing custom profiles survive `init`. Discovering or enabling tools does not execute them, and the host must support catalog updates.
 
 ## Providers
 
@@ -67,3 +67,9 @@ Interactive retrieval reuses existing vectors rather than generating a corpus on
 TypeScript worker limits are currently implementation constants: at most three retained projects, 60-second idle disposal, 30-second active request deadline, 512 MB V8 heap and 20,000 input files. Parser requests have a 15-second deadline and separate queue/source limits. These are not whole-machine resource guarantees.
 
 See [installation](../INSTALL.md) for launch examples and [maintenance](maintenance.md) for test/runtime and disk-cleanup guidance.
+
+## Optional benchmark tracing
+
+Set `CONTEXTPRO_TOOL_TRACE_PATH` to an absolute local JSONL path before starting the server. Tracing is off by default and adds no MCP response text. Each event records tool arguments, status, a session/request ID, total server duration, preparation (root verification/freshness/waits), handler execution and postprocessing. Spans can overlap; their sum is not elapsed agent time.
+
+The trace caps each argument payload at 8 KiB and the file at 64 MiB, redacts common credential/content keys and requires a private regular destination file (created with mode 0600). Query strings and paths can still contain private information; keep raw traces local. Write failures are best-effort and produce a stderr warning. A missing or partial trace is unavailable evidence, not zero execution time. See the [benchmark procedure](benchmarks/methodology.md).

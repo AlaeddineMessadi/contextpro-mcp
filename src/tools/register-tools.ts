@@ -151,7 +151,7 @@ export function registerTools(
   }), { toolName: "context", waitForIndexing: false }));
 
   server.tool("discover_tools", "Find expert tools by purpose, or enable named tools for this session. Enabling exposes their schemas; it does not execute them.", {
-    query: z.string().max(500).optional().describe("Purpose, e.g. exact references, rename, tests, or memory."),
+    query: z.string().max(500).optional().describe("Purpose, e.g. rename, tests, or memory."),
     enable: z.array(z.string()).max(6).optional().describe("Exact tool names to add to this session's catalog."),
     limit: z.number().int().min(1).max(10).optional().describe("Maximum discovery matches; default 5."),
   }, withRequestActivity(async ({ query, enable, limit }) => {
@@ -400,14 +400,13 @@ export function registerTools(
 
   server.tool(
     "exact_references",
-    "Find exact references using the local TypeScript/JavaScript language service, Python import/call index evidence, or an imported SCIP JSON index. Use before rename/delete/refactor operations when available. " +
-    "TS/JS resolution here is compiler-API-backed and trustworthy; other languages fall back to SCIP import or a heuristic index — for those, an LSP-backed tool (e.g. Serena) will generally be more precise if one is available.",
+    "Find who calls or references a symbol. TS/JS compiler bindings exclude same-named unrelated symbols; results label calls/imports and give per-file call totals before limits. Check scope, ambiguity and warnings. Python is heuristic; imported SCIP freshness is unverified.",
     {
-      symbol_name: z.string().min(1).describe("Symbol name to resolve references for."),
-      file: z.string().optional().describe("Optional file containing the symbol. If omitted, the indexed symbol table is used."),
-      line: z.number().optional().describe("Optional 1-based line for the symbol inside file."),
-      limit: z.number().optional().describe("Maximum references to return. Default: 100, max: 500."),
-      format: z.enum(["text", "json"]).optional().describe("Return plain text or structured JSON. Default: text."),
+      symbol_name: z.string().min(1),
+      file: z.string().optional().describe("Definition file; omit to infer."),
+      line: z.number().int().min(1).optional().describe("1-based definition line."),
+      limit: z.number().int().min(1).max(500).optional().describe("Shown occurrences; default 100."),
+      format: z.enum(["text", "json"]).optional().describe("Default text."),
     },
     withRequestActivity(async ({ symbol_name, file, line, limit, format }) => ({
       content: [{
