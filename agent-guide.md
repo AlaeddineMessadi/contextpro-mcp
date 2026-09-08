@@ -67,8 +67,9 @@ root. Each worktree has an isolated index; a wrong or missing root is the usual
 cause of seeing code from another checkout.
 
 Structural tools probe freshness and refresh small changes automatically. Do not
-run full `reindex` routinely. Use it after a large branch change or when `status`
-reports stale embeddings. `gc` removes indexes for deleted worktrees.
+run full `reindex` routinely. Use it when the freshness gate cannot finish a large change or when `status`
+reports stale embeddings. See [maintenance](docs/maintenance.md) before deleting
+project state or invoking cleanup tools.
 
 ## Important distinctions
 
@@ -78,7 +79,6 @@ reports stale embeddings. `gc` removes indexes for deleted worktrees.
   out of memory.
 - Savings footers and `efficiency_report` are estimates of source context avoided,
   not billing facts. Do not present them as measured provider-token savings.
-- `pmll-memory-mcp` is an optional separate server, not part of ContextPro.
 
 Tool-specific descriptions contain the complete arguments and behavior for each
 tool. Prefer canonical names; deprecated aliases remain only for compatibility.
@@ -126,7 +126,7 @@ bytes/4; it is not a promise about every model's tokenizer.
 `graph_max_files` caps additional files (default 4, maximum 10). It stays off by
 default: test whether the extra context helps your task before enabling it routinely.
 
-## Safe editing (core/full profiles)
+## Safe editing (core/full or enabled expert tools)
 
 Prefer exact language-server rename when available. ContextPro rename remains a
 textual operation; inspect the resulting diff. `find_symbol` JSON exposes a
@@ -142,8 +142,27 @@ context and retrying deliberately.
 
 WASM parsing runs in a reusable child process with baseline compilation, bounded
 queue/source sizes, a 15-second request deadline and a short recovery cooldown.
-A fatal parser exit cannot terminate the MCP process. Structural reads fall back
+A parser child exit does not inherently terminate the MCP parent. Structural reads fall back
 to regex parsing when unavailable; this is reduced precision, not exact semantic
 analysis. Supported-language syntax validation fails closed on parser failure.
 `health` reports the executable path and parser backend so a client using an old
 cached launch command is visible. Restart the client to reload changed MCP config.
+
+## Reference counts and compiler availability
+
+`exact_references` uses TS/JS project configuration, inherited aliases and referenced
+source projects. Indexed tests remain in scope even when excluded from production
+compilation. Retained compiler services observe source/config changes and run in a
+separate worker with a 30-second active deadline and idle disposal. Cold initialization
+can still be slow; retry or use native/compiler tools when analysis cannot complete.
+
+Check `total`, `returned`, `truncated`, `counts`, `scope` and `warnings` in JSON output.
+A direct-call count is different from all identifier occurrences or matching lines.
+The current maximum display is 500; verify omitted results separately. Dynamic and
+unindexed references are outside this declared scope. Python candidates are heuristic;
+imported SCIP evidence still needs source-revision verification.
+
+Normal source checks use size/mtime/ctime, then hashes for suspicious files. Background
+reconciliation continues after watcher failure. These checks do not include unsaved
+editor buffers or promise an atomic repository snapshot. An incomplete response is a
+reason to expand or verify evidence, not to label a rename safe.

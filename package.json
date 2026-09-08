@@ -36,7 +36,8 @@
     "INSTRUCTIONS.md",
     "agent-instructions.md",
     "agent-guide.md",
-    "docs/roadmaps"
+    "docs",
+    "TODO.md"
   ],
   "bin": {
     "contextpro-mcp": "./build/index.js",
@@ -53,7 +54,9 @@
     "test:demo": "node --test test/demo/*.demo.mjs",
     "test:all": "node --test test/main/*.test.mjs test/demo/*.demo.mjs",
     "typecheck": "tsc --noEmit",
-    "bench:retrieval": "npm run build && node scripts/benchmark-retrieval.mjs"
+    "bench:retrieval": "npm run build && node scripts/benchmark-retrieval.mjs",
+    "docs:sync": "node scripts/sync-agent-instructions.mjs",
+    "docs:check": "node scripts/check-docs.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",

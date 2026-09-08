@@ -8,10 +8,10 @@ const toolGroupsLight = [
     color: "#000000",
     layout: "grid" as const,
     tools: [
-      { color: "#000000", label: "Context Tree" },
+      { color: "#000000", label: "Task Context" },
       { color: "#111111", label: "File Skeleton" },
       { color: "#222222", label: "Semantic Search" },
-      { color: "#333333", label: "Semantic Identifiers" },
+      { color: "#333333", label: "Batched Reads" },
     ],
   },
   {
@@ -28,17 +28,17 @@ const toolGroupsLight = [
     color: "#666666",
     layout: "column" as const,
     tools: [
-      { color: "#666666", label: "Propose Commit" },
+      { color: "#666666", label: "Checkpoint" },
       { color: "#777777", label: "Feature Hub" },
     ],
   },
   {
-    name: "Version Control",
+    name: "Recovery",
     color: "#888888",
     layout: "column" as const,
     tools: [
       { color: "#888888", label: "Restore Points" },
-      { color: "#999999", label: "Undo Change" },
+      { color: "#999999", label: "Restore" },
     ],
   },
 ];
@@ -49,10 +49,10 @@ const toolGroupsDark = [
     color: "#ffffff",
     layout: "grid" as const,
     tools: [
-      { color: "#ffffff", label: "Context Tree" },
+      { color: "#ffffff", label: "Task Context" },
       { color: "#eeeeee", label: "File Skeleton" },
       { color: "#dddddd", label: "Semantic Search" },
-      { color: "#cccccc", label: "Semantic Identifiers" },
+      { color: "#cccccc", label: "Batched Reads" },
     ],
   },
   {
@@ -69,17 +69,17 @@ const toolGroupsDark = [
     color: "#999999",
     layout: "column" as const,
     tools: [
-      { color: "#999999", label: "Propose Commit" },
+      { color: "#999999", label: "Checkpoint" },
       { color: "#888888", label: "Feature Hub" },
     ],
   },
   {
-    name: "Version Control",
+    name: "Recovery",
     color: "#777777",
     layout: "column" as const,
     tools: [
       { color: "#777777", label: "Restore Points" },
-      { color: "#666666", label: "Undo Change" },
+      { color: "#666666", label: "Restore" },
     ],
   },
 ];

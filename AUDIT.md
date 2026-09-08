@@ -4,6 +4,14 @@
 
 ---
 
+## 2026-09-08 — Reference/freshness foundation and documentation review
+
+The [foundation report](docs/benchmarks/2026-09-08-reference-foundation.md) records compiler project handling, explicit reference counts, worker isolation, source fingerprints, watcher recovery and 644 passing regressions. The [benchmark index](docs/benchmarks/README.md) separates provider measurements from estimates and direct replays.
+
+The documentation review found conflicting profile defaults, shared-native-rebuild advice, duplicated website instructions using retired tool names, and mandatory extra calls contrary to the lean workflow. Current guides now agree on behavior; obsolete plans are [archived](docs/archive/README.md). Older entries below preserve their original claims and counts and are not current setup instructions.
+
+---
+
 ## 2026-06-18 — Comprehensive audit (post-rebrand readiness)
 
 **Scope.** Every MCP tool category exercised live, every critical source file read, adversarial review across correctness, edge-cases, performance/token efficiency, and API design. Workflow-driven fan-out across 20 source files plus targeted regex/grep verification.

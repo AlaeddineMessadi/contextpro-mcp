@@ -26,14 +26,14 @@ function buildConfig(runner: string, ideId: string): string {
           contextpro: {
             type: "local",
             command: isNpx
-              ? ["npx", "-y", "contextpro-mcp"]
-              : ["bunx", "contextpro-mcp"],
+              ? ["npx", "-y", "contextpro-mcp", "--root", "/absolute/path/to/project"]
+              : ["bunx", "contextpro-mcp", "--root", "/absolute/path/to/project"],
             enabled: true,
             environment: {
-              CONTEXTPLUS_EMBED_PROVIDER: "ollama",
-              OLLAMA_EMBED_MODEL: "nomic-embed-text:latest",
-              OLLAMA_CHAT_MODEL: "nemotron-3-ultra:cloud",
-              CONTEXTPLUS_EMBED_TRACKER: "lazy",
+              CONTEXTPRO_PROVIDER: "ollama",
+              CONTEXTPRO_EMBED_MODEL: "nomic-embed-text:latest",
+              CONTEXTPRO_TOOL_PROFILE: "workflow",
+              CONTEXTPRO_EMBED_TRACKER: "lazy",
             },
           },
         },
@@ -50,12 +50,12 @@ function buildConfig(runner: string, ideId: string): string {
           contextpro: {
             type: "stdio",
             command: isNpx ? "npx" : "bunx",
-            args: isNpx ? ["-y", "contextpro-mcp"] : ["contextpro-mcp"],
+            args: isNpx ? ["-y", "contextpro-mcp", "--root", "/absolute/path/to/project"] : ["contextpro-mcp", "--root", "/absolute/path/to/project"],
             env: {
-              CONTEXTPLUS_EMBED_PROVIDER: "ollama",
-              OLLAMA_EMBED_MODEL: "nomic-embed-text:latest",
-              OLLAMA_CHAT_MODEL: "nemotron-3-ultra:cloud",
-              CONTEXTPLUS_EMBED_TRACKER: "lazy",
+              CONTEXTPRO_PROVIDER: "ollama",
+              CONTEXTPRO_EMBED_MODEL: "nomic-embed-text:latest",
+              CONTEXTPRO_TOOL_PROFILE: "workflow",
+              CONTEXTPRO_EMBED_TRACKER: "lazy",
             },
           },
         },
@@ -71,12 +71,12 @@ function buildConfig(runner: string, ideId: string): string {
       mcpServers: {
         contextpro: {
           command: isNpx ? "npx" : "bunx",
-          args: isNpx ? ["-y", "contextpro-mcp"] : ["contextpro-mcp"],
+          args: isNpx ? ["-y", "contextpro-mcp", "--root", "/absolute/path/to/project"] : ["contextpro-mcp", "--root", "/absolute/path/to/project"],
           env: {
-            CONTEXTPLUS_EMBED_PROVIDER: "ollama",
-            OLLAMA_EMBED_MODEL: "nomic-embed-text:latest",
-            OLLAMA_CHAT_MODEL: "nemotron-3-ultra:cloud",
-            CONTEXTPLUS_EMBED_TRACKER: "lazy",
+            CONTEXTPRO_PROVIDER: "ollama",
+            CONTEXTPRO_EMBED_MODEL: "nomic-embed-text:latest",
+            CONTEXTPRO_TOOL_PROFILE: "workflow",
+            CONTEXTPRO_EMBED_TRACKER: "lazy",
           },
         },
       },
@@ -150,7 +150,7 @@ function highlightJson(json: string): ReactNode[] {
 
 export default function IdeSetup() {
   const [activeIde, setActiveIde] = useState("claude");
-  const [activeRunner, setActiveRunner] = useState("bunx");
+  const [activeRunner, setActiveRunner] = useState("npx");
   const [copied, setCopied] = useState(false);
   const [copiedInit, setCopiedInit] = useState(false);
 
@@ -415,6 +415,11 @@ export default function IdeSetup() {
             </pre>
           </div>
 
+          <p style={{ fontSize: 13, color: "var(--text-faint)", marginTop: 16 }}>
+            Replace the project-root placeholder before connecting. Package examples
+            require access to a published release; use a local checkout for unreleased changes.
+          </p>
+
           <a
             href="https://ollama.com/download"
             target="_blank"
@@ -432,8 +437,8 @@ export default function IdeSetup() {
               transition: "color 0.15s",
             }}
           >
-            Before using ContextPro, make sure Ollama is running and install the
-            required models (for example, nomic-embed-text:latest and nemotron-3-ultra:cloud; use gemma4:12b or another local chat model if you do not use Ollama Cloud).{" "}
+            For local semantic search, run Ollama with the configured embedding model.
+            Structural reads and keyword-only search do not require a chat model.{" "}
             <span style={{ textDecoration: "underline" }}>
               Open Ollama setup
             </span>

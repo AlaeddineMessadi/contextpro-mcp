@@ -9,7 +9,9 @@
     "lint": "eslint",
     "cf:build": "opennextjs-cloudflare build",
     "cf:preview": "opennextjs-cloudflare build && wrangler dev",
-    "cf:deploy": "opennextjs-cloudflare build && opennextjs-cloudflare deploy"
+    "cf:deploy": "opennextjs-cloudflare build && opennextjs-cloudflare deploy",
+    "predev": "node ../scripts/sync-agent-instructions.mjs",
+    "prebuild": "node ../scripts/sync-agent-instructions.mjs"
   },
   "dependencies": {
     "contextpro-mcp": "file:..",

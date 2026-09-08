@@ -24,7 +24,7 @@ and the page **auto-refreshes** status + tool activity every few seconds.
 
 ```bash
 cd dashboard
-bun install        # or npm install
+bun install --frozen-lockfile
 bun run dev        # → http://localhost:6868
 ```
 
@@ -40,7 +40,13 @@ The dashboard imports the MCP's built modules from `../build`, so build the MCP 
 
 ## Notes
 
-- **Tool history requires the MCP server running this build.** Tool-call persistence
-  was added alongside this dashboard; restart your MCP server on this branch so it
-  begins logging calls to `tool_calls`. Until then the Tool Activity panel shows 0.
+- **Tool history is recorded by MCP calls.** Empty activity can mean no calls
+  have been recorded for the selected project; confirm its root before diagnosing
+  a connection problem.
 - It's a **local operator tool**, not a deployed site — it reads local SQLite files.
+
+The dashboard remains a separate app with a Bun lockfile. Use `bun run typecheck` and `bun run build` for validation. The obsolete
+`next lint` script has been replaced with the TypeScript check; a dedicated linter
+configuration remains follow-up work. See the
+repository [maintenance guide](../docs/maintenance.md) before deleting database state
+or build caches. Do not deploy this local filesystem operator UI as a public site.

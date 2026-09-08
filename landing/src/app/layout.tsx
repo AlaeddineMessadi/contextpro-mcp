@@ -6,9 +6,9 @@ import { ThemeProvider } from "../components/ThemeProvider";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "ContextPro // Semantic Intelligence for Large-Scale Engineering",
+  title: "ContextPro — Repository Context for Coding Agents",
   description:
-    "MCP server designed for developers who demand 99% accuracy. RAG, Treesitter AST, Spectral Clustering, and Obsidian-style linking.",
+    "Local MCP repository context with bounded source reads, project-aware references, index freshness and optional semantic retrieval.",
   icons: {
     icon: "/icon.png",
   },
