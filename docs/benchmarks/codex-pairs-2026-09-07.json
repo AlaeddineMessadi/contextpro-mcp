@@ -1,0 +1,250 @@
+[
+  {
+    "taskId": "native-cache-contract",
+    "variant": "baseline",
+    "model": "gpt-6-astra",
+    "reasoningEffort": "high",
+    "success": true,
+    "wallTimeMs": 36972.97175,
+    "usage": {
+      "input_tokens": 65542,
+      "cached_input_tokens": 39168,
+      "cache_write_input_tokens": 0,
+      "output_tokens": 711,
+      "reasoning_output_tokens": 196
+    },
+    "answer": {
+      "identityFields": [
+        "abi",
+        "platform",
+        "arch",
+        "libc"
+      ],
+      "dependencyVersionsInKey": true,
+      "repairsSharedNodeModules": false,
+      "evidence": [
+        {
+          "file": "src/core/native-runtime.ts:15",
+          "symbol": "nativeRuntimeIdentity \u2014 process.versions.modules (fallback 'unknown'), process.platform, process.arch, and libc ('glibc'/'musl' on Linux; 'none' elsewhere)."
+        },
+        {
+          "file": "src/core/native-runtime.ts:25",
+          "symbol": "getNativeRuntime \u2014 hashes JSON.stringify({ identity, dependencies }) using SHA-256 truncated to 24 hex characters; directory prefix is v1-. Dependencies are exact better-sqlite3 and sqlite-vec versions, resolved from installed package manifests or falling back to project declarations with leading ^/~ removed."
+        },
+        {
+          "file": "package.json:60",
+          "symbol": "dependencies \u2014 better-sqlite3 ^12.10.0 and sqlite-vec ^0.1.9; fallback key versions are 12.10.0 and 0.1.9."
+        },
+        {
+          "file": "src/core/native-repair.ts:117",
+          "symbol": "attemptNativeAutoRepair \u2014 invokes repairNativeDependencies."
+        },
+        {
+          "file": "src/core/native-repair.ts:95",
+          "symbol": "repairNativeDependencies \u2014 reuses a validated isolated cache or runs npm install in a cache staging directory, validates SQLite and vectors, then renames staging into the cache. Shared project node_modules is not rebuilt in place."
+        }
+      ]
+    },
+    "toolCalls": 2,
+    "toolNames": [
+      "command_execution",
+      "command_execution"
+    ]
+  },
+  {
+    "taskId": "native-cache-contract",
+    "variant": "contextpro",
+    "model": "gpt-6-astra",
+    "reasoningEffort": "high",
+    "success": true,
+    "wallTimeMs": 122488.15462500001,
+    "usage": {
+      "input_tokens": 197637,
+      "cached_input_tokens": 168192,
+      "cache_write_input_tokens": 0,
+      "output_tokens": 1239,
+      "reasoning_output_tokens": 272
+    },
+    "answer": {
+      "identityFields": [
+        "abi",
+        "platform",
+        "arch",
+        "libc"
+      ],
+      "dependencyVersionsInKey": true,
+      "repairsSharedNodeModules": false,
+      "evidence": [
+        {
+          "file": "src/core/native-runtime.ts:15",
+          "symbol": "nativeRuntimeIdentity \u2014 Node modules ABI, platform, architecture, and libc (glibc/musl on Linux; none elsewhere)."
+        },
+        {
+          "file": "src/core/native-runtime.ts:25",
+          "symbol": "getNativeRuntime \u2014 hashes JSON.stringify({ identity, dependencies }) using SHA-256, taking 24 hex characters with prefix v1-. Dependencies are exact better-sqlite3 and sqlite-vec versions from installed package metadata; fallback strips leading ^/~ from project declarations."
+        },
+        {
+          "file": "package.json:60",
+          "symbol": "dependencies \u2014 better-sqlite3: ^12.10.0; sqlite-vec: ^0.1.9 (line 65)."
+        },
+        {
+          "file": "src/core/native-repair.ts:117",
+          "symbol": "attemptNativeAutoRepair \u2014 invokes repairNativeDependencies."
+        },
+        {
+          "file": "src/core/native-repair.ts:95",
+          "symbol": "repairNativeDependencies \u2014 installs and validates in an isolated staging directory, then renames it to the cache directory."
+        },
+        {
+          "file": "src/core/native-repair.ts:25",
+          "symbol": "runCommand \u2014 uses the supplied staging directory as cwd; shared project node_modules is not rebuilt in place."
+        }
+      ]
+    },
+    "toolCalls": 8,
+    "toolNames": [
+      "search",
+      "explain",
+      "explain",
+      "explain",
+      "explain",
+      "grep",
+      "explain",
+      "efficiency_report"
+    ]
+  },
+  {
+    "taskId": "source-mutation-contract",
+    "variant": "contextpro",
+    "model": "gpt-6-astra",
+    "reasoningEffort": "high",
+    "success": true,
+    "wallTimeMs": 99586.72220799996,
+    "usage": {
+      "input_tokens": 205196,
+      "cached_input_tokens": 172416,
+      "cache_write_input_tokens": 0,
+      "output_tokens": 1065,
+      "reasoning_output_tokens": 63
+    },
+    "answer": {
+      "symlinkEscapeBlocked": true,
+      "staleWriteRejected": true,
+      "serializesWrites": true,
+      "evidence": [
+        {
+          "file": "src/core/path-guard.ts:27",
+          "symbol": "resolveProjectPath"
+        },
+        {
+          "file": "src/core/source-mutation.ts:90",
+          "symbol": "assertMutationPath"
+        },
+        {
+          "file": "src/core/source-mutation.ts:113",
+          "symbol": "captureSource"
+        },
+        {
+          "file": "src/core/source-mutation.ts:129",
+          "symbol": "assertSourceUnchanged"
+        },
+        {
+          "file": "src/core/source-mutation.ts:137",
+          "symbol": "publishSource"
+        },
+        {
+          "file": "src/core/source-mutation.ts:16",
+          "symbol": "withSourceMutation"
+        },
+        {
+          "file": "src/tools/propose-commit.ts:136",
+          "symbol": "proposeCommit"
+        },
+        {
+          "file": "src/tools/propose-commit.ts:139",
+          "symbol": "proposeCommitLocked"
+        },
+        {
+          "file": "src/tools/symbolic-edit.ts:369",
+          "symbol": "replaceSymbolBody"
+        },
+        {
+          "file": "src/tools/symbolic-edit.ts:372",
+          "symbol": "replaceSymbolBodyLocked"
+        }
+      ]
+    },
+    "toolCalls": 9,
+    "toolNames": [
+      "search",
+      "explain",
+      "explain",
+      "grep",
+      "explain",
+      "explain",
+      "explain",
+      "explain",
+      "efficiency_report"
+    ]
+  },
+  {
+    "taskId": "source-mutation-contract",
+    "variant": "baseline",
+    "model": "gpt-6-astra",
+    "reasoningEffort": "high",
+    "success": true,
+    "wallTimeMs": 40035.37970800005,
+    "usage": {
+      "input_tokens": 92995,
+      "cached_input_tokens": 62592,
+      "cache_write_input_tokens": 0,
+      "output_tokens": 739,
+      "reasoning_output_tokens": 0
+    },
+    "answer": {
+      "symlinkEscapeBlocked": true,
+      "staleWriteRejected": true,
+      "serializesWrites": true,
+      "evidence": [
+        {
+          "file": "src/core/path-guard.ts:27",
+          "symbol": "resolveProjectPath \u2014 checks lexical and canonical path containment"
+        },
+        {
+          "file": "src/core/source-mutation.ts:90",
+          "symbol": "assertMutationPath \u2014 rejects symlinks in every path component below root"
+        },
+        {
+          "file": "src/core/source-mutation.ts:129",
+          "symbol": "assertSourceUnchanged \u2014 rejects changed content hash or filesystem identity"
+        },
+        {
+          "file": "src/core/source-mutation.ts:137",
+          "symbol": "publishSource \u2014 rechecks snapshot immediately before atomic rename"
+        },
+        {
+          "file": "src/core/source-mutation.ts:16",
+          "symbol": "withSourceMutation \u2014 canonical-root promise queue and cross-process exclusive lock directory"
+        },
+        {
+          "file": "src/tools/propose-commit.ts:135",
+          "symbol": "proposeCommit \u2192 withSourceMutation \u2192 proposeCommitLocked \u2192 captureSource/publishSource"
+        },
+        {
+          "file": "src/tools/symbolic-edit.ts:368",
+          "symbol": "replaceSymbolBody; insertAroundSymbol (426); renameSymbol (489) \u2014 mutations run under withSourceMutation and use publishSource"
+        },
+        {
+          "file": "src/git/shadow.ts:250",
+          "symbol": "restorePoint \u2192 withSourceMutation \u2192 restorePointLocked \u2192 publishSource"
+        }
+      ]
+    },
+    "toolCalls": 3,
+    "toolNames": [
+      "command_execution",
+      "command_execution",
+      "command_execution"
+    ]
+  }
+]

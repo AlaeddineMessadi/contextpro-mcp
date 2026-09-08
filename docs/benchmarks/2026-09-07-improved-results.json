@@ -1,0 +1,1024 @@
+{
+  "method": {
+    "scope": "Six hand-authored file-discovery tasks on one frozen repository; three serial counterbalanced repeats per variant. Required-file coverage, not completed coding-task correctness.",
+    "baseline": "Scripted git/rg pipeline ranked by distinct manually supplied query keywords then line matches; three two-line-context windows per top-five file. This is a strong deterministic compact baseline; reasoning to select keywords is not measured.",
+    "contextpro": "Configured Node/Ollama/bge-m3 MCP over stdio; file search with top_k=5 and JSON crux output. keyword_only and balanced measured separately.",
+    "tokens": "Exact encoding counts of captured tool text in o200k_base and cl100k_base. Neither is asserted to be the GPT-6 or Claude billing tokenizer. JSON RPC envelopes, reasoning, client wrappers, history replay and caching excluded. Catalogs counted separately, not assumed to be billed on every request.",
+    "latency": "Wall time of sequential tool operations. First pass is not OS-cache/provider-cold; the configured local provider was already warm. Startup and index reconciliation recorded separately; seed-copy and prior embedding construction excluded. Not full agent completion time.",
+    "repeats": "Repeated output is not credited as extra task success or savings. Main totals use the first pass only.",
+    "limits": "Small convenience corpus, source-informed hand labels, no blind adjudicator or held-out repositories. File presence does not prove excerpt sufficiency. Baseline searches tracked text including docs/configs, excluding lockfiles; ContextPro applies its scanner rules.",
+    "actualAgentTokensSaved": null,
+    "actualBillingSavingsUsd": null,
+    "actualAgentTimeSavedMs": null
+  },
+  "generatedAt": "2026-09-07T18:08:03.084Z",
+  "runtime": "v26.0.0",
+  "snapshotCommit": "0485a11daccc8c67d0ee9c2dad0fe73fd0fa4a9d",
+  "startupMs": 547.664458,
+  "preparationMs": 7513.863500000001,
+  "summary": {
+    "rg": {
+      "runs": 18,
+      "errors": 0,
+      "meanRecallAt5": 0.8055555555555556,
+      "meanWorkingSetRecall": 0.8055555555555556,
+      "completeFileSets": 3,
+      "totalTasks": 6,
+      "firstPassMs": 221.26695800000198,
+      "medianMs": 28.643207999999504,
+      "totalResponseTokensFirstPass": {
+        "o200k_base": 10003,
+        "cl100k_base": 9978
+      },
+      "totalResponseTokensAllRuns": {
+        "o200k_base": 30009,
+        "cl100k_base": 29934
+      }
+    },
+    "keyword_only": {
+      "runs": 18,
+      "errors": 0,
+      "meanRecallAt5": 0.7222222222222222,
+      "meanWorkingSetRecall": 0.7222222222222222,
+      "completeFileSets": 2,
+      "totalTasks": 6,
+      "firstPassMs": 783.3064169999998,
+      "medianMs": 113.03718749999916,
+      "totalResponseTokensFirstPass": {
+        "o200k_base": 12264,
+        "cl100k_base": 12249
+      },
+      "totalResponseTokensAllRuns": {
+        "o200k_base": 36792,
+        "cl100k_base": 36747
+      }
+    },
+    "balanced": {
+      "runs": 18,
+      "errors": 0,
+      "meanRecallAt5": 0.8611111111111112,
+      "meanWorkingSetRecall": 0.8611111111111112,
+      "completeFileSets": 4,
+      "totalTasks": 6,
+      "firstPassMs": 1279.561083999999,
+      "medianMs": 183.95995849999963,
+      "totalResponseTokensFirstPass": {
+        "o200k_base": 11923,
+        "cl100k_base": 11892
+      },
+      "totalResponseTokensAllRuns": {
+        "o200k_base": 35769,
+        "cl100k_base": 35676
+      }
+    },
+    "balanced_text": {
+      "runs": 18,
+      "errors": 0,
+      "meanRecallAt5": 0.8611111111111112,
+      "meanWorkingSetRecall": 0.8611111111111112,
+      "completeFileSets": 4,
+      "totalTasks": 6,
+      "firstPassMs": 998.5272939999977,
+      "medianMs": 165.6815629999992,
+      "totalResponseTokensFirstPass": {
+        "o200k_base": 6172,
+        "cl100k_base": 6170
+      },
+      "totalResponseTokensAllRuns": {
+        "o200k_base": 18516,
+        "cl100k_base": 18510
+      }
+    },
+    "balanced_compact": {
+      "runs": 18,
+      "errors": 0,
+      "meanRecallAt5": 0.8611111111111112,
+      "meanWorkingSetRecall": 0.8611111111111112,
+      "completeFileSets": 4,
+      "totalTasks": 6,
+      "firstPassMs": 1014.936166999998,
+      "medianMs": 165.6260000000002,
+      "totalResponseTokensFirstPass": {
+        "o200k_base": 5460,
+        "cl100k_base": 5407
+      },
+      "totalResponseTokensAllRuns": {
+        "o200k_base": 16380,
+        "cl100k_base": 16221
+      }
+    },
+    "balanced_dependencies": {
+      "runs": 18,
+      "errors": 0,
+      "meanRecallAt5": 0.8611111111111112,
+      "meanWorkingSetRecall": 1,
+      "completeFileSets": 4,
+      "totalTasks": 6,
+      "firstPassMs": 1023.4438740000005,
+      "medianMs": 167.06985450000138,
+      "totalResponseTokensFirstPass": {
+        "o200k_base": 6187,
+        "cl100k_base": 6127
+      },
+      "totalResponseTokensAllRuns": {
+        "o200k_base": 18564,
+        "cl100k_base": 18384
+      }
+    }
+  },
+  "catalogs": {
+    "full": {
+      "tools": 60,
+      "tokens": {
+        "o200k_base": 15874,
+        "cl100k_base": 15604
+      }
+    },
+    "workflow": {
+      "tools": 13,
+      "tokens": {
+        "o200k_base": 4102,
+        "cl100k_base": 4034
+      }
+    }
+  },
+  "perTask": [
+    {
+      "task": "native-repair",
+      "variants": {
+        "rg": {
+          "recall": 0.6666666666666666,
+          "workingSetRecall": 0.6666666666666666,
+          "dependencies": [],
+          "paths": [
+            "src/core/native-repair.ts",
+            "test/main/native-runtime.test.mjs",
+            "src/core/db-native.ts",
+            "test/main/native-repair.test.mjs",
+            "src/core/startup-health.ts"
+          ],
+          "responseTokens": {
+            "o200k_base": 930,
+            "cl100k_base": 926
+          },
+          "medianMs": 27.499957999998514
+        },
+        "keyword_only": {
+          "recall": 0.6666666666666666,
+          "workingSetRecall": 0.6666666666666666,
+          "dependencies": [],
+          "paths": [
+            "src/core/db-native.ts",
+            "src/core/native-runtime.ts",
+            "dashboard/tsconfig.json",
+            "test/main/native-runtime.test.mjs",
+            "src/core/db.ts"
+          ],
+          "responseTokens": {
+            "o200k_base": 1834,
+            "cl100k_base": 1828
+          },
+          "medianMs": 100.98433300000033
+        },
+        "balanced": {
+          "recall": 1,
+          "workingSetRecall": 1,
+          "dependencies": [],
+          "paths": [
+            "src/core/native-repair.ts",
+            "src/core/db-native.ts",
+            "src/core/native-runtime.ts",
+            "test/main/native-runtime.test.mjs",
+            "src/core/worktree-seed.ts"
+          ],
+          "responseTokens": {
+            "o200k_base": 2105,
+            "cl100k_base": 2102
+          },
+          "medianMs": 181.61862499999916
+        },
+        "balanced_text": {
+          "recall": 1,
+          "workingSetRecall": 1,
+          "dependencies": [],
+          "paths": [
+            "src/core/native-repair.ts",
+            "src/core/db-native.ts",
+            "src/core/native-runtime.ts",
+            "test/main/native-runtime.test.mjs",
+            "src/core/worktree-seed.ts"
+          ],
+          "responseTokens": {
+            "o200k_base": 1118,
+            "cl100k_base": 1120
+          },
+          "medianMs": 167.61854200000016
+        },
+        "balanced_compact": {
+          "recall": 1,
+          "workingSetRecall": 1,
+          "dependencies": [],
+          "paths": [
+            "src/core/native-repair.ts",
+            "src/core/db-native.ts",
+            "src/core/native-runtime.ts",
+            "test/main/native-runtime.test.mjs",
+            "src/core/worktree-seed.ts"
+          ],
+          "responseTokens": {
+            "o200k_base": 1002,
+            "cl100k_base": 995
+          },
+          "medianMs": 163.5042910000011
+        },
+        "balanced_dependencies": {
+          "recall": 1,
+          "workingSetRecall": 1,
+          "dependencies": [],
+          "paths": [
+            "src/core/native-repair.ts",
+            "src/core/db-native.ts",
+            "src/core/native-runtime.ts",
+            "test/main/native-runtime.test.mjs",
+            "src/core/worktree-seed.ts"
+          ],
+          "responseTokens": {
+            "o200k_base": 1054,
+            "cl100k_base": 1049
+          },
+          "medianMs": 165.90370800000164
+        }
+      }
+    },
+    {
+      "task": "safe-source-write",
+      "variants": {
+        "rg": {
+          "recall": 1,
+          "workingSetRecall": 1,
+          "dependencies": [],
+          "paths": [
+            "CHANGELOG.md",
+            "test/main/source-mutation-safety.test.mjs",
+            "src/core/source-mutation.ts",
+            "plans/2026-09-07-gpt6-audit.md",
+            "src/core/path-guard.ts"
+          ],
+          "responseTokens": {
+            "o200k_base": 2531,
+            "cl100k_base": 2503
+          },
+          "medianMs": 30.075333000000683
+        },
+        "keyword_only": {
+          "recall": 0.5,
+          "workingSetRecall": 0.5,
+          "dependencies": [],
+          "paths": [
+            "src/core/source-mutation.ts",
+            "src/core/reconcile-scheduler.ts",
+            "test/main/source-mutation-safety.test.mjs",
+            "src/tools/symbolic-edit.ts",
+            "dashboard/src/lib/mcp.ts"
+          ],
+          "responseTokens": {
+            "o200k_base": 1954,
+            "cl100k_base": 1955
+          },
+          "medianMs": 121.58845900000051
+        },
+        "balanced": {
+          "recall": 0.5,
+          "workingSetRecall": 0.5,
+          "dependencies": [],
+          "paths": [
+            "src/core/source-mutation.ts",
+            "test/main/source-mutation-safety.test.mjs",
+            "src/core/project-config.ts",
+            "src/core/worktree-seed.ts",
+            "src/core/agent-setup.ts"
+          ],
+          "responseTokens": {
+            "o200k_base": 1946,
+            "cl100k_base": 1940
+          },
+          "medianMs": 190.07458299999962
+        },
+        "balanced_text": {
+          "recall": 0.5,
+          "workingSetRecall": 0.5,
+          "dependencies": [],
+          "paths": [
+            "src/core/source-mutation.ts",
+            "test/main/source-mutation-safety.test.mjs",
+            "src/core/project-config.ts",
+            "src/core/worktree-seed.ts",
+            "src/core/agent-setup.ts"
+          ],
+          "responseTokens": {
+            "o200k_base": 999,
+            "cl100k_base": 997
+          },
+          "medianMs": 162.54033399999935
+        },
+        "balanced_compact": {
+          "recall": 0.5,
+          "workingSetRecall": 0.5,
+          "dependencies": [],
+          "paths": [
+            "src/core/source-mutation.ts",
+            "test/main/source-mutation-safety.test.mjs",
+            "src/core/project-config.ts",
+            "src/core/worktree-seed.ts",
+            "src/core/agent-setup.ts"
+          ],
+          "responseTokens": {
+            "o200k_base": 907,
+            "cl100k_base": 897
+          },
+          "medianMs": 164.32120899999973
+        },
+        "balanced_dependencies": {
+          "recall": 0.5,
+          "workingSetRecall": 1,
+          "dependencies": [
+            "src/core/path-guard.ts",
+            "src/core/data-dir.ts"
+          ],
+          "paths": [
+            "src/core/source-mutation.ts",
+            "test/main/source-mutation-safety.test.mjs",
+            "src/core/project-config.ts",
+            "src/core/worktree-seed.ts",
+            "src/core/agent-setup.ts"
+          ],
+          "responseTokens": {
+            "o200k_base": 1022,
+            "cl100k_base": 1010
+          },
+          "medianMs": 165.95620899999994
+        }
+      }
+    },
+    {
+      "task": "failed-reindex",
+      "variants": {
+        "rg": {
+          "recall": 0.5,
+          "workingSetRecall": 0.5,
+          "dependencies": [],
+          "paths": [
+            "src/tools/reindex.ts",
+            "src/core/db.ts",
+            "CHANGELOG.md",
+            "test/main/index-consistency-regressions.test.mjs",
+            "AUDIT.md"
+          ],
+          "responseTokens": {
+            "o200k_base": 1566,
+            "cl100k_base": 1582
+          },
+          "medianMs": 30.129624999999578
+        },
+        "keyword_only": {
+          "recall": 0.5,
+          "workingSetRecall": 0.5,
+          "dependencies": [],
+          "paths": [
+            "src/core/native-repair.ts",
+            "src/tools/reindex.ts",
+            "src/tools/status.ts",
+            "src/core/startup-health.ts",
+            "src/tools/search.ts"
+          ],
+          "responseTokens": {
+            "o200k_base": 2365,
+            "cl100k_base": 2363
+          },
+          "medianMs": 114.72091699999874
+        },
+        "balanced": {
+          "recall": 1,
+          "workingSetRecall": 1,
+          "dependencies": [],
+          "paths": [
+            "src/tools/reindex.ts",
+            "src/core/index-freshness.ts",
+            "src/core/index-reconcile.ts",
+            "src/core/context-metadata.ts",
+            "dashboard/src/app/page.tsx"
+          ],
+          "responseTokens": {
+            "o200k_base": 2180,
+            "cl100k_base": 2176
+          },
+          "medianMs": 186.5055829999983
+        },
+        "balanced_text": {
+          "recall": 1,
+          "workingSetRecall": 1,
+          "dependencies": [],
+          "paths": [
+            "src/tools/reindex.ts",
+            "src/core/index-freshness.ts",
+            "src/core/index-reconcile.ts",
+            "src/core/context-metadata.ts",
+            "dashboard/src/app/page.tsx"
+          ],
+          "responseTokens": {
+            "o200k_base": 1185,
+            "cl100k_base": 1186
+          },
+          "medianMs": 169.09037499999977
+        },
+        "balanced_compact": {
+          "recall": 1,
+          "workingSetRecall": 1,
+          "dependencies": [],
+          "paths": [
+            "src/tools/reindex.ts",
+            "src/core/index-freshness.ts",
+            "src/core/index-reconcile.ts",
+            "src/core/context-metadata.ts",
+            "dashboard/src/app/page.tsx"
+          ],
+          "responseTokens": {
+            "o200k_base": 1011,
+            "cl100k_base": 1005
+          },
+          "medianMs": 176.36108400000012
+        },
+        "balanced_dependencies": {
+          "recall": 1,
+          "workingSetRecall": 1,
+          "dependencies": [
+            "src/core/db.ts",
+            "src/core/embeddings.ts",
+            "src/core/extractor-stamp.ts"
+          ],
+          "paths": [
+            "src/tools/reindex.ts",
+            "src/core/index-freshness.ts",
+            "src/core/index-reconcile.ts",
+            "src/core/context-metadata.ts",
+            "dashboard/src/app/page.tsx"
+          ],
+          "responseTokens": {
+            "o200k_base": 1158,
+            "cl100k_base": 1150
+          },
+          "medianMs": 169.85499999999956
+        }
+      }
+    },
+    {
+      "task": "token-accounting",
+      "variants": {
+        "rg": {
+          "recall": 0.6666666666666666,
+          "workingSetRecall": 0.6666666666666666,
+          "dependencies": [],
+          "paths": [
+            "src/tools/efficiency-report.ts",
+            "test/main/efficiency-session.test.mjs",
+            "dashboard/src/components/ToolsPanel.tsx",
+            "src/core/efficiency.ts",
+            "src/tools/register-tools.ts"
+          ],
+          "responseTokens": {
+            "o200k_base": 1832,
+            "cl100k_base": 1838
+          },
+          "medianMs": 29.88866600000074
+        },
+        "keyword_only": {
+          "recall": 0.6666666666666666,
+          "workingSetRecall": 0.6666666666666666,
+          "dependencies": [],
+          "paths": [
+            "src/tools/efficiency-report.ts",
+            "src/core/efficiency.ts",
+            "test/fixtures/retrieval-benchmark.json",
+            "scripts/benchmark-retrieval.mjs",
+            "src/core/db.ts"
+          ],
+          "responseTokens": {
+            "o200k_base": 2196,
+            "cl100k_base": 2201
+          },
+          "medianMs": 116.93012499999895
+        },
+        "balanced": {
+          "recall": 0.6666666666666666,
+          "workingSetRecall": 0.6666666666666666,
+          "dependencies": [],
+          "paths": [
+            "src/tools/efficiency-report.ts",
+            "plans/2026-09-07-retrieval-benchmark.json",
+            "src/core/efficiency.ts",
+            "test/fixtures/retrieval-benchmark.json",
+            "dashboard/src/components/ToolsPanel.tsx"
+          ],
+          "responseTokens": {
+            "o200k_base": 1788,
+            "cl100k_base": 1783
+          },
+          "medianMs": 168.5287500000013
+        },
+        "balanced_text": {
+          "recall": 0.6666666666666666,
+          "workingSetRecall": 0.6666666666666666,
+          "dependencies": [],
+          "paths": [
+            "src/tools/efficiency-report.ts",
+            "plans/2026-09-07-retrieval-benchmark.json",
+            "src/core/efficiency.ts",
+            "test/fixtures/retrieval-benchmark.json",
+            "dashboard/src/components/ToolsPanel.tsx"
+          ],
+          "responseTokens": {
+            "o200k_base": 884,
+            "cl100k_base": 886
+          },
+          "medianMs": 161.96450000000004
+        },
+        "balanced_compact": {
+          "recall": 0.6666666666666666,
+          "workingSetRecall": 0.6666666666666666,
+          "dependencies": [],
+          "paths": [
+            "src/tools/efficiency-report.ts",
+            "plans/2026-09-07-retrieval-benchmark.json",
+            "src/core/efficiency.ts",
+            "test/fixtures/retrieval-benchmark.json",
+            "dashboard/src/components/ToolsPanel.tsx"
+          ],
+          "responseTokens": {
+            "o200k_base": 805,
+            "cl100k_base": 797
+          },
+          "medianMs": 154.06674999999814
+        },
+        "balanced_dependencies": {
+          "recall": 0.6666666666666666,
+          "workingSetRecall": 1,
+          "dependencies": [
+            "src/core/runtime-session.ts",
+            "src/core/db.ts"
+          ],
+          "paths": [
+            "src/tools/efficiency-report.ts",
+            "plans/2026-09-07-retrieval-benchmark.json",
+            "src/core/efficiency.ts",
+            "test/fixtures/retrieval-benchmark.json",
+            "dashboard/src/components/ToolsPanel.tsx"
+          ],
+          "responseTokens": {
+            "o200k_base": 925,
+            "cl100k_base": 916
+          },
+          "medianMs": 166.86879200000112
+        }
+      }
+    },
+    {
+      "task": "worktree-snapshot",
+      "variants": {
+        "rg": {
+          "recall": 1,
+          "workingSetRecall": 1,
+          "dependencies": [],
+          "paths": [
+            "test/main/worktree-seed.test.mjs",
+            "src/core/worktree-seed.ts",
+            "src/tools/register-tools.ts",
+            "plans/2026-09-07-gpt6-audit.md",
+            "plans/README.md"
+          ],
+          "responseTokens": {
+            "o200k_base": 1820,
+            "cl100k_base": 1824
+          },
+          "medianMs": 28.38958300000013
+        },
+        "keyword_only": {
+          "recall": 1,
+          "workingSetRecall": 1,
+          "dependencies": [],
+          "paths": [
+            "src/core/worktree-seed.ts",
+            "src/core/workspace-router.ts",
+            "src/core/worktree-gc.ts",
+            "src/core/worktree-overlay.ts",
+            "test/fixtures/retrieval-benchmark.json"
+          ],
+          "responseTokens": {
+            "o200k_base": 1977,
+            "cl100k_base": 1970
+          },
+          "medianMs": 101.0734999999986
+        },
+        "balanced": {
+          "recall": 1,
+          "workingSetRecall": 1,
+          "dependencies": [],
+          "paths": [
+            "src/core/worktree-seed.ts",
+            "src/core/workspace-router.ts",
+            "src/core/worktree-gc.ts",
+            "src/core/worktree-overlay.ts",
+            "src/core/project-graph.ts"
+          ],
+          "responseTokens": {
+            "o200k_base": 1973,
+            "cl100k_base": 1968
+          },
+          "medianMs": 183.73654199999874
+        },
+        "balanced_text": {
+          "recall": 1,
+          "workingSetRecall": 1,
+          "dependencies": [],
+          "paths": [
+            "src/core/worktree-seed.ts",
+            "src/core/workspace-router.ts",
+            "src/core/worktree-gc.ts",
+            "src/core/worktree-overlay.ts",
+            "src/core/project-graph.ts"
+          ],
+          "responseTokens": {
+            "o200k_base": 997,
+            "cl100k_base": 999
+          },
+          "medianMs": 167.10399999999936
+        },
+        "balanced_compact": {
+          "recall": 1,
+          "workingSetRecall": 1,
+          "dependencies": [],
+          "paths": [
+            "src/core/worktree-seed.ts",
+            "src/core/workspace-router.ts",
+            "src/core/worktree-gc.ts",
+            "src/core/worktree-overlay.ts",
+            "src/core/project-graph.ts"
+          ],
+          "responseTokens": {
+            "o200k_base": 852,
+            "cl100k_base": 842
+          },
+          "medianMs": 172.6942909999998
+        },
+        "balanced_dependencies": {
+          "recall": 1,
+          "workingSetRecall": 1,
+          "dependencies": [
+            "src/core/project-config.ts",
+            "src/core/data-dir.ts",
+            "src/core/db-native.ts"
+          ],
+          "paths": [
+            "src/core/worktree-seed.ts",
+            "src/core/workspace-router.ts",
+            "src/core/worktree-gc.ts",
+            "src/core/worktree-overlay.ts",
+            "src/core/project-graph.ts"
+          ],
+          "responseTokens": {
+            "o200k_base": 996,
+            "cl100k_base": 983
+          },
+          "medianMs": 171.46712500000285
+        }
+      }
+    },
+    {
+      "task": "parser-concurrency",
+      "variants": {
+        "rg": {
+          "recall": 1,
+          "workingSetRecall": 1,
+          "dependencies": [],
+          "paths": [
+            "src/core/tree-sitter.ts",
+            "src/core/parser.ts",
+            "INSTRUCTIONS.md",
+            "landing/src/app/api/instructions/route.ts",
+            "landing/src/components/InstructionsSection.tsx"
+          ],
+          "responseTokens": {
+            "o200k_base": 1324,
+            "cl100k_base": 1305
+          },
+          "medianMs": 26.615499999999884
+        },
+        "keyword_only": {
+          "recall": 1,
+          "workingSetRecall": 1,
+          "dependencies": [],
+          "paths": [
+            "src/core/tree-sitter.ts",
+            "landing/src/app/api/instructions/route.ts",
+            "landing/src/components/InstructionsSection.tsx",
+            "src/core/parser.ts",
+            "dashboard/src/lib/mcp.ts"
+          ],
+          "responseTokens": {
+            "o200k_base": 1938,
+            "cl100k_base": 1932
+          },
+          "medianMs": 110.16675000000032
+        },
+        "balanced": {
+          "recall": 1,
+          "workingSetRecall": 1,
+          "dependencies": [],
+          "paths": [
+            "src/core/tree-sitter.ts",
+            "src/tools/semantic-navigate.ts",
+            "src/core/extractor-stamp.ts",
+            "landing/src/app/api/instructions/route.ts",
+            "src/index.ts"
+          ],
+          "responseTokens": {
+            "o200k_base": 1931,
+            "cl100k_base": 1923
+          },
+          "medianMs": 182.02512500000012
+        },
+        "balanced_text": {
+          "recall": 1,
+          "workingSetRecall": 1,
+          "dependencies": [],
+          "paths": [
+            "src/core/tree-sitter.ts",
+            "src/tools/semantic-navigate.ts",
+            "src/core/extractor-stamp.ts",
+            "landing/src/app/api/instructions/route.ts",
+            "src/index.ts"
+          ],
+          "responseTokens": {
+            "o200k_base": 989,
+            "cl100k_base": 982
+          },
+          "medianMs": 165.57279199999903
+        },
+        "balanced_compact": {
+          "recall": 1,
+          "workingSetRecall": 1,
+          "dependencies": [],
+          "paths": [
+            "src/core/tree-sitter.ts",
+            "src/tools/semantic-navigate.ts",
+            "src/core/extractor-stamp.ts",
+            "landing/src/app/api/instructions/route.ts",
+            "src/index.ts"
+          ],
+          "responseTokens": {
+            "o200k_base": 883,
+            "cl100k_base": 871
+          },
+          "medianMs": 165.32908300000054
+        },
+        "balanced_dependencies": {
+          "recall": 1,
+          "workingSetRecall": 1,
+          "dependencies": [
+            "src/core/parser.ts",
+            "src/core/chat-model.ts",
+            "src/core/clustering.ts"
+          ],
+          "paths": [
+            "src/core/tree-sitter.ts",
+            "src/tools/semantic-navigate.ts",
+            "src/core/extractor-stamp.ts",
+            "landing/src/app/api/instructions/route.ts",
+            "src/index.ts"
+          ],
+          "responseTokens": {
+            "o200k_base": 1032,
+            "cl100k_base": 1019
+          },
+          "medianMs": 167.27091700000165
+        }
+      }
+    }
+  ],
+  "extraCaptures": [
+    {
+      "task": "skeleton:src/core/native-runtime.ts",
+      "variant": "skeleton",
+      "request": {
+        "file_path": "src/core/native-runtime.ts"
+      },
+      "latencyMs": 61.4610410000023,
+      "error": false,
+      "tokens": {
+        "o200k_base": 180,
+        "cl100k_base": 179
+      },
+      "requestTokens": {
+        "o200k_base": 10,
+        "cl100k_base": 10
+      }
+    },
+    {
+      "task": "skeleton:src/core/native-runtime.ts",
+      "variant": "full_read",
+      "request": {
+        "file": "src/core/native-runtime.ts"
+      },
+      "latencyMs": 0.43054100000153994,
+      "tokens": {
+        "o200k_base": 484,
+        "cl100k_base": 479
+      },
+      "requestTokens": {
+        "o200k_base": 9,
+        "cl100k_base": 9
+      }
+    },
+    {
+      "task": "skeleton:src/core/native-runtime.ts",
+      "variant": "export_grep",
+      "request": {
+        "pattern": "^export ",
+        "file": "src/core/native-runtime.ts"
+      },
+      "latencyMs": 7.0072499999987485,
+      "tokens": {
+        "o200k_base": 40,
+        "cl100k_base": 39
+      },
+      "requestTokens": {
+        "o200k_base": 14,
+        "cl100k_base": 14
+      }
+    },
+    {
+      "task": "skeleton:src/core/tree-sitter.ts",
+      "variant": "skeleton",
+      "request": {
+        "file_path": "src/core/tree-sitter.ts"
+      },
+      "latencyMs": 66.44008299999768,
+      "error": false,
+      "tokens": {
+        "o200k_base": 727,
+        "cl100k_base": 727
+      },
+      "requestTokens": {
+        "o200k_base": 11,
+        "cl100k_base": 11
+      }
+    },
+    {
+      "task": "skeleton:src/core/tree-sitter.ts",
+      "variant": "full_read",
+      "request": {
+        "file": "src/core/tree-sitter.ts"
+      },
+      "latencyMs": 0.17391700000007404,
+      "tokens": {
+        "o200k_base": 3041,
+        "cl100k_base": 2984
+      },
+      "requestTokens": {
+        "o200k_base": 10,
+        "cl100k_base": 10
+      }
+    },
+    {
+      "task": "skeleton:src/core/tree-sitter.ts",
+      "variant": "export_grep",
+      "request": {
+        "pattern": "^export ",
+        "file": "src/core/tree-sitter.ts"
+      },
+      "latencyMs": 5.032583000000159,
+      "tokens": {
+        "o200k_base": 83,
+        "cl100k_base": 83
+      },
+      "requestTokens": {
+        "o200k_base": 15,
+        "cl100k_base": 15
+      }
+    },
+    {
+      "task": "skeleton:src/core/efficiency.ts",
+      "variant": "skeleton",
+      "request": {
+        "file_path": "src/core/efficiency.ts"
+      },
+      "latencyMs": 53.951458999999886,
+      "error": false,
+      "tokens": {
+        "o200k_base": 554,
+        "cl100k_base": 566
+      },
+      "requestTokens": {
+        "o200k_base": 11,
+        "cl100k_base": 11
+      }
+    },
+    {
+      "task": "skeleton:src/core/efficiency.ts",
+      "variant": "full_read",
+      "request": {
+        "file": "src/core/efficiency.ts"
+      },
+      "latencyMs": 0.18825000000288128,
+      "tokens": {
+        "o200k_base": 1656,
+        "cl100k_base": 1665
+      },
+      "requestTokens": {
+        "o200k_base": 10,
+        "cl100k_base": 10
+      }
+    },
+    {
+      "task": "skeleton:src/core/efficiency.ts",
+      "variant": "export_grep",
+      "request": {
+        "pattern": "^export ",
+        "file": "src/core/efficiency.ts"
+      },
+      "latencyMs": 4.808000000000902,
+      "tokens": {
+        "o200k_base": 125,
+        "cl100k_base": 132
+      },
+      "requestTokens": {
+        "o200k_base": 15,
+        "cl100k_base": 15
+      }
+    },
+    {
+      "task": "packet-delta",
+      "variant": "full",
+      "request": {
+        "task": "Repair a native SQLite module compiled for the wrong Node ABI using an isolated cache",
+        "max_tokens": 1500,
+        "max_files": 5,
+        "preset": "keyword_only",
+        "format": "json",
+        "include_memory": false,
+        "include_recent_diffs": false
+      },
+      "tokens": {
+        "o200k_base": 1005,
+        "cl100k_base": 991
+      },
+      "requestTokens": {
+        "o200k_base": 51,
+        "cl100k_base": 51
+      }
+    },
+    {
+      "task": "packet-delta",
+      "variant": "delta",
+      "request": {
+        "task": "Repair a native SQLite module compiled for the wrong Node ABI using an isolated cache",
+        "max_tokens": 1500,
+        "max_files": 5,
+        "preset": "keyword_only",
+        "format": "json",
+        "include_memory": false,
+        "include_recent_diffs": false,
+        "previous_context_id": "task_context-9492e541ef2331"
+      },
+      "tokens": {
+        "o200k_base": 163,
+        "cl100k_base": 162
+      },
+      "requestTokens": {
+        "o200k_base": 66,
+        "cl100k_base": 66
+      }
+    }
+  ],
+  "builtinEfficiency": {
+    "finalSummary": "ContextPro: 97 tool calls; ~0 input tokens avoided versus full-file reads (estimate); cost unavailable (model price not supplied).",
+    "estimate": {
+      "savedTokens": 0,
+      "sourceTokensRepresented": 132168,
+      "responseTokens": 117936,
+      "requestTokens": 4460,
+      "toolSchemaTokens": 17011,
+      "netTokensAvoided": -7239,
+      "representedFileReferences": 498,
+      "method": "UTF-8 bytes divided by four. Full-source baseline credits each represented file revision once per process session; subtract all request/response estimates and one advertised tool catalog for session reports. Historical rows may use the older per-call baseline.",
+      "limitations": [
+        "Not tokenizer measurements or a measured comparison against another agent.",
+        "Client schema loading, repeated prompt history and cache behavior are unknown; one catalog is a scenario assumption.",
+        "Non-session windows combine sessions and older estimates; catalog overhead is unavailable.",
+        "History is bounded to the latest 5,000 calls per project; old periods may be incomplete."
+      ]
+    },
+    "actualAgentTokensSaved": null,
+    "actualBillingSavingsUsd": null
+  },
+  "sourceCommit": "36d161b"
+}

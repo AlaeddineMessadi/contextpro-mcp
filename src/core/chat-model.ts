@@ -3,6 +3,7 @@
 
 import { readFile } from "fs/promises";
 import { join } from "path";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { normalizeProvider, getApiKey, getBaseUrl, getChatModelName } from "./provider-config.js";
 
 type OllamaChatClient = { chat: (params: Record<string, unknown>) => Promise<{ message: { content: string } }> };
@@ -13,11 +14,14 @@ interface ContextPlusConfig {
 }
 
 let ollamaClient: OllamaChatClient | null = null;
+const chatSignals = new AsyncLocalStorage<AbortSignal>();
 
 async function getOllamaClient(): Promise<OllamaChatClient> {
   if (!ollamaClient) {
     const { Ollama } = await import("ollama");
-    ollamaClient = new Ollama({ host: process.env.OLLAMA_HOST }) as unknown as OllamaChatClient;
+    ollamaClient = new Ollama({ host: process.env.OLLAMA_HOST,
+      fetch: (input, init) => fetch(input, { ...init, signal: chatSignals.getStore() ?? init?.signal }),
+    }) as unknown as OllamaChatClient;
   }
   return ollamaClient;
 }
@@ -80,7 +84,8 @@ export async function hasConfiguredChatModel(rootDir: string): Promise<boolean> 
   return Boolean(process.env.CONTEXTPRO_CHAT_MODEL ?? process.env.OLLAMA_CHAT_MODEL ?? config?.chatModel);
 }
 
-export async function chatCompletion(rootDir: string, prompt: string): Promise<string> {
+export async function chatCompletion(rootDir: string, prompt: string, options: { timeoutMs?: number } = {}): Promise<string> {
+  const signal = AbortSignal.timeout(options.timeoutMs ?? 60_000);
   const config = await readContextPlusConfig(rootDir);
   const provider = resolveChatProvider(config);
   if (provider === "openai") {
@@ -97,6 +102,7 @@ export async function chatCompletion(rootDir: string, prompt: string): Promise<s
         messages: [{ role: "user", content: prompt }],
         stream: false,
       }),
+      signal,
     });
     if (!response.ok) {
       const body = await response.text().catch(() => "");
@@ -110,11 +116,11 @@ export async function chatCompletion(rootDir: string, prompt: string): Promise<s
   if (!model) throw new Error("No Ollama chat model is configured.");
   const client = await getOllamaClient();
   try {
-    const response = await client.chat({
+    const response = await chatSignals.run(signal, () => client.chat({
       model,
       messages: [{ role: "user", content: prompt }],
       stream: false,
-    });
+    }));
     return response.message.content;
   } catch (error) {
     throw new Error(formatOllamaChatError(error, model));

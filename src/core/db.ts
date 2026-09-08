@@ -19,6 +19,7 @@ export interface FileRow {
   last_indexed_at: number;
   file_size: number;
   file_mtime_ms: number;
+  file_ctime_ms: number;
 }
 
 export interface ToolCallEfficiency {
@@ -161,7 +162,7 @@ export interface FileTextSearchMatch {
 export type { NativeStorageDiagnostic, NativeStorageProbe } from "./db-native.js";
 export { describeNativeStorageError, probeNativeStorage } from "./db-native.js";
 
-const SCHEMA_VERSION = "6";
+const SCHEMA_VERSION = "7";
 const DECAY_LAMBDA = 0.05;
 const STALE_EDGE_THRESHOLD = 0.15;
 const STALE_NODE_DAYS = 7;
@@ -178,7 +179,8 @@ CREATE TABLE IF NOT EXISTS files (
   symbol_count INTEGER DEFAULT 0,
   last_indexed_at INTEGER NOT NULL,
   file_size INTEGER DEFAULT 0,
-  file_mtime_ms INTEGER DEFAULT 0
+  file_mtime_ms INTEGER DEFAULT 0,
+  file_ctime_ms REAL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS symbols (
@@ -379,6 +381,7 @@ export class ContextPlusDB {
     if (current < 6) {
       if (!this.columnExists("tool_calls", "session_id")) this.db.exec("ALTER TABLE tool_calls ADD COLUMN session_id TEXT");
     }
+    if (current < 7 && !this.columnExists("files", "file_ctime_ms")) this.db.exec("ALTER TABLE files ADD COLUMN file_ctime_ms REAL DEFAULT 0");
     this.db.exec("CREATE INDEX IF NOT EXISTS idx_tool_calls_session ON tool_calls(session_id, called_at)");
     this.db.prepare("INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', ?)").run(SCHEMA_VERSION);
   }
@@ -475,21 +478,21 @@ export class ContextPlusDB {
     return Array.isArray(value) && value.length > 0;
   }
 
-  upsertFile(path: string, hash: string, header: string | null, language: string | null, fileSize: number = 0, fileMtimeMs: number = 0): number {
+  upsertFile(path: string, hash: string, header: string | null, language: string | null, fileSize: number = 0, fileMtimeMs: number = 0, fileCtimeMs: number = 0): number {
     const existing = this.db.prepare("SELECT id FROM files WHERE path = ?").get(path) as { id: number } | undefined;
     if (existing) {
-      this.db.prepare("UPDATE files SET content_hash = ?, header = ?, language = ?, last_indexed_at = ?, file_size = ?, file_mtime_ms = ? WHERE id = ?")
-        .run(hash, header, language, Date.now(), fileSize, fileMtimeMs, existing.id);
+      this.db.prepare("UPDATE files SET content_hash = ?, header = ?, language = ?, last_indexed_at = ?, file_size = ?, file_mtime_ms = ?, file_ctime_ms = ? WHERE id = ?")
+        .run(hash, header, language, Date.now(), fileSize, fileMtimeMs, fileCtimeMs, existing.id);
       return existing.id;
     }
-    const result = this.db.prepare("INSERT INTO files (path, content_hash, header, language, last_indexed_at, file_size, file_mtime_ms) VALUES (?, ?, ?, ?, ?, ?, ?)")
-      .run(path, hash, header, language, Date.now(), fileSize, fileMtimeMs);
+    const result = this.db.prepare("INSERT INTO files (path, content_hash, header, language, last_indexed_at, file_size, file_mtime_ms, file_ctime_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+      .run(path, hash, header, language, Date.now(), fileSize, fileMtimeMs, fileCtimeMs);
     return Number(result.lastInsertRowid);
   }
 
-  updateFileFingerprint(path: string, fileSize: number, fileMtimeMs: number): void {
-    this.db.prepare("UPDATE files SET file_size = ?, file_mtime_ms = ? WHERE path = ?")
-      .run(fileSize, fileMtimeMs, path);
+  updateFileFingerprint(path: string, fileSize: number, fileMtimeMs: number, fileCtimeMs = 0, expectedHash?: string): void {
+    this.db.prepare("UPDATE files SET file_size = ?, file_mtime_ms = ?, file_ctime_ms = ? WHERE path = ? AND (? IS NULL OR content_hash = ?)")
+      .run(fileSize, fileMtimeMs, fileCtimeMs, path, expectedHash ?? null, expectedHash ?? null);
   }
 
   getFile(path: string): FileRow | null {

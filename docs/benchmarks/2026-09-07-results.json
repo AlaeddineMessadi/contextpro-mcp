@@ -1,0 +1,714 @@
+{
+  "method": {
+    "scope": "Six hand-authored file-discovery tasks on one frozen repository; three serial counterbalanced repeats per variant. Required-file coverage, not completed coding-task correctness.",
+    "baseline": "Scripted git/rg pipeline ranked by distinct manually supplied query keywords then line matches; three two-line-context windows per top-five file. This is a strong deterministic compact baseline; reasoning to select keywords is not measured.",
+    "contextpro": "Configured Node/Ollama/bge-m3 MCP over stdio; file search with top_k=5 and JSON crux output. keyword_only and balanced measured separately.",
+    "tokens": "Exact encoding counts of captured tool text in o200k_base and cl100k_base. Neither is asserted to be the GPT-6 or Claude billing tokenizer. JSON RPC envelopes, reasoning, client wrappers, history replay and caching excluded. Catalogs counted separately, not assumed to be billed on every request.",
+    "latency": "Wall time of sequential tool operations. First pass is not OS-cache/provider-cold; the configured local provider was already warm. Startup and index reconciliation recorded separately; seed-copy and prior embedding construction excluded. Not full agent completion time.",
+    "repeats": "Repeated output is not credited as extra task success or savings. Main totals use the first pass only.",
+    "limits": "Small convenience corpus, source-informed hand labels, no blind adjudicator or held-out repositories. File presence does not prove excerpt sufficiency. Baseline searches tracked text including docs/configs, excluding lockfiles; ContextPro applies its scanner rules.",
+    "actualAgentTokensSaved": null,
+    "actualBillingSavingsUsd": null,
+    "actualAgentTimeSavedMs": null
+  },
+  "generatedAt": "2026-09-07T17:38:33.822Z",
+  "runtime": "v26.0.0",
+  "snapshotCommit": "0485a11daccc8c67d0ee9c2dad0fe73fd0fa4a9d",
+  "startupMs": 391.50908300000003,
+  "preparationMs": 169.17662499999994,
+  "summary": {
+    "rg": {
+      "runs": 18,
+      "errors": 0,
+      "meanRecallAt5": 0.8055555555555556,
+      "completeFileSets": 3,
+      "totalTasks": 6,
+      "firstPassMs": 200.878999999999,
+      "medianMs": 32.52879200000007,
+      "totalResponseTokensFirstPass": {
+        "o200k_base": 10003,
+        "cl100k_base": 9978
+      },
+      "totalResponseTokensAllRuns": {
+        "o200k_base": 30009,
+        "cl100k_base": 29934
+      }
+    },
+    "keyword_only": {
+      "runs": 18,
+      "errors": 0,
+      "meanRecallAt5": 0.7222222222222222,
+      "completeFileSets": 2,
+      "totalTasks": 6,
+      "firstPassMs": 1211.5760419999997,
+      "medianMs": 185.37262550000014,
+      "totalResponseTokensFirstPass": {
+        "o200k_base": 13364,
+        "cl100k_base": 13344
+      },
+      "totalResponseTokensAllRuns": {
+        "o200k_base": 40092,
+        "cl100k_base": 40032
+      }
+    },
+    "balanced": {
+      "runs": 18,
+      "errors": 0,
+      "meanRecallAt5": 0.8611111111111112,
+      "completeFileSets": 4,
+      "totalTasks": 6,
+      "firstPassMs": 1828.4215410000004,
+      "medianMs": 273.4012915000003,
+      "totalResponseTokensFirstPass": {
+        "o200k_base": 11731,
+        "cl100k_base": 11714
+      },
+      "totalResponseTokensAllRuns": {
+        "o200k_base": 35193,
+        "cl100k_base": 35142
+      }
+    },
+    "balanced_text": {
+      "runs": 18,
+      "errors": 0,
+      "meanRecallAt5": 0.8611111111111112,
+      "completeFileSets": 4,
+      "totalTasks": 6,
+      "firstPassMs": 3730.6897929999996,
+      "medianMs": 219.57774999999947,
+      "totalResponseTokensFirstPass": {
+        "o200k_base": 5917,
+        "cl100k_base": 5928
+      },
+      "totalResponseTokensAllRuns": {
+        "o200k_base": 17751,
+        "cl100k_base": 17784
+      }
+    }
+  },
+  "catalogs": {
+    "full": {
+      "tools": 59,
+      "tokens": {
+        "o200k_base": 16944,
+        "cl100k_base": 16681
+      }
+    },
+    "workflow": {
+      "tools": 12,
+      "tokens": {
+        "o200k_base": 3997,
+        "cl100k_base": 3936
+      }
+    }
+  },
+  "perTask": [
+    {
+      "task": "native-repair",
+      "variants": {
+        "rg": {
+          "recall": 0.6666666666666666,
+          "paths": [
+            "src/core/native-repair.ts",
+            "test/main/native-runtime.test.mjs",
+            "src/core/db-native.ts",
+            "test/main/native-repair.test.mjs",
+            "src/core/startup-health.ts"
+          ],
+          "responseTokens": {
+            "o200k_base": 930,
+            "cl100k_base": 926
+          },
+          "medianMs": 34.27416599999924
+        },
+        "keyword_only": {
+          "recall": 0.6666666666666666,
+          "paths": [
+            "src/core/db-native.ts",
+            "src/core/native-runtime.ts",
+            "dashboard/tsconfig.json",
+            "test/main/native-runtime.test.mjs",
+            "src/core/db.ts"
+          ],
+          "responseTokens": {
+            "o200k_base": 1854,
+            "cl100k_base": 1848
+          },
+          "medianMs": 174.78879099999904
+        },
+        "balanced": {
+          "recall": 1,
+          "paths": [
+            "src/core/native-repair.ts",
+            "src/core/db-native.ts",
+            "src/core/native-runtime.ts",
+            "test/main/native-runtime.test.mjs",
+            "src/core/worktree-seed.ts"
+          ],
+          "responseTokens": {
+            "o200k_base": 2103,
+            "cl100k_base": 2100
+          },
+          "medianMs": 316.2857920000006
+        },
+        "balanced_text": {
+          "recall": 1,
+          "paths": [
+            "src/core/native-repair.ts",
+            "src/core/db-native.ts",
+            "src/core/native-runtime.ts",
+            "test/main/native-runtime.test.mjs",
+            "src/core/worktree-seed.ts"
+          ],
+          "responseTokens": {
+            "o200k_base": 1118,
+            "cl100k_base": 1120
+          },
+          "medianMs": 222.38045799999963
+        }
+      }
+    },
+    {
+      "task": "safe-source-write",
+      "variants": {
+        "rg": {
+          "recall": 1,
+          "paths": [
+            "CHANGELOG.md",
+            "test/main/source-mutation-safety.test.mjs",
+            "src/core/source-mutation.ts",
+            "plans/2026-09-07-gpt6-audit.md",
+            "src/core/path-guard.ts"
+          ],
+          "responseTokens": {
+            "o200k_base": 2531,
+            "cl100k_base": 2503
+          },
+          "medianMs": 35.67712500000016
+        },
+        "keyword_only": {
+          "recall": 0.5,
+          "paths": [
+            "src/core/source-mutation.ts",
+            "src/core/reconcile-scheduler.ts",
+            "dashboard/src/lib/mcp.ts",
+            "test/main/source-mutation-safety.test.mjs",
+            "src/tools/symbolic-edit.ts"
+          ],
+          "responseTokens": {
+            "o200k_base": 2088,
+            "cl100k_base": 2087
+          },
+          "medianMs": 204.29812500000116
+        },
+        "balanced": {
+          "recall": 0.5,
+          "paths": [
+            "src/core/source-mutation.ts",
+            "scripts/autonomous-verify.mjs",
+            "test/main/source-mutation-safety.test.mjs",
+            "src/core/project-config.ts",
+            "test/main/production-hardening.test.mjs"
+          ],
+          "responseTokens": {
+            "o200k_base": 1920,
+            "cl100k_base": 1917
+          },
+          "medianMs": 282.2532500000002
+        },
+        "balanced_text": {
+          "recall": 0.5,
+          "paths": [
+            "src/core/source-mutation.ts",
+            "scripts/autonomous-verify.mjs",
+            "test/main/source-mutation-safety.test.mjs",
+            "src/core/project-config.ts",
+            "test/main/production-hardening.test.mjs"
+          ],
+          "responseTokens": {
+            "o200k_base": 962,
+            "cl100k_base": 963
+          },
+          "medianMs": 242.77037500000006
+        }
+      }
+    },
+    {
+      "task": "failed-reindex",
+      "variants": {
+        "rg": {
+          "recall": 0.5,
+          "paths": [
+            "src/tools/reindex.ts",
+            "src/core/db.ts",
+            "CHANGELOG.md",
+            "test/main/index-consistency-regressions.test.mjs",
+            "AUDIT.md"
+          ],
+          "responseTokens": {
+            "o200k_base": 1566,
+            "cl100k_base": 1582
+          },
+          "medianMs": 36.949375000000146
+        },
+        "keyword_only": {
+          "recall": 0.5,
+          "paths": [
+            "src/core/native-repair.ts",
+            "src/tools/reindex.ts",
+            "src/core/startup-health.ts",
+            "src/core/index-reconcile.ts",
+            "src/core/doctor.ts"
+          ],
+          "responseTokens": {
+            "o200k_base": 2418,
+            "cl100k_base": 2426
+          },
+          "medianMs": 185.42341699999997
+        },
+        "balanced": {
+          "recall": 1,
+          "paths": [
+            "test/main/artifact-cache-gc.test.mjs",
+            "test/main/index-consistency-regressions.test.mjs",
+            "src/tools/reindex.ts",
+            "src/core/index-freshness.ts",
+            "src/core/index-reconcile.ts"
+          ],
+          "responseTokens": {
+            "o200k_base": 2027,
+            "cl100k_base": 2025
+          },
+          "medianMs": 281.96387499999946
+        },
+        "balanced_text": {
+          "recall": 1,
+          "paths": [
+            "test/main/artifact-cache-gc.test.mjs",
+            "test/main/index-consistency-regressions.test.mjs",
+            "src/tools/reindex.ts",
+            "src/core/index-freshness.ts",
+            "src/core/index-reconcile.ts"
+          ],
+          "responseTokens": {
+            "o200k_base": 1011,
+            "cl100k_base": 1014
+          },
+          "medianMs": 254.75929199999882
+        }
+      }
+    },
+    {
+      "task": "token-accounting",
+      "variants": {
+        "rg": {
+          "recall": 0.6666666666666666,
+          "paths": [
+            "src/tools/efficiency-report.ts",
+            "test/main/efficiency-session.test.mjs",
+            "dashboard/src/components/ToolsPanel.tsx",
+            "src/core/efficiency.ts",
+            "src/tools/register-tools.ts"
+          ],
+          "responseTokens": {
+            "o200k_base": 1832,
+            "cl100k_base": 1838
+          },
+          "medianMs": 29.882790999999997
+        },
+        "keyword_only": {
+          "recall": 0.6666666666666666,
+          "paths": [
+            "src/tools/efficiency-report.ts",
+            "test/fixtures/retrieval-benchmark.json",
+            "src/core/efficiency.ts",
+            "scripts/benchmark-retrieval.mjs",
+            "src/tools/register-tools.ts"
+          ],
+          "responseTokens": {
+            "o200k_base": 2343,
+            "cl100k_base": 2342
+          },
+          "medianMs": 182.4300830000002
+        },
+        "balanced": {
+          "recall": 0.6666666666666666,
+          "paths": [
+            "src/tools/efficiency-report.ts",
+            "src/core/efficiency.ts",
+            "plans/2026-09-07-retrieval-benchmark.json",
+            "test/main/efficiency-session.test.mjs",
+            "test/main/efficiency-report.test.mjs"
+          ],
+          "responseTokens": {
+            "o200k_base": 1682,
+            "cl100k_base": 1687
+          },
+          "medianMs": 270.0545839999995
+        },
+        "balanced_text": {
+          "recall": 0.6666666666666666,
+          "paths": [
+            "src/tools/efficiency-report.ts",
+            "src/core/efficiency.ts",
+            "plans/2026-09-07-retrieval-benchmark.json",
+            "test/main/efficiency-session.test.mjs",
+            "test/main/efficiency-report.test.mjs"
+          ],
+          "responseTokens": {
+            "o200k_base": 779,
+            "cl100k_base": 790
+          },
+          "medianMs": 216.7750419999993
+        }
+      }
+    },
+    {
+      "task": "worktree-snapshot",
+      "variants": {
+        "rg": {
+          "recall": 1,
+          "paths": [
+            "test/main/worktree-seed.test.mjs",
+            "src/core/worktree-seed.ts",
+            "src/tools/register-tools.ts",
+            "plans/2026-09-07-gpt6-audit.md",
+            "plans/README.md"
+          ],
+          "responseTokens": {
+            "o200k_base": 1820,
+            "cl100k_base": 1824
+          },
+          "medianMs": 31.889000000000124
+        },
+        "keyword_only": {
+          "recall": 1,
+          "paths": [
+            "src/core/worktree-seed.ts",
+            "src/core/workspace-router.ts",
+            "src/core/worktree-gc.ts",
+            "src/core/worktree-overlay.ts",
+            "test/fixtures/retrieval-benchmark.json"
+          ],
+          "responseTokens": {
+            "o200k_base": 2130,
+            "cl100k_base": 2123
+          },
+          "medianMs": 164.26629200000025
+        },
+        "balanced": {
+          "recall": 1,
+          "paths": [
+            "src/core/worktree-seed.ts",
+            "src/core/workspace-router.ts",
+            "src/core/worktree-gc.ts",
+            "src/core/worktree-overlay.ts",
+            "test/main/worktree-seed.test.mjs"
+          ],
+          "responseTokens": {
+            "o200k_base": 1911,
+            "cl100k_base": 1905
+          },
+          "medianMs": 254.83550000000014
+        },
+        "balanced_text": {
+          "recall": 1,
+          "paths": [
+            "src/core/worktree-seed.ts",
+            "src/core/workspace-router.ts",
+            "src/core/worktree-gc.ts",
+            "src/core/worktree-overlay.ts",
+            "test/main/worktree-seed.test.mjs"
+          ],
+          "responseTokens": {
+            "o200k_base": 953,
+            "cl100k_base": 954
+          },
+          "medianMs": 197.36404200000106
+        }
+      }
+    },
+    {
+      "task": "parser-concurrency",
+      "variants": {
+        "rg": {
+          "recall": 1,
+          "paths": [
+            "src/core/tree-sitter.ts",
+            "src/core/parser.ts",
+            "INSTRUCTIONS.md",
+            "landing/src/app/api/instructions/route.ts",
+            "landing/src/components/InstructionsSection.tsx"
+          ],
+          "responseTokens": {
+            "o200k_base": 1324,
+            "cl100k_base": 1305
+          },
+          "medianMs": 26.6875
+        },
+        "keyword_only": {
+          "recall": 1,
+          "paths": [
+            "src/core/tree-sitter.ts",
+            "landing/src/app/api/instructions/route.ts",
+            "landing/src/components/InstructionsSection.tsx",
+            "src/core/parser.ts",
+            "src/core/scip-index.ts"
+          ],
+          "responseTokens": {
+            "o200k_base": 2531,
+            "cl100k_base": 2518
+          },
+          "medianMs": 196.4420829999999
+        },
+        "balanced": {
+          "recall": 1,
+          "paths": [
+            "src/core/tree-sitter.ts",
+            "src/tools/semantic-navigate.ts",
+            "landing/src/app/api/instructions/route.ts",
+            "src/tools/semantic-identifiers.ts",
+            "test/main/retrieval-contracts.test.mjs"
+          ],
+          "responseTokens": {
+            "o200k_base": 2088,
+            "cl100k_base": 2080
+          },
+          "medianMs": 321.62545899999895
+        },
+        "balanced_text": {
+          "recall": 1,
+          "paths": [
+            "src/core/tree-sitter.ts",
+            "src/tools/semantic-navigate.ts",
+            "landing/src/app/api/instructions/route.ts",
+            "src/tools/semantic-identifiers.ts",
+            "test/main/retrieval-contracts.test.mjs"
+          ],
+          "responseTokens": {
+            "o200k_base": 1094,
+            "cl100k_base": 1087
+          },
+          "medianMs": 211.96337500000027
+        }
+      }
+    }
+  ],
+  "extraCaptures": [
+    {
+      "task": "skeleton:src/core/native-runtime.ts",
+      "variant": "skeleton",
+      "request": {
+        "file_path": "src/core/native-runtime.ts"
+      },
+      "latencyMs": 57.137666999999055,
+      "error": false,
+      "tokens": {
+        "o200k_base": 148,
+        "cl100k_base": 147
+      },
+      "requestTokens": {
+        "o200k_base": 10,
+        "cl100k_base": 10
+      }
+    },
+    {
+      "task": "skeleton:src/core/native-runtime.ts",
+      "variant": "full_read",
+      "request": {
+        "file": "src/core/native-runtime.ts"
+      },
+      "latencyMs": 0.39379200000257697,
+      "tokens": {
+        "o200k_base": 484,
+        "cl100k_base": 479
+      },
+      "requestTokens": {
+        "o200k_base": 9,
+        "cl100k_base": 9
+      }
+    },
+    {
+      "task": "skeleton:src/core/native-runtime.ts",
+      "variant": "export_grep",
+      "request": {
+        "pattern": "^export ",
+        "file": "src/core/native-runtime.ts"
+      },
+      "latencyMs": 5.355084000002535,
+      "tokens": {
+        "o200k_base": 40,
+        "cl100k_base": 39
+      },
+      "requestTokens": {
+        "o200k_base": 14,
+        "cl100k_base": 14
+      }
+    },
+    {
+      "task": "skeleton:src/core/tree-sitter.ts",
+      "variant": "skeleton",
+      "request": {
+        "file_path": "src/core/tree-sitter.ts"
+      },
+      "latencyMs": 64.99595799999952,
+      "error": false,
+      "tokens": {
+        "o200k_base": 662,
+        "cl100k_base": 661
+      },
+      "requestTokens": {
+        "o200k_base": 11,
+        "cl100k_base": 11
+      }
+    },
+    {
+      "task": "skeleton:src/core/tree-sitter.ts",
+      "variant": "full_read",
+      "request": {
+        "file": "src/core/tree-sitter.ts"
+      },
+      "latencyMs": 0.17920800000138115,
+      "tokens": {
+        "o200k_base": 3041,
+        "cl100k_base": 2984
+      },
+      "requestTokens": {
+        "o200k_base": 10,
+        "cl100k_base": 10
+      }
+    },
+    {
+      "task": "skeleton:src/core/tree-sitter.ts",
+      "variant": "export_grep",
+      "request": {
+        "pattern": "^export ",
+        "file": "src/core/tree-sitter.ts"
+      },
+      "latencyMs": 5.727249999999913,
+      "tokens": {
+        "o200k_base": 83,
+        "cl100k_base": 83
+      },
+      "requestTokens": {
+        "o200k_base": 15,
+        "cl100k_base": 15
+      }
+    },
+    {
+      "task": "skeleton:src/core/efficiency.ts",
+      "variant": "skeleton",
+      "request": {
+        "file_path": "src/core/efficiency.ts"
+      },
+      "latencyMs": 56.08445800000118,
+      "error": false,
+      "tokens": {
+        "o200k_base": 535,
+        "cl100k_base": 549
+      },
+      "requestTokens": {
+        "o200k_base": 11,
+        "cl100k_base": 11
+      }
+    },
+    {
+      "task": "skeleton:src/core/efficiency.ts",
+      "variant": "full_read",
+      "request": {
+        "file": "src/core/efficiency.ts"
+      },
+      "latencyMs": 0.18520799999896553,
+      "tokens": {
+        "o200k_base": 1656,
+        "cl100k_base": 1665
+      },
+      "requestTokens": {
+        "o200k_base": 10,
+        "cl100k_base": 10
+      }
+    },
+    {
+      "task": "skeleton:src/core/efficiency.ts",
+      "variant": "export_grep",
+      "request": {
+        "pattern": "^export ",
+        "file": "src/core/efficiency.ts"
+      },
+      "latencyMs": 5.384582999999111,
+      "tokens": {
+        "o200k_base": 125,
+        "cl100k_base": 132
+      },
+      "requestTokens": {
+        "o200k_base": 15,
+        "cl100k_base": 15
+      }
+    },
+    {
+      "task": "packet-delta",
+      "variant": "full",
+      "request": {
+        "task": "Repair a native SQLite module compiled for the wrong Node ABI using an isolated cache",
+        "max_tokens": 1500,
+        "max_files": 5,
+        "preset": "keyword_only",
+        "format": "json",
+        "include_memory": false,
+        "include_recent_diffs": false
+      },
+      "tokens": {
+        "o200k_base": 1018,
+        "cl100k_base": 1005
+      },
+      "requestTokens": {
+        "o200k_base": 51,
+        "cl100k_base": 51
+      }
+    },
+    {
+      "task": "packet-delta",
+      "variant": "delta",
+      "request": {
+        "task": "Repair a native SQLite module compiled for the wrong Node ABI using an isolated cache",
+        "max_tokens": 1500,
+        "max_files": 5,
+        "preset": "keyword_only",
+        "format": "json",
+        "include_memory": false,
+        "include_recent_diffs": false,
+        "previous_context_id": "task_context-5d489c4891ad78"
+      },
+      "tokens": {
+        "o200k_base": 722,
+        "cl100k_base": 711
+      },
+      "requestTokens": {
+        "o200k_base": 67,
+        "cl100k_base": 67
+      }
+    }
+  ],
+  "builtinEfficiency": {
+    "finalSummary": "ContextPro: 61 tool calls; ~27,851 input tokens avoided versus full-file reads (estimate); cost unavailable (model price not supplied).",
+    "estimate": {
+      "savedTokens": 27851,
+      "sourceTokensRepresented": 138706,
+      "responseTokens": 89948,
+      "requestTokens": 2621,
+      "toolSchemaTokens": 18286,
+      "netTokensAvoided": 27851,
+      "representedFileReferences": 281,
+      "method": "UTF-8 bytes divided by four. Full-source baseline credits each represented file revision once per process session; subtract all request/response estimates and one advertised tool catalog for session reports. Historical rows may use the older per-call baseline.",
+      "limitations": [
+        "Not tokenizer measurements or a measured comparison against another agent.",
+        "Client schema loading, repeated prompt history and cache behavior are unknown; one catalog is a scenario assumption.",
+        "Non-session windows combine sessions and older estimates; catalog overhead is unavailable.",
+        "History is bounded to the latest 5,000 calls per project; old periods may be incomplete."
+      ]
+    },
+    "actualAgentTokensSaved": null,
+    "actualBillingSavingsUsd": null
+  },
+  "sourceCommit": "36d161b82e9a2f3645d5561f567d558b90335545"
+}

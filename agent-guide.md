@@ -1,25 +1,62 @@
 # ContextPro MCP — Agent Workflow Guide
 
-Use ContextPro as the first interface for understanding a repository. It returns
-ranked, bounded context; fall back to native file/search tools only when a
-ContextPro tool cannot provide the exact detail you need.
+Use ContextPro as the first interface for understanding an unfamiliar repository. It returns
+ranked, bounded context. Use native file/search tools when they are cheaper for a
+known exact target or when retrieved context is incomplete.
 
-## Fast workflow
+## Lean workflow (opt-in)
 
-1. Start with `task_pack` for a task-specific context bundle, or `status` when
+Set `CONTEXTPRO_TOOL_PROFILE=lean` for two advertised tools: `context` and
+`discover_tools`. Start with `context(query:"your repository question")`: search,
+source reading and deduplication run together on the server. Known targets use
+`context(targets:[{file:"src/api.ts",symbol:"create"},{file:"src/types.ts"}])`
+without search, index waits or embeddings. Short forwarding functions can include
+up to two possible same-file helpers, one level deep, within the same budget.
+These are candidates from source names, not compiler-resolved call-graph claims. Optional `start`/`end` are inclusive,
+one-based line numbers, mutually exclusive with `symbol`.
+
+The response budget defaults to 4000 estimated tokens (UTF-8 bytes/4). Omissions
+are explicit; request narrower targets or raise the budget if evidence is missing.
+Exact identifier queries use lexical search; natural-language queries retain
+hybrid ranking. Large discovered files use bounded whole declarations selected
+by query-term coverage per byte. This is an extractive heuristic, not a trained
+retrieval policy or a guarantee that all relevant code was found.
+
+Use `discover_tools` to enable editing, graph, validation or diagnostics only when
+needed. Do not automatically call status, reindex, report or memory on each task.
+
+## Existing workflow
+
+1. Start with `task_pack(max_tokens:2000, graph_hops:1)` for a task-specific context bundle, or `status` when
    diagnosing index health.
-2. Use `search` (`hybrid` for behavior, `identifier` for a known name) to locate
-   code. Its default crux excerpt often avoids a second read.
+2. Use `search(mode:"file", format:"compact", include_dependencies:true)` to locate
+   unfamiliar code and supporting imports. Use `grep` or `explain` directly for a known literal/name.
+   The default crux excerpt often avoids a second read; verbose `json` is for diagnostics.
 3. Use `skeleton` before reading a large file; use `explain` for one symbol body
-   and its immediate dependencies.
-4. Before changing or deleting a symbol, call `blast_radius`. Use
-   `exact_references` for compiler-resolved TS/JS references and `change_impact`
+   and its immediate dependencies. `exported_only:true` gives a TS/JS public API view.
+4. Before changing a symbol, use `blast_radius` for textual scope; `kind:"call"`
+   filters call-containing lines and explicit kind counts avoid manual recounts.
+   Use `exact_references` for compiler-resolved TS/JS rename checks and `change_impact`
    or `test_impact` to plan validation.
 5. After edits, use `validate_scope` or `lint`, then record durable findings with
    `memory_record_task` when they will help a later session.
 
 Run independent ContextPro reads in parallel. Prefer bounded outputs (`top_k`,
 `max_tokens`, summary modes) and expand only when needed.
+For several known symbols, prefer one `explain(symbols:[{symbol,file},...], depth:0)`
+call. It accepts up to six targets and reports any whole bodies omitted by its
+response budget. Batch requests reduce model turns and repeated input history.
+
+The default catalog exposes 13 workflow tools. Call `discover_tools(query:"exact references")`
+to find an expert tool, then `discover_tools(enable:["exact_references"])` to expose its
+schema for this session. Enabling does not execute the tool. Clients without dynamic
+catalog support can configure `CONTEXTPRO_TOOL_PROFILE=full` before startup.
+
+Do not repeat the entire workflow for a one-line lookup. Check supporting import
+pointers before trusting a top result as the complete edit scope. If a packet says
+`context.unchanged:true`, retain the previous packet; after losing context, omit the
+previous ID to recover a full response. `search(profile:true, format:"compact")` exposes
+phase timings for performance diagnosis.
 
 ## Routing and freshness
 
@@ -48,8 +85,9 @@ tool. Prefer canonical names; deprecated aliases remain only for compatibility.
 
 ## End-of-task reporting
 
-Before your final answer, call `efficiency_report` with `scope: "session"` and
-`format: "json"`. Include its `finalSummary` once. This report isolates the MCP
+Metrics are recorded automatically. Only when asked for a usage report, call
+`efficiency_report(scope:"session", format:"json")` and label its `finalSummary`
+as an estimate. Do not add a model turn solely to produce an estimated footer. This report isolates the MCP
 process session from concurrent agents using the same project database. It is
 cumulative for that server session, not necessarily a single chat task: label it
 as session usage when a client keeps the server alive across tasks.
@@ -69,7 +107,7 @@ The report covers completed calls before the report request itself.
 
 Per-call footers are off by default to avoid repeating the same explanation.
 `CONTEXTPRO_EFFICIENCY_FOOTER=true` enables legacy per-call estimates; use the
-net session report for the final answer, not a sum of positive footers.
+net session report when requested, not a sum of positive footers.
 
 ## Incremental packets and optional graph context
 
@@ -98,3 +136,14 @@ targets or parents. Source replacements use exact spans or reject ambiguity.
 Multi-file edits are not a filesystem transaction: partial failures identify
 completed/pending files and recovery points. Handle a conflict by reading current
 context and retrying deliberately.
+
+
+## Parser availability
+
+WASM parsing runs in a reusable child process with baseline compilation, bounded
+queue/source sizes, a 15-second request deadline and a short recovery cooldown.
+A fatal parser exit cannot terminate the MCP process. Structural reads fall back
+to regex parsing when unavailable; this is reduced precision, not exact semantic
+analysis. Supported-language syntax validation fails closed on parser failure.
+`health` reports the executable path and parser backend so a client using an old
+cached launch command is visible. Restart the client to reload changed MCP config.

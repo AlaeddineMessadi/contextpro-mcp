@@ -1,0 +1,32 @@
+[
+  {
+    "taskId": "source-mutation-contract",
+    "pairId": "1",
+    "model": "gpt-6-astra",
+    "variant": "contextpro",
+    "success": true,
+    "inputTokens": 139079,
+    "outputTokens": 410,
+    "cachedInputTokens": 101376,
+    "wallTimeMs": 38370.722625,
+    "tokenSource": "provider_usage",
+    "costUsd": null,
+    "costSource": "unavailable",
+    "acceptanceEvidence": "Typed source-contract facts plus required implementation-file evidence; one deterministic comprehension check, not patch correctness."
+  },
+  {
+    "taskId": "source-mutation-contract",
+    "pairId": "1",
+    "model": "gpt-6-astra",
+    "variant": "baseline",
+    "success": true,
+    "inputTokens": 110918,
+    "outputTokens": 757,
+    "cachedInputTokens": 81536,
+    "wallTimeMs": 44564.805166000006,
+    "tokenSource": "provider_usage",
+    "costUsd": null,
+    "costSource": "unavailable",
+    "acceptanceEvidence": "Typed source-contract facts plus required implementation-file evidence; one deterministic comprehension check, not patch correctness."
+  }
+]

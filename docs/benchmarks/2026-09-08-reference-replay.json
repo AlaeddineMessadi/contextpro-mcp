@@ -1,0 +1,89 @@
+{
+  "method": "direct tool replay after structural reindex; not an agent token benchmark",
+  "runs": [
+    {
+      "phase": "cold",
+      "durationMs": 12743,
+      "total": 17,
+      "counts": {
+        "definition": 1,
+        "import": 3,
+        "call": 13,
+        "reference": 0
+      },
+      "scope": {
+        "kind": "indexed_ts_js_files",
+        "files": 246,
+        "checkedFiles": 246,
+        "configs": [
+          "tsconfig.json"
+        ],
+        "includesIndexedTests": true
+      },
+      "warnings": []
+    },
+    {
+      "phase": "warm",
+      "durationMs": 738,
+      "total": 17,
+      "counts": {
+        "definition": 1,
+        "import": 3,
+        "call": 13,
+        "reference": 0
+      },
+      "scope": {
+        "kind": "indexed_ts_js_files",
+        "files": 246,
+        "checkedFiles": 246,
+        "configs": [
+          "tsconfig.json"
+        ],
+        "includesIndexedTests": true
+      },
+      "warnings": []
+    },
+    {
+      "phase": "warm",
+      "durationMs": 683,
+      "total": 17,
+      "counts": {
+        "definition": 1,
+        "import": 3,
+        "call": 13,
+        "reference": 0
+      },
+      "scope": {
+        "kind": "indexed_ts_js_files",
+        "files": 246,
+        "checkedFiles": 246,
+        "configs": [
+          "tsconfig.json"
+        ],
+        "includesIndexedTests": true
+      },
+      "warnings": []
+    },
+    {
+      "phase": "warm",
+      "durationMs": 675,
+      "total": 17,
+      "counts": {
+        "definition": 1,
+        "import": 3,
+        "call": 13,
+        "reference": 0
+      },
+      "scope": {
+        "kind": "indexed_ts_js_files",
+        "files": 246,
+        "checkedFiles": 246,
+        "configs": [
+          "tsconfig.json"
+        ],
+        "includesIndexedTests": true
+      },
+      "warnings": []
+    }
+  ]
+}

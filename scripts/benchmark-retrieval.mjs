@@ -68,9 +68,12 @@ export function summarizePairedAgentRuns(runs) {
     if (!run || typeof run.taskId !== "string" || !run.taskId || typeof run.pairId !== "string" || !run.pairId
       || typeof run.model !== "string" || !run.model || !["baseline", "contextpro"].includes(run.variant)
       || typeof run.success !== "boolean" || run.tokenSource !== "provider_usage"
-      || !["provider_billing", "calculated_given_rates"].includes(run.costSource)
+      || !["provider_billing", "calculated_given_rates", "unavailable"].includes(run.costSource)
       || ![run.inputTokens, run.outputTokens].every((n) => Number.isSafeInteger(n) && n >= 0)
-      || !Number.isFinite(run.costUsd) || run.costUsd < 0) throw new Error("Invalid external agent run; provide measured provider usage and explicit cost provenance.");
+      || (run.costSource === "unavailable" ? run.costUsd !== null : !Number.isFinite(run.costUsd) || run.costUsd < 0)
+      || ["wallTimeMs", "cachedInputTokens", "reasoningTokens"].some(key => run[key] !== undefined && (!Number.isFinite(run[key]) || run[key] < 0))
+      || ["cachedInputTokens", "reasoningTokens"].some(key => run[key] !== undefined && !Number.isSafeInteger(run[key]))
+      || (run.cachedInputTokens !== undefined && run.cachedInputTokens > run.inputTokens)) throw new Error("Invalid external agent run; provide measured provider usage and explicit cost provenance.");
     const key = JSON.stringify([run.taskId, run.pairId, run.model]);
     const pair = groups.get(key) ?? {};
     if (pair[run.variant]) throw new Error(`Duplicate ${run.variant} run for ${key}`);
@@ -86,7 +89,9 @@ export function summarizePairedAgentRuns(runs) {
     contextproSuccesses: pairs.filter((pair) => pair.contextpro.success).length,
     inputTokenDifference: pairs.reduce((total, pair) => total + pair.baseline.inputTokens - pair.contextpro.inputTokens, 0),
     outputTokenDifference: pairs.reduce((total, pair) => total + pair.baseline.outputTokens - pair.contextpro.outputTokens, 0),
-    costDifferenceUsd: pairs.reduce((total, pair) => total + pair.baseline.costUsd - pair.contextpro.costUsd, 0),
+    costDifferenceUsd: runs.some(run => run.costUsd === null) ? null : pairs.reduce((total, pair) => total + pair.baseline.costUsd - pair.contextpro.costUsd, 0),
+    wallTimeDifferenceMs: runs.every(run => typeof run.wallTimeMs === "number") ? pairs.reduce((total, pair) => total + pair.baseline.wallTimeMs - pair.contextpro.wallTimeMs, 0) : null,
+    cachedInputTokenDifference: runs.every(run => typeof run.cachedInputTokens === "number") ? pairs.reduce((total, pair) => total + pair.baseline.cachedInputTokens - pair.contextpro.cachedInputTokens, 0) : null,
     costSources: [...new Set(runs.map((run) => run.costSource))],
   };
 }

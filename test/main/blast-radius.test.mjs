@@ -38,7 +38,23 @@ describe("blast-radius", async () => {
         rootDir: FIXTURE_DIR,
         symbolName: "nonExistent",
       });
-      assert.ok(result.includes("not used"));
+      assert.match(result, /No textual usage candidates found/);
+      assert.match(result, /does not prove the symbol is unused/);
+    });
+
+    it("counts calls inside exported declarations without counting the function declaration", async () => {
+      await writeFile(join(FIXTURE_DIR, "exported.ts"), [
+        "import { gate } from './gate';",
+        "export function run() { return gate(); }",
+        "export const gateResult = gate();",
+        "export { gate };",
+        "export function gate() { return true; }",
+      ].join("\n"));
+      const result = await getBlastRadius({ rootDir: FIXTURE_DIR, symbolName: "gate", kind: "call", mode: "detailed" });
+      assert.match(result, /call=2, import=2/);
+      assert.equal((result.match(/\[call\]/g) ?? []).length, 2);
+      assert.match(result, /L2 \[call\]/);
+      assert.match(result, /L3 \[call\]/);
     });
 
     it("excludes definition line when fileContext is provided", async () => {
@@ -143,4 +159,21 @@ describe("blast-radius", async () => {
   after(async () => {
     await rm(FIXTURE_DIR, { recursive: true, force: true });
   });
+});
+
+it('reports 13 call-containing lines explicitly and can exclude other mentions', async () => {
+  const { mkdtemp } = await import('node:fs/promises');
+  const { tmpdir } = await import('node:os');
+  const { closeDB } = await import('../../build/core/db.js');
+  const root = await mkdtemp(join(tmpdir(), 'contextpro-counts-'));
+  try {
+    await writeFile(join(root, 'api.ts'), 'export function canEditItem() { return true; }\n');
+    await writeFile(join(root, 'use.ts'), 'import { canEditItem } from "./api";\n// canEditItem is mentioned here\n' + Array.from({length:13}, () => 'canEditItem();').join('\n'));
+    const output = await getBlastRadius({rootDir:root,symbolName:'canEditItem',fileContext:'api.ts',kind:'call',mode:'detailed'});
+    assert.match(output,/13 usages in 1 files/);
+    assert.match(output,/Counts by matching line: call=13, import=1/);
+    assert.equal((output.match(/\[call\]/g) ?? []).length,13);
+    assert.doesNotMatch(output,/\[comment\/string\]|\[import\]/);
+    assert.match(output,/not binding-resolved/);
+  } finally { closeDB(root); await rm(root,{recursive:true,force:true}); }
 });

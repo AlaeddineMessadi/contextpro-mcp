@@ -15,12 +15,16 @@
       "success": { "type": "boolean" },
       "inputTokens": { "type": "integer", "minimum": 0 },
       "outputTokens": { "type": "integer", "minimum": 0 },
-      "costUsd": { "type": "number", "minimum": 0 },
+      "costUsd": { "type": ["number", "null"], "minimum": 0 },
       "tokenSource": { "const": "provider_usage" },
-      "costSource": { "enum": ["provider_billing", "calculated_given_rates"] },
+      "costSource": { "enum": ["provider_billing", "calculated_given_rates", "unavailable"] },
+      "wallTimeMs": { "type": "number", "minimum": 0 },
+      "cachedInputTokens": { "type": "integer", "minimum": 0, "description": "Subset of inputTokens served from cache; never add again to inputTokens." },
+      "reasoningTokens": { "type": "integer", "minimum": 0, "description": "Only when explicitly reported by provider; document whether included in outputTokens." },
       "acceptanceEvidence": { "type": "string" },
       "pricingNotes": { "type": "string" }
     },
-    "additionalProperties": false
+    "additionalProperties": false,
+    "allOf": [{ "if": { "properties": { "costSource": { "const": "unavailable" } } }, "then": { "properties": { "costUsd": { "type": "null" } } }, "else": { "properties": { "costUsd": { "type": "number", "minimum": 0 } } } }]
   }
 }

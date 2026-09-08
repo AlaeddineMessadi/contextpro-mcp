@@ -246,7 +246,7 @@ function withRequestActivity<TArgs, TResult>(
         const result = await handler(handlerArgs);
         const toolName = options?.toolName ?? "unknown";
         // Budgeted tools include their own freshness; do not add unbudgeted prose.
-        const bounded = toolName === "task_pack" || (handlerArgs && typeof handlerArgs === "object" && "max_tokens" in handlerArgs);
+        const bounded = toolName === "task_pack" || toolName === "context" || (handlerArgs && typeof handlerArgs === "object" && "max_tokens" in handlerArgs);
         if (!bounded) appendFreshnessNotice(result, freshness);
         const failed = !!(result && typeof result === "object" && "isError" in result && result.isError);
         let efficiency: Awaited<ReturnType<typeof estimateToolEfficiency>> | undefined;

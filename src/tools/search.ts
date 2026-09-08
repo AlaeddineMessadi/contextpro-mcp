@@ -13,7 +13,7 @@ import { withQueryEmbeddingCache, matchesSearchConstraints, type SearchResult } 
 export { invalidateSearchCache, invalidateIdentifierSearchCache };
 
 export type SearchMode = "file" | "identifier" | "hybrid";
-export type SearchFormat = "text" | "json";
+export type SearchFormat = "text" | "json" | "compact";
 
 export interface UnifiedSearchOptions {
   rootDir: string;
@@ -35,6 +35,8 @@ export interface UnifiedSearchOptions {
   expandCallers?: boolean;
   fusion?: "weighted" | "rrf";
   inlineCode?: "off" | "crux" | "full";
+  profile?: boolean;
+  includeDependencies?: boolean;
 }
 
 export interface TopResultBreakdown {
@@ -60,6 +62,8 @@ export interface UnifiedSearchData {
   topResultBreakdown?: TopResultBreakdown;
   files?: SemanticCodeSearchData;
   identifiers?: SemanticIdentifierSearchData;
+  timingsMs?: Record<string, number>;
+  dependencies?: Array<{ path: string; importedBy: string; symbols: string | null }>;
 }
 
 function buildEvidence(input: {
@@ -187,7 +191,7 @@ async function applyExactSymbolFileBoosts(
     .map((result) => result.score);
   const keywordOnlyCap = semanticBackedScores.length > 0
     ? Math.max(0, Math.min(...semanticBackedScores) - 0.01)
-    : 65;
+    : /^[A-Za-z_$][\w$]*$/.test(query.trim()) ? 100 : 65;
 
   for (const symbol of exactSymbols) {
     const file = allFiles.find((candidate) => candidate.id === symbol.file_id);
@@ -249,17 +253,23 @@ export function unifiedSearchData(options: UnifiedSearchOptions): Promise<Unifie
 }
 
 async function unifiedSearchDataUncached(options: UnifiedSearchOptions): Promise<UnifiedSearchData> {
+  const started = performance.now();
   options = { ...options, ...applySearchPreset(options) };
-  const refreshState = await quickRefresh(options.rootDir, { includeEmbeddings: options.preset !== "keyword_only" }).catch(() => ({ staleCount: 0, refreshed: false, indexingTimedOut: false }));
+  let refreshError: string | null = null;
+  const refreshState = await quickRefresh(options.rootDir, { includeEmbeddings: false }).catch((error) => {
+    refreshError = error instanceof Error ? error.message : String(error);
+    return { staleCount: 0, refreshed: false, complete: false, remainingStaleCount: undefined, indexingTimedOut: false };
+  });
   const { staleCount, refreshed } = refreshState;
+  const refreshedAt = performance.now();
   const mode = options.mode ?? "hybrid";
   let staleWarning: string | null = null;
-  if (refreshState.indexingTimedOut) {
+  if (refreshError) {
+    staleWarning = `Index refresh failed: ${refreshError}. Results may be incomplete.`;
+  } else if (refreshState.indexingTimedOut) {
     staleWarning = "Indexing is still in progress. Wait for it to finish before trusting search results.";
-  } else if (staleCount > 15) {
-    staleWarning = `${staleCount} files changed since last index. Run reindex for accurate results.`;
-  } else if (refreshed && staleCount > 0) {
-    staleWarning = `Auto-refreshed ${staleCount} stale files.`;
+  } else if (!refreshState.complete) {
+    staleWarning = `${refreshState.remainingStaleCount ?? staleCount} files remain stale. Run reindex for accurate results.`;
   }
 
   const [config, indexState] = await Promise.all([
@@ -270,6 +280,8 @@ async function unifiedSearchDataUncached(options: UnifiedSearchOptions): Promise
     staleCount,
     refreshed,
     warning: staleWarning,
+    complete: refreshState.complete,
+    remainingStaleCount: refreshState.remainingStaleCount,
   });
   const repo = {
     root: options.rootDir,
@@ -371,6 +383,26 @@ async function unifiedSearchDataUncached(options: UnifiedSearchOptions): Promise
     files,
     identifiers,
   };
+  if (options.includeDependencies && files) {
+    const db = await getDB(options.rootDir);
+    const inventory = new Map(db.getAllFiles().map(file => [file.id, file]));
+    const seen = new Set(files.results.map(file => file.path));
+    const candidates: Array<{ path: string; importedBy: string; symbols: string | null; score: number }> = [];
+    const terms = options.query.toLowerCase().match(/[a-z0-9]+/g) ?? [];
+    for (const source of files.results.slice(0, 2)) {
+      const file = db.getFile(source.path);
+      if (!file) continue;
+      for (const edge of db.getImportsFrom(file.id)) {
+        const target = edge.target_file_id ? inventory.get(edge.target_file_id) : undefined;
+        if (!target || seen.has(target.path)) continue;
+        seen.add(target.path);
+        const text = `${target.path} ${edge.symbols_imported ?? ""}`.toLowerCase();
+        candidates.push({ path: target.path, importedBy: file.path, symbols: edge.symbols_imported, score: terms.filter(term => term.length > 2 && text.includes(term)).length });
+      }
+    }
+    partial.dependencies = candidates.sort((a, b) => b.score - a.score || a.path.localeCompare(b.path)).slice(0, 3).map(({ score, ...item }) => item);
+  }
+  const retrievedAt = performance.now();
 
   let artifact = null;
   if (options.persistArtifact === true) {
@@ -397,6 +429,7 @@ async function unifiedSearchDataUncached(options: UnifiedSearchOptions): Promise
 
   return {
     ...partial,
+    ...(options.profile ? { timingsMs: { freshness: refreshedAt - started, retrievalAndRanking: retrievedAt - refreshedAt, artifact: performance.now() - retrievedAt, total: performance.now() - started } } : {}),
     trust: buildTrustMetadata({
       baseConfidence,
       freshness,
@@ -431,14 +464,29 @@ export async function unifiedSearch(options: UnifiedSearchOptions): Promise<stri
   if (options.format === "json") {
     return JSON.stringify(data, null, 2);
   }
+  if (options.format === "compact") {
+    return JSON.stringify({
+      query: data.query, mode: data.mode,
+      freshness: data.freshness,
+      confidence: data.topResultBreakdown,
+      warnings: data.trust.ambiguities,
+      ...(data.timingsMs ? { timingsMs: data.timingsMs } : {}),
+      files: data.files?.results.map(({ path, score, inlineCode, matchedSymbolLocations }) => ({
+        path, score, definitions: matchedSymbolLocations, code: inlineCode,
+      })),
+      identifiers: data.identifiers,
+      dependencies: data.dependencies,
+    });
+  }
 
   const warning = data.freshness.warning ? `\n⚠ ${data.freshness.warning}\n\n` : "";
   const quality = buildQualityBanner(data);
+  const dependencies = data.dependencies?.length ? `\nImport dependencies (pointers, not relevance claims):\n${data.dependencies.map(item => `  ${item.path} ← ${item.importedBy}`).join("\n")}\n` : "";
   if (data.mode === "file") {
-    return warning + quality + formatSemanticCodeSearchData(data.files ?? { query: data.query, results: [] });
+    return warning + quality + formatSemanticCodeSearchData(data.files ?? { query: data.query, results: [] }) + dependencies;
   }
   if (data.mode === "identifier") {
     return warning + quality + formatSemanticIdentifierSearchData(data.identifiers ?? { query: data.query, results: [] }, options.includeKinds);
   }
-  return `${warning}${quality}=== FILE MATCHES ===\n\n${formatSemanticCodeSearchData(data.files ?? { query: data.query, results: [] })}\n\n=== IDENTIFIER MATCHES ===\n\n${formatSemanticIdentifierSearchData(data.identifiers ?? { query: data.query, results: [] }, options.includeKinds)}`;
+  return `${warning}${quality}=== FILE MATCHES ===\n\n${formatSemanticCodeSearchData(data.files ?? { query: data.query, results: [] })}\n\n=== IDENTIFIER MATCHES ===\n\n${formatSemanticIdentifierSearchData(data.identifiers ?? { query: data.query, results: [] }, options.includeKinds)}${dependencies}`;
 }

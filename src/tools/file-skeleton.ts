@@ -4,10 +4,12 @@
 import { analyzeFile, isSupportedFile, extractImports, type FileAnalysis, type CodeSymbol } from "../core/parser.js";
 import { readFile } from "fs/promises";
 import { resolveProjectPath } from "../core/path-guard.js";
+import { typescriptSkeleton } from "../core/typescript-skeleton.js";
 
 export interface SkeletonOptions {
   filePath: string;
   rootDir: string;
+  exportedOnly?: boolean;
 }
 
 const MAX_SIGNATURE_LENGTH = 200;
@@ -70,18 +72,19 @@ function isStructuralChild(child: CodeSymbol): boolean {
   return STRUCTURAL_KINDS.has(child.kind);
 }
 
-function renderSymbol(sym: CodeSymbol, lines: string[], depth: number, previousEndLine: number = 0): string[] {
+function renderSymbol(sym: CodeSymbol, lines: string[], depth: number, previousEndLine: number = 0, signatures = new Map<string, string>()): string[] {
   const indent = "  ".repeat(depth);
   const out: string[] = [];
   const range = formatLineRange(sym.line, sym.endLine);
-  const signature = truncateSignature(sym.signature || sym.name);
+  const precise = signatures.get(`${sym.line}:${sym.name}`);
+  const signature = precise ?? truncateSignature(sym.signature || sym.name);
   out.push(`${indent}[${sym.kind}] ${range}  ${signature}`);
   const doc = extractLeadingDoc(lines, sym.line, previousEndLine);
   if (doc) out.push(`${indent}  ⤷ ${doc}`);
-  const structuralChildren = sym.children.filter(isStructuralChild);
+  const structuralChildren = precise && ["interface", "type", "enum"].includes(sym.kind) ? [] : sym.children.filter(isStructuralChild);
   let lastChildEnd = sym.line;
   for (const child of structuralChildren) {
-    out.push(...renderSymbol(child, lines, depth + 1, lastChildEnd));
+    out.push(...renderSymbol(child, lines, depth + 1, lastChildEnd, signatures));
     lastChildEnd = child.endLine;
   }
   return out;
@@ -134,7 +137,7 @@ function summarizeExports(symbols: CodeSymbol[], content: string): string[] {
   return exportNames.size > 0 ? [...exportNames].sort() : [];
 }
 
-function formatSignatureBlock(analysis: FileAnalysis, content: string): string[] {
+function formatSignatureBlock(analysis: FileAnalysis, content: string, signatures?: Map<string, string>): string[] {
   const lines = content.split("\n");
   const out: string[] = [];
   if (analysis.header) {
@@ -143,7 +146,7 @@ function formatSignatureBlock(analysis: FileAnalysis, content: string): string[]
   }
   let previousEnd = 0;
   for (const sym of analysis.symbols) {
-    out.push(...renderSymbol(sym, lines, 0, previousEnd));
+    out.push(...renderSymbol(sym, lines, 0, previousEnd, signatures));
     previousEnd = sym.endLine;
   }
   return out;
@@ -160,6 +163,12 @@ export async function getFileSkeleton(options: SkeletonOptions): Promise<string>
 
   const content = await readFile(fullPath, "utf-8");
   const analysis = await analyzeFile(fullPath);
+  const contracts = typescriptSkeleton(content, fullPath);
+  if (options.exportedOnly && !contracts) throw new Error("exported_only currently supports TypeScript and JavaScript; omit it for this language.");
+  if (options.exportedOnly && contracts) {
+    analysis.symbols = analysis.symbols.filter(symbol => contracts.exported.has(symbol.name));
+    if (!analysis.symbols.length) return `File: ${options.filePath}\nNo local exported declarations. Re-exports may be defined in other files.`;
+  }
 
   if (analysis.symbols.length === 0) {
     const preview = content.split("\n").slice(0, 30).join("\n");
@@ -168,7 +177,7 @@ export async function getFileSkeleton(options: SkeletonOptions): Promise<string>
 
   const importsBlock = summarizeImports(content, fullPath);
   const exportsBlock = summarizeExports(analysis.symbols, content);
-  const symbolsBlock = formatSignatureBlock(analysis, content);
+  const symbolsBlock = formatSignatureBlock(analysis, content, contracts?.signatures);
   const sections: string[] = [
     `File: ${options.filePath} (${analysis.lineCount} lines)`,
     `Symbols: ${analysis.symbols.length} top-level definitions`,

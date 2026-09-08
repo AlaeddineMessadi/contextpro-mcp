@@ -7,12 +7,14 @@ import { walkDirectory } from "../core/walker.js";
 import { readFile } from "fs/promises";
 import { resolveProjectPath } from "../core/path-guard.js";
 import { maskSourceText } from "../core/source-mask.js";
+import pLimit from "p-limit";
 
 export interface BlastRadiusOptions {
   rootDir: string;
   symbolName: string;
   fileContext?: string;
   mode?: "summary" | "detailed";
+  kind?: UsageKind;
 }
 
 export type UsageKind = "import" | "call" | "mock/stub" | "type-reference" | "comment/string";
@@ -42,13 +44,13 @@ export interface SymbolUsage {
 function classifyUsage(codeLine: string, symbolName: string, hasCodeOccurrence: boolean): UsageKind {
   if (!hasCodeOccurrence) return "comment/string";
   const escaped = escapeRegex(symbolName);
-  if (/^\s*(?:import|export)\b/.test(codeLine) || /^\s*(?:from|use)\b/.test(codeLine) || /\brequire\s*\(/.test(codeLine)) {
+  if (/^\s*import\b/.test(codeLine) || /^\s*export\s*(?:\{|\*)/.test(codeLine) || /^\s*(?:from|use)\b/.test(codeLine) || /\brequire\s*\(/.test(codeLine)) {
     return "import";
   }
   if (/\b(?:mock|mocked|spyOn|stub|patch|monkeypatch|mockImplementation|mockReturnValue|mockResolvedValue)\b/i.test(codeLine)) {
     return "mock/stub";
   }
-  if (new RegExp(`\\b${escaped}\\s*(?:<[^;{}()]*>)?\\s*\\(`).test(codeLine)) return "call";
+  if (!isDefinitionLine(codeLine, symbolName) && new RegExp(`\\b${escaped}\\s*(?:<[^;{}()]*>)?\\s*\\(`).test(codeLine)) return "call";
   return "type-reference";
 }
 
@@ -77,8 +79,8 @@ function escapeRegex(str: string): string {
 
 function isDefinitionLine(line: string, symbolName: string): boolean {
   const definitionPatterns = [
-    new RegExp(`(?:function|class|enum|interface|struct|type|trait|fn|def|func)\\s+${escapeRegex(symbolName)}`),
-    new RegExp(`(?:const|let|var|pub|export)\\s+(?:async\\s+)?(?:function\\s+)?${escapeRegex(symbolName)}`),
+    new RegExp(`(?:function|class|enum|interface|struct|type|trait|fn|def|func)\\s+${escapeRegex(symbolName)}\\b`),
+    new RegExp(`(?:const|let|var|pub|export)\\s+(?:async\\s+)?(?:function\\s+)?${escapeRegex(symbolName)}\\b`),
   ];
   return definitionPatterns.some((p) => p.test(line));
 }
@@ -89,6 +91,7 @@ async function scanFileForSymbol(
   symbolName: string,
   fileContext: string | undefined,
   indexedSymbols?: SymbolSpan[],
+  onFailure?: () => void,
 ): Promise<SymbolUsage[]> {
   const symbolPattern = new RegExp(`\\b${escapeRegex(symbolName)}\\b`, "g");
   try {
@@ -121,6 +124,7 @@ async function scanFileForSymbol(
     }
     return usages;
   } catch {
+    onFailure?.();
     return [];
   }
 }
@@ -130,7 +134,8 @@ export async function getBlastRadius(options: BlastRadiusOptions): Promise<strin
     return "Error: symbol_name must be a non-empty string. blast_radius traces a specific named symbol and cannot run on an empty value.";
   }
   const db = await getDB(options.rootDir);
-  const usages: SymbolUsage[] = [];
+  let usages: SymbolUsage[] = [];
+  const unreadable: string[] = [];
   const seenUsageKeys = new Set<string>();
 
   const pushUsages = (items: SymbolUsage[]) => {
@@ -175,10 +180,11 @@ export async function getBlastRadius(options: BlastRadiusOptions): Promise<strin
     candidateFiles.add(entry.relativePath);
   }
 
+  const scanLimit = pLimit(8);
   await Promise.all(
     [...candidateFiles]
       .filter((relativePath) => isSupportedFile(relativePath))
-      .map(async (relativePath) => {
+      .map((relativePath) => scanLimit(async () => {
         const indexedFile = indexedFileByPath.get(relativePath);
         const indexedSymbols = indexedFile
           ? db.getSymbolsByFile(indexedFile.id).map((symbol) => ({
@@ -194,13 +200,19 @@ export async function getBlastRadius(options: BlastRadiusOptions): Promise<strin
           options.symbolName,
           options.fileContext,
           indexedSymbols,
+          () => unreadable.push(relativePath),
         );
         pushUsages(found);
-      }),
+      })),
   );
 
+  const kinds: UsageKind[] = ["call", "import", "type-reference", "mock/stub", "comment/string"];
+  const counts = kinds.map(kind => `${kind}=${usages.filter(usage => usage.kind === kind).length}`).join(", ");
+  if (options.kind) usages = usages.filter(usage => usage.kind === options.kind);
   if (usages.length === 0) {
-    return `Symbol "${options.symbolName}" is not used anywhere in the codebase.`;
+    if (unreadable.length) return `No matching usages found in readable files. INCOMPLETE: ${unreadable.length} files could not be read; verify with native tools.`;
+    if (options.kind) return `No ${options.kind} matching lines found for "${options.symbolName}". Counts by matching line: ${counts}. Textual candidates, not binding-resolved references.`;
+    return `No textual usage candidates found for "${options.symbolName}" in scanned supported files. This does not prove the symbol is unused; verify binding-resolved references before removal.`;
   }
 
   usages.sort((left, right) => left.file.localeCompare(right.file) || left.line - right.line || left.kind.localeCompare(right.kind));
@@ -213,6 +225,9 @@ export async function getBlastRadius(options: BlastRadiusOptions): Promise<strin
 
   const lines: string[] = [
     `Blast radius for "${options.symbolName}": ${usages.length} usages in ${byFile.size} files\n`,
+    `Counts by matching line: ${counts}. One line may contain multiple occurrences.`,
+    "Textual candidates, not binding-resolved references. Use exact_references for TS/JS rename checks.",
+    ...(unreadable.length ? [`INCOMPLETE: ${unreadable.length} files could not be read; verify scope with native tools.`] : []),
   ];
   if ((options.mode ?? "summary") === "detailed") {
     for (const [file, fileUsages] of byFile) {
@@ -263,7 +278,7 @@ export async function getBlastRadius(options: BlastRadiusOptions): Promise<strin
       lines.push(`\n⚠ LOW USAGE: ${usages.length} usage(s). Definition size unknown; verify before deciding.`);
     }
   } else if (usages.length <= 5) {
-    lines.push(`\n• Modest usage: ${usages.length} usages. Safe to refactor; review each before signature changes.`);
+    lines.push(`\n• Modest usage: ${usages.length} matching lines. Review references before signature changes.`);
   }
 
   return lines.join("\n");

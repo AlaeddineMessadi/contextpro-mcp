@@ -144,7 +144,7 @@ Prefer a hosted API (OpenAI, OpenRouter, Groq, …) or a different local runtime
 
 ContextPro does **not** use, proxy, or consume the coding agent's own model context. It has an independent, optional model connection for two narrow jobs: **embeddings** power semantic `search`, while a **chat model** can improve cluster labels, hub names, and ambiguous planning reranks. Everything else is pure AST/graph work with no model.
 
-The recommended first install configures embeddings only. Leave `CONTEXTPRO_CHAT_MODEL` unset unless you explicitly want those optional chat-assisted refinements; setting it can make network calls or use local compute. See [why a separate model exists](INSTALL.md#why-contextpro-has-model-settings) for the precise behavior and privacy/cost implications.
+The recommended first install configures embeddings only. Leave `CONTEXTPRO_CHAT_MODEL` unset unless you explicitly want those optional chat-assisted refinements; setting it can make network calls or use local compute. Planning reranks additionally require `CONTEXTPRO_CHAT_RERANK=true`; they cancel after 1.5 seconds and retain deterministic ranking on failure. See [why a separate model exists](INSTALL.md#why-contextpro-has-model-settings) for the precise behavior and privacy/cost implications.
 
 You configure all of it with **five short keys** — same names for every provider:
 
@@ -213,12 +213,15 @@ Run independent reads in parallel. Structural tools refresh changed files before
 
 ## Tool surface
 
-ContextPro offers three tool profiles: **workflow (12 tools)** for everyday discovery and validation, **core (37)** with editing and graph operations, and **full (59)** for all capabilities. `init` selects `workflow`; existing installations keep their profile, and an unset profile retains the backward-compatible `full` default.
+ContextPro defaults to **workflow (13 tools)** for everyday discovery and validation. `discover_tools` finds and enables expert tools for the current session without running them. Opt-in **lean** exposes only `context` and `discover_tools`: one-call source retrieval plus expert discovery. Explicit **core** and **full** profiles remain available; an unset profile now selects workflow. Clients that require every tool up front can set `CONTEXTPRO_TOOL_PROFILE=full`.
+
+Use `search(format:"compact")` for concise JSON with code locations and freshness warnings; `json` retains the verbose diagnostic format. `include_dependencies:true` adds at most three import pointers from the two strongest file matches. `profile:true` reports freshness, retrieval/ranking and artifact timings in JSON/compact responses. `skeleton(exported_only:true)` limits TypeScript/JavaScript output to public declarations and preserves multiline signatures and interface contracts. Unchanged task-packet deltas return a small acknowledgement with recovery IDs instead of repeating the packet metadata.
 
 ### Orientation
 | Tool | What it does |
 | --- | --- |
 | `status` | File counts, index state, memory stats, embedding provider, git, recent timings, and 24h efficiency estimate |
+| `context` (lean/full) | Find and read bounded, deduplicated source in one call; exact targets bypass search and embeddings |
 | `efficiency_report` | Persistent estimated token savings by tool; optional model-price scenario, with no prompt/code retention |
 | `tree` | Structural tree with file headers + symbols + line ranges |
 | `repo_map` | Compact whole-repo outline ranked by importance |
@@ -295,6 +298,12 @@ ContextPro offers three tool profiles: **workflow (12 tools)** for everyday disc
 2. **Vector embeddings** — file-search and identifier embeddings via your provider. **Eagerly populated by default in 1.2.1+** so the first `search` call doesn't pay the cold cost.
 
 Pass `no_embed: true` (or set `CONTEXTPRO_REINDEX_NO_EMBED=true`) to skip step 2 — useful when the embedding provider is unreachable or you want to defer the cost. Search will fall back to keyword ranking until you reindex without the flag. If embedding fails mid-reindex, the structural index still completes and `status` surfaces the actual error.
+
+Interactive searches load existing vectors and never rebuild corpus embeddings. Missing vectors use lexical ranking; semantic-only requests still require semantic matches. Query embedding work shares a 1.5-second request budget (`CONTEXTPRO_QUERY_EMBED_TIMEOUT_MS`, bounded to 100–10000 ms), including actual HTTP cancellation for Ollama. Unchanged identifier definitions reuse content-verified persisted symbols.
+
+WASM parsing runs in a reusable child process with optimizing WASM compilation disabled. A parser crash or timeout rejects pending parses and allows structural read fallbacks while MCP stays connected; syntax-checked edits fail closed if validation is unavailable. The child restarts on a later request after a short cooldown. `health` and startup logs identify the runtime executable and parser backend. Restart the coding client after changing its saved Node command; reconnecting can reuse a cached command.
+
+See the [app-a incident audit](docs/benchmarks/2026-09-07-app-a-incident.md) for the observed crash, benchmark limitations, and direct regression replay.
 
 ---
 
@@ -417,7 +426,7 @@ Canonical prefix is `CONTEXTPRO_*` (since 1.2.0). Legacy `CONTEXTPLUS_*` names w
 | `CONTEXTPRO_NATIVE_AUTO_REPAIR` | `true` | Repair native bindings in an isolated ABI/version cache |
 | `CONTEXTPRO_NATIVE_CACHE_DIR` | `~/.cache/contextpro/native` | Shared cache of separate native runtimes |
 | `CONTEXTPRO_ALLOW_UNSAFE_ROOT` | `false` | Allow `/` or home-level project roots |
-| `CONTEXTPRO_TOOL_PROFILE` | `full` | `workflow` has 12 daily tools; `core` adds editing/graphs; `full` exposes all tools |
+| `CONTEXTPRO_TOOL_PROFILE` | `workflow` | `lean`: 2 tools; `workflow`: 13; `core`: editing/graphs; `full`: all tools |
 | `CONTEXTPRO_PROJECT_ID` | (auto) | Override project identity |
 | `CONTEXTPRO_CLIENT_ID` | (none) | Group projects under one client for cross-project memory |
 

@@ -117,11 +117,16 @@ const MAX_EMBED_CHUNK_CHARS = 8000;
 
 type OllamaEmbedClient = { embed: (params: Record<string, unknown>) => Promise<{ embeddings: number[][] }> };
 let ollamaClient: OllamaEmbedClient | null = null;
+const ollamaSignals = new AsyncLocalStorage<AbortSignal>();
 
 async function getOllamaClient(): Promise<OllamaEmbedClient> {
   if (!ollamaClient) {
     const { Ollama } = await import("ollama");
-    ollamaClient = new Ollama({ host: process.env.OLLAMA_HOST }) as unknown as OllamaEmbedClient;
+    // Ollama embed() serializes its request body; a `signal` property there does
+    // not cancel HTTP. Install the signal on the actual fetch instead.
+    ollamaClient = new Ollama({ host: process.env.OLLAMA_HOST,
+      fetch: (input, init) => fetch(input, { ...init, signal: ollamaSignals.getStore() ?? init?.signal }),
+    }) as unknown as OllamaEmbedClient;
   }
   return ollamaClient;
 }
@@ -129,10 +134,10 @@ async function getOllamaClient(): Promise<OllamaEmbedClient> {
 async function callOllamaEmbed(input: string[], signal: AbortSignal): Promise<number[][]> {
   const client = await getOllamaClient();
   const options = getEmbedRuntimeOptions();
-  const request: Record<string, unknown> = { model: EMBED_MODEL, input, signal };
+  const request: Record<string, unknown> = { model: EMBED_MODEL, input };
   if (options) request.options = options;
   try {
-    const response = await client.embed(request);
+    const response = await ollamaSignals.run(signal, () => client.embed(request));
     return response.embeddings;
   } catch (error) {
     throw new Error(formatOllamaModelError(error, "embedding", EMBED_MODEL));
@@ -161,6 +166,8 @@ async function callOpenAIEmbed(input: string[], signal: AbortSignal): Promise<nu
 }
 
 async function callProviderEmbed(input: string[], signal: AbortSignal): Promise<number[][]> {
+  signal = AbortSignal.any([signal, ...(queryDeadline.getStore() ? [queryDeadline.getStore()!] : [])]);
+  signal.throwIfAborted();
   if (EMBED_PROVIDER === "openai") {
     return callOpenAIEmbed(input, signal);
   }
@@ -391,12 +398,18 @@ function cosine(a: number[], b: number[]): number {
   return denom === 0 ? 0 : dot / denom;
 }
 
+const SEARCH_STOPWORDS = new Set("a an the and or but for from to of in on at by with without that this these those is are was were be been being as it its after before using use how which when then than into through".split(" "));
+
+export function searchTerms(text: string): string[] {
+  return splitCamelCase(text).filter(term => !SEARCH_STOPWORDS.has(term));
+}
+
 function splitCamelCase(text: string): string[] {
   return text
     .replace(/([a-z])([A-Z])/g, "$1 $2")
     .replace(/([A-Z])([A-Z][a-z])/g, "$1 $2")
     .toLowerCase()
-    .split(/[\s_-]+/)
+    .split(/[^a-z0-9]+/)
     .filter((t) => t.length > 1);
 }
 
@@ -502,15 +515,24 @@ function getMatchedSymbols(symbols: string[], queryTerms: Set<string>): string[]
   return symbols.filter((symbol) => splitCamelCase(symbol).some((term) => queryTerms.has(term)));
 }
 
-function computeKeywordScore(query: string, queryTerms: Set<string>, doc: SearchDocument, matchedSymbols: string[]): number {
+function computeKeywordScore(query: string, queryTerms: Set<string>, doc: SearchDocument, matchedSymbols: string[], preparedTerms?: Set<string>, weights?: Map<string, number>): number {
   if (queryTerms.size === 0) return 0;
   const docText = `${doc.path} ${doc.header} ${doc.symbols.join(" ")} ${doc.content}`;
-  const docTerms = new Set(splitCamelCase(docText));
+  const docTerms = preparedTerms ?? new Set(searchTerms(docText));
   const queryLower = query.trim().toLowerCase();
   const phraseBoost = queryLower.length > 0 && docText.toLowerCase().includes(queryLower) ? 0.15 : 0;
   const symbolTerms = new Set(splitCamelCase(matchedSymbols.join(" ")));
-  const termCoverage = getTermCoverage(queryTerms, docTerms);
-  const symbolCoverage = getTermCoverage(queryTerms, symbolTerms);
+  const coverage = (terms: Set<string>): number => {
+    let total = 0, matched = 0;
+    for (const term of queryTerms) {
+      const weight = weights?.get(term) ?? 1;
+      total += weight;
+      if (terms.has(term)) matched += weight;
+    }
+    return total ? matched / total : 0;
+  };
+  const termCoverage = coverage(docTerms);
+  const symbolCoverage = coverage(symbolTerms);
   return clamp01(termCoverage * 0.65 + symbolCoverage * 0.2 + phraseBoost);
 }
 
@@ -579,14 +601,17 @@ function getMatchedSymbolEntries(symbols: SymbolSearchEntry[], queryTerms: Set<s
 
 // Query vectors are shared only inside one retrieval request, never across projects or turns.
 const queryEmbeddings = new AsyncLocalStorage<Map<string, Promise<number[]>>>();
+const queryDeadline = new AsyncLocalStorage<AbortSignal>();
 export function withQueryEmbeddingCache<T>(fn: () => Promise<T>): Promise<T> {
-  return queryEmbeddings.getStore() ? fn() : queryEmbeddings.run(new Map(), fn);
+  const configured = Number(process.env.CONTEXTPRO_QUERY_EMBED_TIMEOUT_MS ?? 1500);
+  const timeout = Number.isFinite(configured) ? Math.max(100, Math.min(10000, Math.trunc(configured))) : 1500;
+  return queryEmbeddings.getStore() ? fn() : queryDeadline.run(AbortSignal.timeout(timeout), () => queryEmbeddings.run(new Map(), fn));
 }
 export function fetchQueryEmbedding(query: string): Promise<number[]> {
   const cache = queryEmbeddings.getStore();
   let pending = cache?.get(query);
   if (!pending) {
-    pending = fetchEmbedding(query).then(([vector]) => vector ?? []);
+    pending = withQueryEmbeddingCache(() => fetchEmbedding(query).then(([vector]) => vector ?? []));
     cache?.set(query, pending);
   }
   return pending;
@@ -605,8 +630,14 @@ export function matchesSearchConstraints(result: Pick<SearchResult, "semanticSco
 export class SearchIndex {
   private documents: SearchDocument[] = [];
   private vectors: number[][] = [];
-  async index(docs: SearchDocument[], rootDir: string, skipEmbeddings = false): Promise<void> {
+  private lexicalDocuments: Set<string>[] = [];
+  private inverseFrequency = new Map<string, number>();
+  async index(docs: SearchDocument[], rootDir: string, skipEmbeddings = false, cacheOnly = false): Promise<void> {
     this.documents = docs;
+    this.lexicalDocuments = docs.map(doc => new Set(searchTerms(`${doc.path} ${doc.header} ${doc.symbols.join(" ")} ${doc.content}`)));
+    const frequencies = new Map<string, number>();
+    for (const terms of this.lexicalDocuments) for (const term of terms) frequencies.set(term, (frequencies.get(term) ?? 0) + 1);
+    this.inverseFrequency = new Map([...frequencies].map(([term, count]) => [term, Math.log(1 + (docs.length + 1) / (count + 1))]));
     if (skipEmbeddings) { this.vectors = new Array(docs.length); return; }
     const cache = await loadCache(rootDir);
     const uncached: { idx: number; text: string; hash: string }[] = [];
@@ -626,7 +657,7 @@ export class SearchIndex {
       }
     }
 
-    if (uncached.length > 0) {
+    if (!cacheOnly && uncached.length > 0) {
       const batchSize = getEmbeddingBatchSize();
       const batches: { idx: number; text: string; hash: string }[][] = [];
       for (let b = 0; b < uncached.length; b += batchSize) {
@@ -674,13 +705,13 @@ export class SearchIndex {
     const options = resolveSearchOptions(optionsOrTopK);
     let queryVec: number[];
     try {
-      queryVec = options.semanticWeight === 0 ? [] : await fetchQueryEmbedding(query);
+      queryVec = options.semanticWeight === 0 || !this.vectors.some(vector => vector?.length) ? [] : await fetchQueryEmbedding(query);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       process.stderr.write(`[contextpro/embeddings] degraded: query embed failed (${message}); using keyword-only ranking\n`);
       queryVec = [];
     }
-    const queryTerms = new Set(splitCamelCase(query));
+    const queryTerms = new Set(searchTerms(query));
     const candidates: {
       idx: number;
       semanticScore: number;
@@ -697,7 +728,7 @@ export class SearchIndex {
         ? matchedEntries.map((entry) => entry.name)
         : getMatchedSymbols(doc.symbols, queryTerms);
       const matchedSymbolLocations = matchedEntries.map((entry) => `${entry.name}@${formatLineRange(entry.line, entry.endLine)}`);
-      const keywordScore = computeKeywordScore(query, queryTerms, doc, matchedSymbols);
+      const keywordScore = computeKeywordScore(query, queryTerms, doc, matchedSymbols, this.lexicalDocuments[i], this.inverseFrequency);
 
       if (options.requireSemanticMatch && semanticScore <= 0) continue;
       if (options.requireKeywordMatch && keywordScore <= 0) continue;

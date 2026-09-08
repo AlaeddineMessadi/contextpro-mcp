@@ -31,7 +31,7 @@ export async function getEfficiencyReport(options: EfficiencyReportOptions): Pro
   const db = await getDB(options.rootDir);
   const totals = db.getEfficiencyTotals(since, sessionId);
   const byTool = db.getToolCallAggregates(since, sessionId).sort((a, b) => b.savedTokens - a.savedTokens);
-  const history = db.getToolSavingsHistory(options.historyLimit ?? 10, since, sessionId);
+  const history = options.historyLimit === 0 ? [] : db.getToolSavingsHistory(options.historyLimit ?? 10, since, sessionId);
   const rate = nonnegative(options.inputCostPerMillion, "inputCostPerMillion");
   const operatingCost = nonnegative(options.contextproCostUsd, "contextproCostUsd");
   const schemaTokens = scope === "session" ? getToolSchemaTokens() : null;
