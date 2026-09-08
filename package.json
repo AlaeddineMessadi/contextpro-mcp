@@ -62,12 +62,12 @@
     "pack:check": "node scripts/check-package.mjs"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.29.0",
-    "better-sqlite3": "^13.0.3",
-    "ignore": "^7.0.4",
-    "ml-matrix": "^6.12.1",
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "better-sqlite3": "^12.10.0",
+    "ignore": "^7.0.8",
+    "ml-matrix": "^6.15.0",
     "ollama": "^0.6.3",
-    "p-limit": "^7.3.0",
+    "p-limit": "^7.3.2",
     "sqlite-vec": "^0.1.9",
     "tree-sitter-wasms": "^0.1.13",
     "typescript": "^5.9.3",
@@ -75,7 +75,7 @@
     "zod": "^3.25.23"
   },
   "devDependencies": {
-    "@tailwindcss/postcss": "^4.2.1",
+    "@tailwindcss/postcss": "^4.3.3",
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^26.4.1",
     "tailwindcss": "^4.2.1"

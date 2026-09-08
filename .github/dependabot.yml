@@ -5,6 +5,16 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    # These upgrades require explicit runtime/compiler/parser migrations.
+    ignore:
+      - dependency-name: better-sqlite3
+        versions: [">=13"] # Requires Node 22; we still support Node 20.
+      - dependency-name: web-tree-sitter
+        versions: [">=0.21"] # 0.x minor updates change the parser API.
+      - dependency-name: typescript
+        update-types: [version-update:semver-major]
+      - dependency-name: zod
+        update-types: [version-update:semver-major]
     groups:
       compatible-dependencies:
         update-types: [minor, patch]
