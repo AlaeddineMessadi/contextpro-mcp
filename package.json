@@ -63,7 +63,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
-    "better-sqlite3": "^12.10.0",
+    "better-sqlite3": "^13.0.3",
     "ignore": "^7.0.4",
     "ml-matrix": "^6.12.1",
     "ollama": "^0.6.3",
