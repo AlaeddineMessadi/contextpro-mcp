@@ -115,11 +115,42 @@ these infrastructure failures are retained separately. Desktop bundled CLI
 11,776 cached-input subset, 5 output tokens), counted as setup rather than a
 coding task. The unchanged 16-trial contract runs with that executable at
 `gpt-6-sol` / `xhigh`. A host restart interrupted the eleventh planned attempt
-(country-normalization candidate). Its unchanged source copy is retained;
+(country-normalization candidate). Its application source is unchanged and the copy is retained;
 agent start, duration and usage could not be recovered. It is an infrastructure
 failure, not a demonstrated retrieval failure. The first ten completed results
 were preserved and only the five unstarted trials resumed, with identical builds,
-contracts and CLI/model settings. Results are pending.
+contracts and CLI/model settings. All 16 planned attempts are accounted for:
+15 have agent outcomes (including two ten-minute timeouts), and one was
+interrupted by the host restart. There are no replacement runs.
+
+Baseline passes **1/8** frozen contracts; candidate passes **0/8**. There are
+**zero jointly passing pairs**, so median paired task-time and provider-token
+improvements are **unavailable**. The video-export pair fails the no-regression
+condition. The rollout gate is **not met**; connected retrieval stays opt-in.
+These are strict acceptance results, with the validator limitations below;
+they do not establish that retrieval caused every task failure.
+
+The [sanitized trial report](2026-09-26-coding-pilot.json) contains all outcomes,
+provider usage, setup/validation time, native-read candidates and MCP traces.
+In the table, every pair is **baseline / candidate**. Time includes independent
+validation. Tokens mean provider-reported input plus output, with cached input
+counted once. Unavailable counts are not estimated.
+
+| Task | Outcome | Task minutes | Provider tokens |
+| --- | --- | ---: | ---: |
+| Worktree routing | Fail / Fail | 7.85 / 8.93 | 2,810,415 / 3,466,414 |
+| Grep context | Fail / Fail | 4.28 / 5.36 | 669,417 / 769,696 |
+| Offline contact | Fail / Fail | 6.35 / 5.40 | 1,246,747 / 647,376 |
+| Reporting withdrawal | Fail / Timeout | 6.71 / 10.82 | 2,137,926 / — |
+| Video export | Pass / Fail | 6.86 / 4.68 | 1,850,064 / 1,268,229 |
+| Country normalization | Fail / Interrupted | 2.92 / — | 529,931 / — |
+| Empty-field comparison | Fail / Fail | 6.78 / 7.31 | 2,074,175 / 1,517,159 |
+| Plain-text preview | Timeout / Fail | 10.60 / 9.54 | — / 2,167,033 |
+
+Observed calls comprise 33 query-context and 72 exact-target requests. No agent
+requested a feature brief, task pack or source delta; this pilot therefore
+does not measure productivity gains from those capabilities. Missing tool
+events for the interrupted attempt remain unknown.
 
 The machine also hosts other user work; isolated source copies do not imply
 isolated CPU or network resources. Local implementation tests are paused during
@@ -134,7 +165,71 @@ validator passing before/after qualification does not remove those limitations.
 
 Independent review after freezing found cache-identity omissions for connected
 task-pack graph limits/source budgets, and missing validation of citation IDs in
-previously cached briefs. The final changes harden these contracts separately;
+previously cached briefs. Further review added source-hash and line-bound checks
+for cached citations, and rejection of malformed warning metadata. The final
+changes also bind context IDs to packet contents and delivery completeness,
+reject altered baselines and repair corrupt records on full reads. These
+changes harden the cache contracts separately;
 the pilot build stays frozen at the identity above. These changes are not ranking
 tuning against held-out results, and pilot timings do not measure that later
 cache hardening.
+
+## Failure interpretation
+
+Acceptance is deliberately binary, but failure causes differ. The retained logs
+show the following; these are observations about task patches, not proof that a
+specific retrieval decision caused them.
+
+| Task | Baseline | Candidate |
+| --- | --- | --- |
+| Worktree routing | Missing required routing-trace fields | Ambiguous-root rejection assertion failed |
+| Grep context | Five of seven checks pass; literal-regex diagnostic and neighbor-marker format differ | Same two failures |
+| Offline contact | Offline shell retains the old contact | Contact refreshes, but the public-shell request includes cookies |
+| Reporting withdrawal | Five of six checks pass; archival/reload withdrawal flow fails | Ten-minute timeout; independent validation also fails the archival/reload flow |
+| Video export | All export checks pass | Twelve of thirteen checks pass; excluded-media manifest count is wrong |
+| Country normalization | Thirty-nine of forty checks pass; numeric `12` is accepted as a country | Host interruption; unchanged source retained and timing/usage unavailable |
+| Empty-field comparison | Ninety of ninety-three checks pass; the required classification-validation warning is absent | Ninety of ninety-three checks pass; two warning assertions fail and a valid omission repair is rejected |
+| Plain-text preview | Ten-minute timeout; validator then could not locate its expected per-line DOM node for scroll testing | Rejected at the CSS whitespace assertion because `break-spaces` does not match `/pre/`; later checks did not run |
+
+The grep validator requires exact diagnostic/marker conventions that the prompt
+does not spell out. The video validator checks manifest accounting in addition
+to the requested media-access behavior. The empty-field validator also requires
+a specific warning log not named in the prompt. These strict contracts constrain how
+the pass rate should be interpreted; their frozen results are not changed after
+seeing the patches. The video pair still prevents the declared no-correctness-
+regression rollout gate from passing.
+
+The plain-text validator has a confirmed limitation: it checks the CSS value
+with `/pre/`, which rejects `break-spaces` even though that value preserves
+whitespace ([CSS Text specification](https://www.w3.org/TR/css-text-3/#valdef-white-space-break-spaces)).
+The candidate's recorded failure is retained, but this assertion does not
+demonstrate a rendering defect, and the remaining checks were not reached.
+The baseline's validator also stops at a per-line text-node locator, while
+its patch renders the complete literal text in one `pre` element. That locator
+assumes DOM structure not required by the prompt. The task's full correctness
+is inconclusive for both patches; baseline additionally exceeded its deadline.
+Do not use it to claim comparative productivity. A future campaign needs a separately frozen behavioral validator;
+the held-out contract and recorded outcomes were not revised to accept this patch.
+
+## Final implementation verification
+
+Final source changes are at `a7b6a6b` (subsequent commits contain report updates).
+All 11 applicable CI checks pass, including **722 main tests** across Node
+20/22/24/26 and macOS, both application builds, documentation, release metadata,
+package checks, dependency audits and secret scanning. The frozen candidate
+also passed 33 parser demos. Private-repository conditions skip CodeQL and
+dependency review; those skips are not counted as passes.
+
+The final local build has 105 JavaScript files and fingerprint
+`4f76153c8cc9e5ffc0fe0faeaaf57307811315bdde14a22c98313ef0d77500b8`.
+Direct before/after probes accepted all four corrupted-cache cases on the
+frozen candidate and rejected all four on the final build: out-of-file citation
+ranges, mismatched citation hashes, malformed warning metadata and altered
+source snapshots. Focused local tests also verify forged completion flags and
+cache repair. These repairs are outside the frozen pilot's measured build.
+
+A fresh real `bge-m3` fixture had a positive semantic hit; explicitly selecting
+`keyword_only` correctly reported that selection with both source selectors,
+without calling a provider during the lexical reads. It no longer misdiagnoses
+available vectors as unavailable. This is a diagnostic regression check, not
+a new retrieval-performance comparison.
