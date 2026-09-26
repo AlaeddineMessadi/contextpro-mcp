@@ -119,6 +119,29 @@ it('source deltas detect edits and deletions and recover across incompatible roo
   } finally { await cleanup(root); await cleanup(other); }
 });
 
+it('source context IDs reject altered packets and forged completion flags', async () => {
+  const root = await fixture();
+  try {
+    const options = { rootDir: root, query: 'upload', maxTokens: 1200 };
+    const packet = { text: 'Original source', ranges: [{ file: 'upload.ts', start: 1, end: 1, text: 'original' }], hashes: { 'upload.ts': 'before' }, notices: [], settings: 'test-v1', complete: true };
+    const firstId = id(await finishSourceContext(options, packet));
+    const saved = await readArtifact(root, firstId);
+    const changed = { ...packet, text: 'Changed source', ranges: [{ ...packet.ranges[0], text: 'changed' }], hashes: { 'upload.ts': 'after' } };
+    saved.payload.packet = changed;
+    await writeFile(saved.path, JSON.stringify(saved));
+    const response = await finishSourceContext({ ...options, previousContextId: firstId }, changed);
+    assert.match(response, /Baseline missing, incompatible or incomplete/);
+    assert.match(response, /Changed source/); assert.doesNotMatch(response, /Source ranges unchanged/);
+    // A full current read repairs a corrupt cache entry with the same content ID.
+    await finishSourceContext(options, packet);
+    assert.deepEqual((await readArtifact(root, firstId)).payload.packet, packet);
+    const incompleteId = id(await finishSourceContext(options, { ...packet, complete: false }));
+    const incomplete = await readArtifact(root, incompleteId); incomplete.payload.complete = true;
+    await writeFile(incomplete.path, JSON.stringify(incomplete));
+    assert.match(await finishSourceContext({ ...options, previousContextId: incompleteId }, packet), /Baseline missing, incompatible or incomplete/);
+  } finally { await cleanup(root); }
+});
+
 it('feature briefs invalidate on source, dependency membership and model changes', async () => {
   const root = await fixture();
   try {

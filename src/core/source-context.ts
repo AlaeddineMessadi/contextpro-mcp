@@ -15,10 +15,10 @@ export async function finishSourceContext(options: ContextOptions, packet: Sourc
   const root = resolve(options.rootDir), limit = (options.maxTokens ?? 4000) * 4;
   if (options.previousContextId && !/^source_context-[a-f0-9]{14}$/.test(options.previousContextId)) throw new Error("Invalid previous_context_id; use a source_context ID from a context response.");
   const taskKey = hash({ root, query: options.query?.trim(), settings: packet.settings, budget: options.maxTokens ?? 4000 });
-  const key = hash({ root, taskKey, packet });
-  const id = buildArtifactId("source_context", key);
+  let key = hash({ root, taskKey, packet, complete: packet.complete });
+  let id = buildArtifactId("source_context", key);
   const recovery = "Omit previous_context_id after context loss; artifact_read recovers this snapshot.";
-  const header = `Context ID: ${id}\n${recovery}`;
+  let header = `Context ID: ${id}\n${recovery}`;
   let text = `${header}\n\n${packet.text}`;
   let fallback = "";
   const previous = options.previousContextId ? await readArtifact<Snapshot>(root, options.previousContextId).catch(() => null) : null;
@@ -26,7 +26,8 @@ export async function finishSourceContext(options: ContextOptions, packet: Sourc
     const priorPacket = previous?.payload?.packet;
     const valid = previous?.kind === "source_context" && previous.repoRoot === root && previous.payload?.taskKey === taskKey && previous.payload.complete === true
       && Array.isArray(priorPacket?.ranges) && !!priorPacket.hashes && typeof priorPacket.hashes === "object"
-      && priorPacket.ranges.every(part => part && typeof part.file === "string" && typeof part.text === "string" && Number.isInteger(part.start) && Number.isInteger(part.end));
+      && priorPacket.ranges.every(part => part && typeof part.file === "string" && typeof part.text === "string" && Number.isInteger(part.start) && Number.isInteger(part.end))
+      && buildArtifactId("source_context", hash({ root, taskKey, packet: priorPacket, complete: previous.payload.complete })) === options.previousContextId;
     if (valid) {
       const before = new Map(previous.payload.packet.ranges.map(part => [rangeId(part), part]));
       const after = new Map(packet.ranges.map(part => [rangeId(part), part]));
@@ -53,8 +54,19 @@ export async function finishSourceContext(options: ContextOptions, packet: Sourc
     while (ranges.length && bytes(text) > limit) { ranges.pop(); text = output(); }
     if (bytes(text) > limit) text = `${header}\nOmitted: response budget; use narrower query/targets.`;
   }
+  const deliveredKey = hash({ root, taskKey, packet, complete });
+  if (deliveredKey !== key) {
+    key = deliveredKey; id = buildArtifactId("source_context", key);
+    const deliveredHeader = `Context ID: ${id}\n${recovery}`;
+    text = text.replace(header, deliveredHeader); header = deliveredHeader;
+  }
   try {
-    await persistArtifact({ rootDir: root, kind: "source_context", key, immutable: true, payload: { taskKey, packet, complete } satisfies Snapshot });
+    const snapshot: Snapshot = { taskKey, packet, complete };
+    const stored = await readArtifact<Snapshot>(root, id).catch(() => null);
+    // Identical snapshots stay immutable. Repair a corrupt record under the same
+    // content ID so artifact_read cannot return different evidence for that ID.
+    const immutable = !stored || (stored.repoRoot === root && stored.kind === "source_context" && hash(stored.payload) === hash(snapshot));
+    await persistArtifact({ rootDir: root, kind: "source_context", key, immutable, payload: snapshot });
   } catch {
     // Source retrieval remains useful when cache storage is unavailable. Do not
     // advertise an unrecoverable ID as if it had been persisted successfully.
