@@ -97,12 +97,22 @@ export async function retrieveEvidence(options: {
           return score(b.path) - score(a.path) || (a.path ?? "").localeCompare(b.path ?? "");
         });
         for (const edge of edges) {
-          if (!edge.path || edge.path === seed.path || (visited.has(edge.path) && !pool.has(edge.path))) continue;
-          if (!linked.has(edge.path) && linked.size >= graphLimit) break;
+          if (!edge.path || edge.path === seed.path) continue;
           const role = isTestFile(edge.path) ? "test" : edge.role;
+          if (visited.has(edge.path)) {
+            // Existing seeds/previous-hop paths may gain a role, but consume no
+            // expansion slot and must not be queued or score-boosted again.
+            const existing = pool.get(edge.path);
+            if (existing) {
+              if (!existing.roles.includes(role)) existing.roles.push(role);
+              existing.reason = [...new Set([...existing.reason.split("; "), edge.reason, "indexed heuristic"])].join("; ");
+            }
+            continue;
+          }
+          if (!linked.has(edge.path) && linked.size >= graphLimit) break;
           add(edge.path, depth, edge.reason + "; indexed heuristic", role);
           linked.add(edge.path);
-          if (!visited.has(edge.path)) { visited.add(edge.path); next.push(pool.get(edge.path)!); }
+          visited.add(edge.path); next.push(pool.get(edge.path)!);
         }
       }
       frontier = next;
@@ -116,6 +126,6 @@ export async function retrieveEvidence(options: {
     const map = new Map(candidates.map(item => [item.path, item]));
     candidates = reordered.map(item => ({ ...map.get(item.path)!, score: item.score, reason: item.reason }));
     return { search, candidates, tests, limited: pool.size > 32,
-      relationNotice: linked.size ? "Connected paths use indexed import/test and name-only call heuristics; verify bindings with exact_references." : undefined };
+      relationNotice: candidates.some(item => item.reason.includes("graph:")) ? "Connected paths use indexed import/test and name-only call heuristics; verify bindings with exact_references." : undefined };
   });
 }

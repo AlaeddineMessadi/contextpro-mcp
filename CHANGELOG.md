@@ -6,6 +6,7 @@ All notable changes to this project are recorded here. The project follows [Sema
 
 - Added opt-in connected source retrieval shared by `context` and `task_pack`, snippet-aware optional reranking, source-cited `feature_brief` artifacts and worktree-bound source deltas. Exact target reads remain stateless; the lean catalog remains three tools. Added provider usage observations and frozen retrieval/coding-pilot harnesses; these changes do not establish token or time savings.
 - Feature briefs derive fact text from validated citation coordinates and bounded retrieval roles. Corrupted facts and older generator artifacts are rejected instead of being rendered as extracted evidence.
+- Graph expansion spends its file limit only on unseen paths, and optional provider traces reject named pipes before opening so diagnostics cannot block provider calls waiting for a reader.
 
 - Automatic freshness reads enforce the configured source-size cap before loading files, including hash mode and files growing while waiting for the index lock. Discovery retains uncovered portions of overlapping source ranges and combines quoted phrases with compound keys.
 - Structural refresh avoids per-file full scans when replacing FTS documents and clearing symbol parent links. Existing databases receive the missing parent-link index when opened; transaction rollback behavior is preserved.

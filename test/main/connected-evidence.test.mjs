@@ -31,6 +31,25 @@ async function fixture() {
 const cleanup = async root => { closeDB(root); await rm(root, { recursive: true, force: true }); };
 const id = text => text.match(/Context ID: (source_context-[a-f0-9]{14})/)?.[1];
 
+it('spends a small graph budget on unseen files, not connected seeds', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'contextpro-graph-limit-'));
+  try {
+    await writeFile(join(root, 'a.ts'), 'import { b } from "./b.js";\nimport { finish } from "./z.js";\n// reservation handling\nexport const a = () => finish(b());\n');
+    await writeFile(join(root, 'b.ts'), '// reservation handling\nexport const b = () => 1;\n');
+    await writeFile(join(root, 'z.ts'), 'import { value } from "./deep.js";\nexport const finish = () => value;\n');
+    await writeFile(join(root, 'deep.ts'), 'export const value = 1;\n');
+    await reindex({rootDir:root, noEmbed:true, autoHubs:false});
+    const options = {rootDir:root, query:'reservation', preset:'keyword_only', includeTests:false};
+    const plain = await retrieveEvidence({...options, graphHops:0});
+    assert.deepEqual(plain.candidates.map(item => item.path).sort(), ['a.ts', 'b.ts']);
+    for (const graphHops of [1, 2]) {
+      const connected = await retrieveEvidence({...options, graphHops, graphMaxFiles:1});
+      assert.ok(connected.candidates.some(item => item.path === 'z.ts'), JSON.stringify(connected.candidates));
+      assert.ok(!connected.candidates.some(item => item.path === 'deep.ts'));
+    }
+  } finally { await cleanup(root); }
+});
+
 it('returns bounded connected implementation, predicate, caller and test source', async () => {
   const root = await fixture();
   try {
