@@ -29,6 +29,21 @@ interface Excerpt { file: string; start: number; end: number; text: string; }
 const bytes = (value: string): number => Buffer.byteLength(value, "utf8");
 const render = (part: Excerpt): string => `${part.file}:${part.start}-${part.end}\n${part.text}`;
 
+/** Keep uncovered tails/interiors instead of rejecting every partial overlap. */
+function uncoveredRanges(part: Excerpt, selected: Excerpt[]): Excerpt[] {
+  const ranges: Array<[number, number]> = [];
+  let start = part.start;
+  for (const covered of selected.filter(item => item.file === part.file).sort((a, b) => a.start - b.start)) {
+    if (covered.end < start) continue;
+    if (covered.start > part.end) break;
+    if (covered.start > start) ranges.push([start, covered.start - 1]);
+    start = Math.max(start, covered.end + 1);
+  }
+  if (start <= part.end) ranges.push([start, part.end]);
+  const lines = part.text.split("\n");
+  return ranges.map(([start, end]) => ({ ...part, start, end, text: lines.slice(start - part.start, end - part.start + 1).join("\n") }));
+}
+
 export async function getContext(options: ContextOptions): Promise<string> {
   const query = options.query?.trim() ?? "";
   const literals = [...new Set([...queryLiterals(query), query.replace(/^(["'`])([\s\S]*)\1$/, "$2").normalize("NFC").toLowerCase()])];
@@ -244,9 +259,9 @@ export async function getContext(options: ContextOptions): Promise<string> {
     omitted.push(`${file}: partial; unreturned lines omitted`);
   }
   for (const definition of [...priorityParts, ...literalParts, ...definitions]) {
-    const size = bytes(render(definition)) + 2;
-    if (size <= available && !candidates.some(part => part.file === definition.file && part.start <= definition.end && part.end >= definition.start)) {
-      candidates.push(definition); available -= size;
+    for (const part of uncoveredRanges(definition, candidates)) {
+      const size = bytes(render(part)) + 2;
+      if (size <= available) { candidates.push(part); available -= size; }
     }
   }
   // IDF across windows downweights ubiquitous identifiers; marginal coverage
@@ -258,10 +273,13 @@ export async function getContext(options: ContextOptions): Promise<string> {
   for (const part of candidates) selectedBytes.set(part.file, (selectedBytes.get(part.file) ?? 0) + bytes(render(part)));
   while (remaining.length && available > 0) {
     let best = -1, bestScore = 0;
+    let bestParts: Excerpt[] = [], bestSize = 0;
     for (let i = 0; i < remaining.length; i++) {
-      const { part, words, size } = remaining[i];
-      if (size > available) continue;
-      if (candidates.some(item => item.file === part.file && item.start <= part.end && item.end >= part.start)) continue;
+      const { part } = remaining[i];
+      const parts = uncoveredRanges(part, candidates);
+      const size = parts.reduce((sum, item) => sum + bytes(render(item)) + 2, 0);
+      if (!parts.length || size > available) continue;
+      const words = new Set(parts.flatMap(item => searchTerms(item.text)));
       const gain = [...terms].reduce((n, term) => n + (words.has(term) ? weights.get(term)! * (covered.has(term) ? .25 : 1) : 0), 0);
       // Keep the retriever's ordering as a prior; otherwise a rare incidental
       // word in a lower-ranked UI/test file can displace implementation evidence.
@@ -269,13 +287,13 @@ export async function getContext(options: ContextOptions): Promise<string> {
       // This is a soft diversity prior; strong evidence can still reuse a file.
       const repetition = 1 + (selectedBytes.get(part.file) ?? 0) / Math.max(512, limit / 4);
       const score = gain * (filePriors.get(part.file) ?? .5) / (Math.sqrt(size) * repetition);
-      if (score > bestScore) { best = i; bestScore = score; }
+      if (score > bestScore) { best = i; bestScore = score; bestParts = parts; bestSize = size; }
     }
     if (best < 0) break;
     const next = remaining.splice(best, 1)[0];
-    candidates.push(next.part); available -= next.size;
-    selectedBytes.set(next.part.file, (selectedBytes.get(next.part.file) ?? 0) + next.size);
-    for (const term of next.words) covered.add(term);
+    candidates.push(...bestParts); available -= bestSize;
+    selectedBytes.set(next.part.file, (selectedBytes.get(next.part.file) ?? 0) + bestSize);
+    for (const part of bestParts) for (const term of searchTerms(part.text)) covered.add(term);
   }
   for (const part of smallDependencies) {
     const cost = bytes(render(part)) + 2;

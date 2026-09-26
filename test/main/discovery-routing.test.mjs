@@ -85,7 +85,7 @@ it('includes SQL mutation source in compound-key discovery and refreshes it afte
     'migrations/repair.sql': '-- Schema\n'.repeat(60) + 'create table document_text_repairs (id uuid);\ninsert into document_text_repairs(id) values (gen_random_uuid());\n',
     'tests/repair.test.ts': 'export const input = "document.text.repair document_text_repairs";\n',
   }, async root => {
-    const query = 'document.text.repair document_text_repairs';
+    const query = '"document.text.repair" document_text_repairs';
     const text = await getContext({rootDir:root,query,maxTokens:1200});
     assert.match(text, /src\/application.ts:/);
     assert.match(text, /migrations\/repair.sql:/);
@@ -96,6 +96,20 @@ it('includes SQL mutation source in compound-key discovery and refreshes it afte
     await writeFile(join(root, 'migrations/repair.sql'), 'select * from archived_document_repairs;\n');
     await getContext({rootDir:root,query:'document_text_repairs',maxTokens:512});
     assert.ok(!db.searchFileText('document_text_repairs',10,true).some(item => item.path === 'migrations/repair.sql'));
+  });
+});
+
+it('preserves matching tails beyond an overlapping document introduction', async () => {
+  const source = ['# Project readiness', ...Array.from({length:24}, (_, i) => `Introduction ${i}`),
+    'The "launch.approved" check requires signoff.', ...Array.from({length:50}, (_, i) => `Detail ${i}`)].join('\n');
+  await fixture({'docs/READINESS.md': source}, async root => {
+    const text = await getContext({rootDir:root, query:'Project readiness "launch.approved"', maxTokens:1200});
+    assert.match(text, /The "launch.approved" check requires signoff/);
+    assert.equal(text.split('The "launch.approved"').length, 2, 'overlap must not duplicate source');
+    assert.ok(Buffer.byteLength(text) <= 4800);
+    for (const match of text.matchAll(/docs\/READINESS.md:(\d+)-(\d+)\n([^]*?)(?=\n\n|$)/g)) {
+      assert.equal(match[3], source.split('\n').slice(+match[1]-1, +match[2]).join('\n'));
+    }
   });
 });
 
