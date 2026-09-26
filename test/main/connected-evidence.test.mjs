@@ -159,6 +159,10 @@ it('feature briefs invalidate on source, dependency membership and model changes
       ['out-of-source-range', brief => { brief.citations[0].end = 999999; }],
       ['wrong-source-hash', brief => { brief.citations[0].hash = '0'.repeat(64); }],
       ['invalid-warning-shape', brief => { brief.warnings = null; }],
+      ['altered-fact-text', brief => { brief.facts[0] = `[${brief.citations[0].id}] Arbitrary claim presented as extracted evidence`; }],
+      ['missing-facts', brief => { brief.facts = []; }],
+      ['invalid-fact-role', brief => { brief.citations[0].roles = ['Arbitrary extracted claim']; }],
+      ['old-generator', brief => { brief.version = 1; }],
     ]) {
       const malformed = structuredClone(cached.brief); malformed.query = name; change(malformed);
       await persistArtifact({ rootDir: root, kind: 'feature_brief', key: name, payload: malformed });

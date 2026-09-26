@@ -7,8 +7,12 @@ import { listArtifacts, readArtifact, type ArtifactReference } from "./artifacts
 import { resolveProjectPath } from "./path-guard.js";
 import { chatModelIdentity } from "./chat-model.js";
 
-export const FEATURE_BRIEF_VERSION = 1;
-export interface BriefCitation { id: string; file: string; start: number; end: number; hash: string }
+export const FEATURE_BRIEF_VERSION = 2;
+const BRIEF_ROLES = ["implementation", "dependency", "caller", "test"] as const;
+export interface BriefCitation {
+  id: string; file: string; start: number; end: number; hash: string;
+  roles: Array<typeof BRIEF_ROLES[number]>;
+}
 export interface FeatureBrief {
   version: number; query: string; model: string; signature: string;
   files: string[]; citations: BriefCitation[];
@@ -16,6 +20,11 @@ export interface FeatureBrief {
   warnings: string[];
 }
 export const briefQuery = (query: string) => query.trim().replace(/\s+/g, " ");
+
+/** Facts contain only validated citation coordinates and enumerated retrieval roles. */
+export function briefFacts(citations: BriefCitation[]): string[] {
+  return citations.map(citation => `[${citation.id}] ${citation.file}:${citation.start}-${citation.end} — ${citation.roles.join(", ")}`);
+}
 
 function validCitations(brief: FeatureBrief): boolean {
   if (!Array.isArray(brief.files) || !brief.files.every(file => typeof file === "string")
@@ -25,10 +34,13 @@ function validCitations(brief: FeatureBrief): boolean {
   for (const citation of brief.citations) {
     if (!citation || !/^E\d+$/.test(citation.id) || ids.has(citation.id) || !brief.files.includes(citation.file)
       || !Number.isInteger(citation.start) || citation.start < 1 || !Number.isInteger(citation.end) || citation.end < citation.start
-      || !/^[a-f0-9]{64}$/.test(citation.hash)) return false;
+      || !/^[a-f0-9]{64}$/.test(citation.hash)
+      || !Array.isArray(citation.roles) || !citation.roles.length || citation.roles.length > BRIEF_ROLES.length
+      || new Set(citation.roles).size !== citation.roles.length || !citation.roles.every(role => BRIEF_ROLES.includes(role))) return false;
     ids.add(citation.id);
   }
-  return brief.facts.every(fact => typeof fact === "string" && ids.has(fact.match(/^\[(E\d+)\]/)?.[1] ?? ""))
+  const expectedFacts = briefFacts(brief.citations);
+  return brief.facts.length === expectedFacts.length && brief.facts.every((fact, i) => fact === expectedFacts[i])
     && brief.interpretations.every(claim => claim && typeof claim.text === "string" && Array.isArray(claim.citations)
       && claim.citations.length > 0 && claim.citations.every(id => ids.has(id)));
 }
