@@ -68,6 +68,8 @@ Tool schemas are the argument reference. See the [agent guide](agent-guide.md) f
 
 Set `CONTEXTPRO_TOOL_PROFILE` in the server environment. Discovery enables tools for the session without executing them.
 
+Experimental connected retrieval (`CONTEXTPRO_CONNECTED_CONTEXT=true`) combines ranked source, one-hop imports/callers and relevant tests in `context` and `task_pack`. It remains opt-in while task-level performance is evaluated. Discover `feature_brief` for a cached, source-cited feature map; model-written interpretations require a separate opt-in. Query-based `context` packets accept `previous_context_id` while the agent still holds that packet; omit it after context loss. Exact target reads remain stateless. See [configuration and freshness rules](docs/configuration.md).
+
 ## Evidence you can inspect
 
 ContextPro distinguishes source evidence, compiler-resolved references, textual candidates and heuristic fallbacks. Parser and TypeScript workers run in bounded child processes so a worker failure can be reported and recovered from without inherently terminating the MCP server.

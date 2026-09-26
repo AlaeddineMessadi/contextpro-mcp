@@ -4,6 +4,7 @@ Results have different baselines and must not be combined into one savings claim
 
 | Record | What it measures | Main limitation |
 | --- | --- | --- |
+| [Connected evidence and coding pilot](2026-09-26-connected-evidence.md) | Frozen retrieval controls and eight paired coding tasks | Experimental retrieval; single-run pairs, local dependency copies |
 | [Refresh and compound-identifier replay](2026-09-26-refresh-and-discovery.md) | SQLite refresh diagnosis, frozen gallery query and new-file refresh | Sequential local timings; no semantic quality or billing comparison |
 | [Workflow follow-up audit](2026-09-08-workflow-rebenchmark.md) | Reported second implementation trial and inspected raw tool incidents | Single run; timings/correctness reported by the workflow; no new billing measurement |
 | [Worktree implementation audit](2026-09-08-worktree-routing-audit.md) | Actual transcript routing, timings and per-category usage | Unequal inherited contexts/caches; both implementations need fixes; not a controlled savings trial |

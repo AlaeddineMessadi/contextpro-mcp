@@ -4,6 +4,8 @@ All notable changes to this project are recorded here. The project follows [Sema
 
 ## [Unreleased]
 
+- Added opt-in connected source retrieval shared by `context` and `task_pack`, snippet-aware optional reranking, source-cited `feature_brief` artifacts and worktree-bound source deltas. Exact target reads remain stateless; the lean catalog remains three tools. Added provider usage observations and frozen retrieval/coding-pilot harnesses; these changes do not establish token or time savings.
+
 - Structural refresh avoids per-file full scans when replacing FTS documents and clearing symbol parent links. Existing databases receive the missing parent-link index when opened; transaction rollback behavior is preserved.
 - Lexical discovery preserves compound identifiers within natural-language queries, and exact-symbol boosts respect test/translation intent so same-name helpers do not displace implementation evidence. See the [refresh and discovery replay](docs/benchmarks/2026-09-26-refresh-and-discovery.md) for measured scope and remaining limitations.
 - Reference evidence now labels individual calls/imports, deduplicates repeated snippets and includes bounded per-file call totals before result truncation. `exact_references` is immediately available in lean/workflow profiles.

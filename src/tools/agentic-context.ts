@@ -24,6 +24,8 @@ import {
   detectCodeChangeIntent, extractIdentifierHints, isDocumentationPath, isHubPath, isSourcePath, isTestPath, splitQueryTerms, clamp01,
 } from "./planning-helpers.js";
 import { findDirectoryPriorMatches } from "./directory-prior.js";
+import { connectedRetrievalEnabled, retrieveEvidence } from "./evidence-retrieval.js";
+import { collectSourceEvidence, type Excerpt } from "./context.js";
 
 type OutputFormat = "text" | "json";
 
@@ -63,6 +65,7 @@ interface TaskPackPayload {
   recentDiffs: Array<{ path: string; commit: string; summary: string } | null>;
   memory: Array<{ id: string; kind: string; summary: string }>;
   risks: string[];
+  source?: Excerpt[];
   [key: string]: unknown;
 }
 
@@ -80,6 +83,7 @@ interface TaskPackBudgetReport {
     symbols: number;
     risks: number;
     metadataFields: number;
+    sourceRanges?: number;
   };
 }
 
@@ -88,6 +92,8 @@ interface TaskPackBudgetReport {
 function taskPackArtifactKey(task: string, maxFiles: number, opts: TaskPackOptions): string {
   return createHash("sha256").update(JSON.stringify({
     task,
+    connected: connectedRetrievalEnabled(),
+    rerank: process.env.CONTEXTPRO_CHAT_RERANK === "true",
     preset: opts.preset ?? "balanced",
     graphHops: opts.graphHops ?? 0,
     graphMaxFiles: opts.graphHops ? Math.max(1, Math.min(opts.graphMaxFiles ?? 4, 10)) : 0,
@@ -112,6 +118,7 @@ function budgetTaskPackPayload(payload: TaskPackPayload, maxTokens: number | und
     memory: payload.memory.length,
     symbols: payload.files.reduce((sum, file) => sum + file.symbols.length, 0),
     risks: payload.risks.length,
+    sourceRanges: payload.source?.length ?? 0,
   };
   const result: TaskPackPayload = {
     ...structuredClone(payload),
@@ -142,6 +149,7 @@ function budgetTaskPackPayload(payload: TaskPackPayload, maxTokens: number | und
       // Preserve the two strongest files: task packs commonly need both the entry point
       // and the implementation file, and dropping the latter makes a tiny pack useless.
       else if (result.files.length > 2) result.files.pop();
+      else if ((result.source?.length ?? 0) > 1) result.source!.pop();
       else if (result.risks.length > 1) result.risks.pop();
       else {
         const trust = result.trust as Record<string, unknown> | undefined;
@@ -170,6 +178,8 @@ function budgetTaskPackPayload(payload: TaskPackPayload, maxTokens: number | und
           droppedMetadataFields += 1;
         } else if (result.risks.length) {
           result.risks.pop();
+        } else if (result.source?.length) {
+          result.source.pop();
         } else if (result.files.length) {
           result.files.pop();
         } else if (result.delta) {
@@ -198,6 +208,7 @@ function budgetTaskPackPayload(payload: TaskPackPayload, maxTokens: number | und
         || original.memory !== result.memory.length
         || original.symbols !== retainedSymbols
         || original.risks !== result.risks.length
+        || original.sourceRanges !== (result.source?.length ?? 0)
         || droppedMetadataFields > 0,
       dropped: {
         files: original.files - result.files.length,
@@ -208,6 +219,7 @@ function budgetTaskPackPayload(payload: TaskPackPayload, maxTokens: number | und
         symbols: original.symbols - retainedSymbols,
         risks: original.risks - result.risks.length,
         metadataFields: droppedMetadataFields,
+        ...(payload.source ? { sourceRanges: original.sourceRanges - (result.source?.length ?? 0) } : {}),
       },
     };
   };
@@ -549,7 +561,9 @@ async function buildTaskPackUncached(options: TaskPackOptions): Promise<string> 
     // Cache lookup failed (e.g. corrupt manifest, DB not ready) — fall through to recompute.
   }
 
-  const search = await unifiedSearchData({
+  const connected = connectedRetrievalEnabled() ? await retrieveEvidence({ rootDir: options.rootDir, query: options.task,
+    graphHops: options.graphHops, graphMaxFiles: options.graphMaxFiles, includeTests: options.includeTests, preset: options.preset }) : undefined;
+  const search = connected?.search ?? await unifiedSearchData({
     rootDir: options.rootDir,
     query: options.task,
     mode: "hybrid",
@@ -561,14 +575,14 @@ async function buildTaskPackUncached(options: TaskPackOptions): Promise<string> 
   const fileResults = search.files?.results ?? [];
   const identifierResults = search.identifiers?.results ?? [];
   const exactIdentifierPaths = buildExactIdentifierPathSet(search, options.task);
-  const baseTaskCandidates = fileResults.slice(0, Math.max(maxFiles, 8)).map((item) => ({
+  const baseTaskCandidates = connected?.candidates ?? fileResults.slice(0, Math.max(maxFiles, 8)).map((item) => ({
     path: item.path,
     reason: `Top semantic and structural match (${Math.round(item.semanticScore)} semantic / ${Math.round(item.keywordScore)} keyword)`,
     score: item.score / 100,
     symbols: item.matchedSymbols,
   }));
   const { candidates: taskCandidatesWithPrior } = await applyDirectoryPrior(options.rootDir, options.task, baseTaskCandidates);
-  const rankedTaskFiles = await maybeChatRerankPlanningFiles(
+  const rankedTaskFiles = connected?.candidates ?? await maybeChatRerankPlanningFiles(
     options.rootDir,
     options.task,
     rerankPlanningFiles(taskCandidatesWithPrior, options.task, exactIdentifierPaths),
@@ -580,8 +594,11 @@ async function buildTaskPackUncached(options: TaskPackOptions): Promise<string> 
     symbols: item.symbols,
   }));
   const filePaths = topFiles.map((item) => item.path);
-  const relatedFiles = await expandTaskImportGraph(options.rootDir, filePaths, options.graphHops ?? 0, Math.max(1, Math.min(options.graphMaxFiles ?? 4, 10)));
-  const tests = options.includeTests === false ? [] : await findTestsForFiles(options.rootDir, filePaths);
+  const relatedFiles = connected ? connected.candidates.filter(item => !filePaths.includes(item.path) && item.roles.some(role => role === "caller" || role === "dependency")).slice(0, options.graphMaxFiles ?? 4)
+    : await expandTaskImportGraph(options.rootDir, filePaths, options.graphHops ?? 0, Math.max(1, Math.min(options.graphMaxFiles ?? 4, 10)));
+  const tests = options.includeTests === false ? [] : connected?.tests ?? await findTestsForFiles(options.rootDir, filePaths);
+  const source = connected ? await collectSourceEvidence({ rootDir: options.rootDir, query: options.task, retrieved: connected, connected: true,
+    retrievalPreset: options.preset, maxTokens: Math.max(512, Math.floor((options.maxTokens ?? 3000) * .65)) }) : undefined;
   const recentDiffs = options.includeRecentDiffs === false
     ? []
     : (await Promise.all(filePaths.slice(0, 5).map((path) => getRecentDiffSummary(options.rootDir, path)))).filter(Boolean);
@@ -625,11 +642,12 @@ async function buildTaskPackUncached(options: TaskPackOptions): Promise<string> 
     }),
     summary: inferProjectSummary(options.task, filePaths),
     files: topFiles,
-    ...(options.graphHops ? { relatedFiles } : {}),
+    ...(connected || options.graphHops ? { relatedFiles } : {}),
+    ...(source ? { source: source.ranges } : {}),
     tests,
     recentDiffs,
     memory,
-    risks,
+    risks: [...risks, ...(source?.notices ?? [])],
   };
   // Structural refresh can update memory too; cache under the revision captured for retrieval.
   artifactKey = createHash("sha256").update(`${taskKey}:${memoryRevision}:${gitHead}`).digest("hex");
@@ -672,6 +690,7 @@ async function finishTaskPack(options: TaskPackOptions, payload: TaskPackPayload
   for (const file of payload.files) entries[`file:${file.path}`] = { ...file, sourceHash: db.getFile(file.path)?.content_hash ?? null };
   for (const file of payload.relatedFiles ?? []) entries[`graph:${file.path}`] = { ...file, sourceHash: db.getFile(file.path)?.content_hash ?? null };
   for (const test of payload.tests) entries[`test:${test.path}`] = { ...test, sourceHash: db.getFile(test.path)?.content_hash ?? null };
+  for (const part of payload.source ?? []) entries[`source:${part.file}:${part.start}-${part.end}`] = part;
   for (const memory of payload.memory) entries[`memory:${memory.id}`] = memory;
   for (const diff of payload.recentDiffs) if (diff) entries[`diff:${diff.path}`] = diff;
   payload.risks.forEach((risk, index) => { entries[`risk:${index}`] = risk; });
@@ -697,7 +716,7 @@ async function finishTaskPack(options: TaskPackOptions, payload: TaskPackPayload
     context.mode = "delta";
     context.previousId = options.previousContextId;
     context.unchanged = added.length === 0 && changed.length === 0 && removed.length === 0;
-    delivery = { ...delivery, files: [], relatedFiles: [], tests: [], memory: [], recentDiffs: [], risks: [], delta: { added, changed, removed } };
+    delivery = { ...delivery, files: [], relatedFiles: [], tests: [], memory: [], recentDiffs: [], risks: [], ...(payload.source ? { source: [] } : {}), delta: { added, changed, removed } };
   } else if (options.previousContextId) {
     context.fallbackReason = previous ? "unrelated_or_incomplete_baseline" : "baseline_not_found";
   }
@@ -736,6 +755,8 @@ function renderTaskPack(format: OutputFormat | undefined, payload: TaskPackPaylo
   }
   if (payload.relatedFiles?.length) lines.push("Related files (indexed import graph):");
   for (const file of payload.relatedFiles ?? []) lines.push(`  ${file.path} - ${file.reason}`);
+  if (payload.source?.length) lines.push("Source evidence (only indicated ranges):");
+  for (const part of payload.source ?? []) lines.push(`${part.file}:${part.start}-${part.end}\n${part.text}`);
   if (payload.tests.length) lines.push("Tests:");
   for (const test of payload.tests) lines.push(`  ${test.path} - ${test.reason}`);
   if (payload.recentDiffs.length) lines.push("Recent Diffs:");

@@ -16,7 +16,8 @@ Defaults below describe this checkout's MCP launch path. Set environment variabl
 | `CONTEXTPRO_EMBED_MODEL` | `nomic-embed-text:latest` locally; `text-embedding-3-small` for compatible backend | Embedding identity; reindex after changing it |
 | `CONTEXTPRO_CHAT_PROVIDER` | embedding provider | Separate chat backend selection; key/base URL remain shared |
 | `CONTEXTPRO_CHAT_MODEL` | provider fallback when chat is invoked | Optional explicit selection; fallback names are `gemma4:12b` and `gpt-4o-mini`, not a promise of endpoint availability |
-| `CONTEXTPRO_CHAT_RERANK` | off | Opt in to planning reranking; bounded to 1.5 seconds |
+| `CONTEXTPRO_CHAT_RERANK` | off | Opt in to reranking the top eight planning/connected candidates with current bounded source snippets; model call deadline 1.5 seconds, deterministic fallback |
+| `CONTEXTPRO_FEATURE_SUMMARIES` | off | Allow explicit `feature_brief` preparation to generate citation-checked model interpretations; 30-second deadline. Ordinary context discovery only reuses valid cached briefs |
 | `CONTEXTPRO_AUTO_HUBS` | off | Opt in to chat-assisted hub generation during reindex |
 | `OLLAMA_HOST` | `http://127.0.0.1:11434` | Local Ollama endpoint |
 
@@ -30,6 +31,7 @@ For provider-free discovery use `search(preset:"keyword_only")` or direct `conte
 
 | Variable | Launch default | Purpose |
 | --- | --- | --- |
+| `CONTEXTPRO_CONNECTED_CONTEXT` | off | Experimental shared `context`/`task_pack` retrieval: reciprocal-rank fusion, one-hop connected evidence, at most 32 candidate files. Explicit task-pack graph settings override its defaults |
 | `CONTEXTPRO_EMBED_TRACKER` | `lazy` | Start tracking when needed; `eager` starts at boot; `off` disables the background tracker |
 | `CONTEXTPRO_EMBED_TRACKER_DEBOUNCE_MS` | `700` | Debounce changes; tracker helper enforces a 500 ms minimum |
 | `CONTEXTPRO_EMBED_TRACKER_MAX_FILES` | `8` | Per-tick changes, clamped to 5–10 |
@@ -48,6 +50,22 @@ For provider-free discovery use `search(preset:"keyword_only")` or direct `conte
 Normal refresh compares size, full mtime and ctime, then hashes suspicious files. Hashing and parsing share a verified read. Freshness warnings describe remaining drift or failure, not merely the number of files already repaired. Watcher failure keeps periodic reconciliation alive when the tracker is enabled.
 
 Interactive retrieval reuses existing vectors rather than generating a corpus on demand. A failed query embedding can fall back to keyword ranking; explicit semantic-only requests still need semantic evidence.
+
+Query-based `context` responses include a `source_context` ID. Pass it as
+`previous_context_id` only while holding the complete prior packet. Compatible
+requests return added, changed and removed source ranges. Different roots,
+queries, settings or budgets, missing artifacts and incomplete deliveries recover
+with a full response. Omit the ID after compaction. Exact `targets` remain
+stateless, index-independent reads and reject `previous_context_id`.
+
+The discoverable `feature_brief` expert accepts `query`, optional `refresh`, and
+`max_tokens` (512–12000, default 2000; UTF-8 bytes/4). Its deterministic facts cite
+source ranges. Optional model interpretations are labeled separately; citation
+validation does not verify the claims themselves. Cached briefs validate source
+hashes, dependency membership and generator/model identity before reuse. Neither
+briefs nor deltas imply exhaustive repository coverage. Use `artifact_read` for
+full stored packets. Both experts support compatibility dispatch through
+`discover_tools`; the lean catalog remains three tools.
 
 Local full-text search stores full source for indexed files, so text beyond the
 embedding summary is searchable. This increases the regenerable database size;
@@ -87,6 +105,12 @@ allow omissions, especially for broad questions spanning many modules.
 See [installation](../INSTALL.md) for launch examples and [maintenance](maintenance.md) for test/runtime and disk-cleanup guidance.
 
 ## Optional benchmark tracing
+
+`CONTEXTPRO_PROVIDER_TRACE_PATH` optionally records local JSONL events containing
+provider/model identity, call duration, status and provider-reported input/output
+counts. It records no prompts, source or credentials. Missing counts stay null;
+local embeddings commonly report input counts without output counts. These
+events are separate from the coding agent's usage and are not billing estimates.
 
 Set `CONTEXTPRO_TOOL_TRACE_PATH` to an absolute local JSONL path before starting the server. Tracing is off by default and adds no MCP response text. Each event records tool arguments, status, a session/request ID, total server duration, preparation (root verification/freshness/waits), handler execution and postprocessing. Spans can overlap; their sum is not elapsed agent time.
 

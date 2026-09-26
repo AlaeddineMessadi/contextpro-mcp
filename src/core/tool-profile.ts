@@ -29,6 +29,7 @@ const CORE_TOOLS = new Set([
   "explain",
   "related",
   "task_pack",
+  "feature_brief",
   "decision_brief",
   "change_impact",
   "edit_scope",
