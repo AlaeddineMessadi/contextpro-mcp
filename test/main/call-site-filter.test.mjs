@@ -5,6 +5,13 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 
 describe("extractCallSites filters", () => {
+  it("does not treat SQL comments, quoted bodies or database functions as application callers", async () => {
+    const { extractCallSites } = await import("../../build/core/parser.js");
+    const source = '-- handle()\nselect handle();\nDO $$ BEGIN PERFORM handle(); END $$;\n';
+    assert.deepEqual(extractCallSites(source, 'migration.sql'), []);
+    assert.deepEqual(extractCallSites(source, 'migration.SQL'), []);
+    assert.deepEqual(extractCallSites('handle();', 'app.ts').map(site => site.callee), ['handle']);
+  });
   it("skips method calls on objects (Math.max, console.log)", async () => {
     const { extractCallSites } = await import("../../build/core/parser.js");
     const sites = extractCallSites([
