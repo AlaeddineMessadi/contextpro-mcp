@@ -80,7 +80,9 @@ export async function getContext(options: ContextOptions): Promise<string> {
     for (const hint of hints.slice(0, 16)) {
       for (const symbol of db.searchSymbolsByName(hint).filter(symbol => symbol.name === hint)) {
         const file = files.get(symbol.file_id);
-        if (file) { definingFiles.add(file); namedSymbols.add(symbol.name); }
+        if (file && discoveryPathWeight(query, file) >= 1) {
+          definingFiles.add(file); namedSymbols.add(symbol.name);
+        }
       }
     }
     const definitions = [...definingFiles].sort((a, b) => Number(query.includes(b)) - Number(query.includes(a)) || a.localeCompare(b));
@@ -197,7 +199,7 @@ export async function getContext(options: ContextOptions): Promise<string> {
         literalParts.push({ file, start: from + 1, end: to, text: lines.slice(from, to).join("\n") });
       }
     }
-    if (namedSymbols.size) {
+    if (namedSymbols.size && discoveryPathWeight(query, file) >= 1) {
       for (const symbol of flattenSymbols((await analyze()).symbols)) {
         if (!namedSymbols.has(symbol.name)) continue;
         const definition = { file, start: symbol.line, end: symbol.endLine, text: lines.slice(symbol.line - 1, symbol.endLine).join("\n") };

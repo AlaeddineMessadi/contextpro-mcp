@@ -284,7 +284,9 @@ function rankSearchResults(query: string, results: SearchResult[], topK: number 
 async function fuseFtsMatches(rootDir: string, query: string, results: SearchResult[], topK: number | undefined, options: SemanticSearchOptions): Promise<SearchResult[]> {
   if (options.requireSemanticMatch) return results;
   const db = await getDB(rootDir);
-  const ftsQuery = /^[A-Za-z_$][\w$]*$/.test(query.trim()) ? query : queryTerms(query).join(" ");
+  // FTS tokenization preserves compound identifiers. Splitting listOwnMedia
+  // into prose (list own media) rewards unrelated text over its actual callers.
+  const ftsQuery = query;
   const candidateLimit = Math.max((topK ?? 5) * 4, 20);
   const literalMatches = queryLiterals(query).flatMap(literal => db.searchFileText(literal, candidateLimit, true));
   const literalPaths = new Set(literalMatches.map(match => match.path));

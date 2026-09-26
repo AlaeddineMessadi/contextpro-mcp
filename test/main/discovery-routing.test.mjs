@@ -57,6 +57,27 @@ it('preserves quoted command evidence within prose instead of generic schema boi
   });
 });
 
+it('keeps camelCase usage evidence ahead of prose lookalikes and same-name test helpers', async () => {
+  const query = 'native gallery personal photos listOwnMedia revealed own roll photo privacy';
+  await fixture({
+    'apps/native/gallery.tsx': 'export function Gallery() {\n  const photos = api.listOwnMedia();\n  return { photos, privacy: "personal", revealed: true, roll: "own" };\n}\n',
+    'packages/api/client.ts': 'export function listOwnMedia() { return request("media"); }\n',
+    'apps/native/tests/queue.test.ts': 'export function listOwnMedia() { return []; }\n// native gallery personal photos revealed own roll photo privacy\n',
+    'design/prototype.html': '<p>native gallery personal photos list own media revealed own roll photo privacy</p>\n',
+  }, async root => {
+    const results = await unifiedSearchData({ rootDir: root, query, mode: 'file', preset: 'keyword_only', topK: 4 });
+    assert.equal(results.files.results[0].path, 'apps/native/gallery.tsx', JSON.stringify(results.files));
+    const text = await getContext({ rootDir: root, query, maxTokens: 512 });
+    assert.match(text, /apps\/native\/gallery.tsx:/);
+    assert.match(text, /api.listOwnMedia\(\)/);
+    const testSource = text.search(/apps\/native\/tests\/queue.test.ts:\d/);
+    assert.ok(testSource < 0 || text.indexOf('apps/native/gallery.tsx:') < testSource, text);
+    assert.ok(Buffer.byteLength(text) <= 2048);
+    const tests = await unifiedSearchData({ rootDir: root, query: 'tests listOwnMedia', mode: 'file', preset: 'keyword_only', topK: 1 });
+    assert.equal(tests.files.results[0].path, 'apps/native/tests/queue.test.ts');
+  });
+});
+
 it('includes SQL mutation source in compound-key discovery and refreshes it after edits', async () => {
   await fixture({
     'src/application.ts': 'export const action = "document.text.repair";\n',

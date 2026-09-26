@@ -8,6 +8,7 @@ import { loadProjectConfig } from "../core/project-config.js";
 import { persistArtifact, canonicalArtifactKey } from "../core/artifacts.js";
 import { buildFreshnessMetadata, buildTrustMetadata, getIndexState, type FreshnessMetadata, type TrustMetadata } from "../core/context-metadata.js";
 import { getDB } from "../core/db.js";
+import { discoveryPathWeight } from "./discovery-hints.js";
 import { withQueryEmbeddingCache, matchesSearchConstraints, type SearchResult } from "../core/embeddings.js";
 
 export { invalidateSearchCache, invalidateIdentifierSearchCache };
@@ -222,7 +223,8 @@ async function applyExactSymbolFileBoosts(
     // Keep exact-name evidence, but never let a zero-semantic result jump above a result with
     // strong semantic agreement. The keyword component remains honest at 100.
     const rawCombined = result.score + exactPathBoost + exactSymbolBoost;
-    const cap = result.semanticScore < 15 ? keywordOnlyCap : 100;
+    const weight = discoveryPathWeight(query, result.path);
+    const cap = (result.semanticScore < 15 ? keywordOnlyCap : 100) * weight;
     return {
       ...result,
       score: Math.max(result.score, Math.min(cap, Math.round(rawCombined * 100) / 100)),
@@ -238,7 +240,7 @@ async function applyExactSymbolFileBoosts(
     boosted.push({
       path,
       // A hit found only through the symbol table stays below every strong semantic result.
-      score: keywordOnlyCap,
+      score: keywordOnlyCap * discoveryPathWeight(query, path),
       semanticScore: 0,
       keywordScore: 100,
       header: dbFile?.header ?? "",

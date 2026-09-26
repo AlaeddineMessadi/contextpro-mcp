@@ -195,6 +195,7 @@ CREATE TABLE IF NOT EXISTS symbols (
 );
 CREATE INDEX IF NOT EXISTS idx_symbols_file ON symbols(file_id);
 CREATE INDEX IF NOT EXISTS idx_symbols_name ON symbols(name);
+CREATE INDEX IF NOT EXISTS idx_symbols_parent ON symbols(parent_symbol_id);
 
 CREATE TABLE IF NOT EXISTS memory_nodes (
   id TEXT PRIMARY KEY,
@@ -949,13 +950,24 @@ export class ContextPlusDB {
       .map((symbol) => `${symbol.name} ${symbol.kind ?? ""} ${symbol.signature ?? ""}`)
       .join(" ");
     const body = `${input.path} ${input.header ?? ""} ${input.language ?? ""} ${symbolText} ${input.content ?? ""}`;
-    this.db.prepare("DELETE FROM file_search_fts WHERE path = ?").run(input.path);
+    this.deleteFileSearchDocument(input.path);
     this.db.prepare("INSERT INTO file_search_fts (path, header, symbols, language, body) VALUES (?, ?, ?, ?, ?)")
       .run(input.path, input.header ?? "", symbolText, input.language ?? "", body);
   }
 
   deleteFileSearchDocument(path: string): void {
-    this.db.prepare("DELETE FROM file_search_fts WHERE path = ?").run(path);
+    // path is UNINDEXED in FTS5, so filtering it alone scans every stored body
+    // once per source file. Every document's body already contains its path;
+    // use that inverted index to find candidates, then check the exact path to
+    // distinguish punctuation/stemming collisions. No new persisted mapping.
+    if (/[\p{L}\p{N}]/u.test(path) && !path.includes("\0")) {
+      this.db.prepare(`DELETE FROM file_search_fts WHERE rowid IN (
+        SELECT rowid FROM file_search_fts WHERE file_search_fts MATCH ? AND path = ?
+      )`).run(`body : "${path.replace(/"/g, '""')}"`, path);
+    } else {
+      // Unusual standalone documents may have no searchable path tokens.
+      this.db.prepare("DELETE FROM file_search_fts WHERE path = ?").run(path);
+    }
   }
 
   searchFileText(query: string, topK: number = 10, phraseOnly = false): FileTextSearchMatch[] {

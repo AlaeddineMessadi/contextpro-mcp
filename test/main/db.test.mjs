@@ -110,9 +110,48 @@ describe("ContextPlusDB", () => {
         db.deleteFileSearchDocument('repair.sql'); db.deleteFileSearchDocument('literal.ts'); db.close();
       }
     });
+
+    it('updates exact FTS paths without deleting token collisions and rolls back failed writes', () => {
+      const db = new ContextPlusDB(FIXTURE_DIR);
+      const paths = ['src/a-b.ts', 'src/a_b.ts', 'src/quote"name.ts', '界.ts', '!!!', ''];
+      try {
+        for (const path of paths) db.upsertFileSearchDocument({ path, content: 'originaldocument' });
+        db.upsertFileSearchDocument({ path: paths[0], content: 'replacementdocument' });
+        assert.deepEqual(db.searchFileText('replacementdocument', 20).map(row => row.path), [paths[0]]);
+        assert.deepEqual(db.searchFileText('originaldocument', 20).map(row => row.path).sort(), paths.slice(1).sort());
+        assert.throws(() => db.transaction(() => {
+          db.upsertFileSearchDocument({ path: paths[1], content: 'failedreplacement' });
+          throw new Error('injected write failure');
+        }), /injected write failure/);
+        assert.deepEqual(db.searchFileText('failedreplacement'), []);
+        for (const path of paths) db.deleteFileSearchDocument(path);
+        assert.deepEqual(db.searchFileText('originaldocument replacementdocument'), []);
+      } finally { db.close(); }
+    });
   });
 
   describe("symbol operations", () => {
+    it("upgrades existing databases so parent-link cleanup does not scan all symbols", () => {
+      let db = new ContextPlusDB(FIXTURE_DIR);
+      const fileId = db.upsertFile('src/nested.ts', 'nested', null, 'typescript');
+      db.upsertSymbols(fileId, [
+        { name: 'Parent', kind: 'class', lineStart: 1 },
+        { name: 'child', kind: 'method', lineStart: 2, parentIndex: 0 },
+      ]);
+      db.db.exec('DROP INDEX IF EXISTS idx_symbols_parent');
+      db.close();
+      db = new ContextPlusDB(FIXTURE_DIR);
+      try {
+        const plan = db.db.prepare('EXPLAIN QUERY PLAN DELETE FROM symbols WHERE file_id = ?').all(fileId);
+        assert.ok(!plan.some(row => /SCAN symbols\b/.test(row.detail)), JSON.stringify(plan));
+        const parent = db.getSymbolsByFile(fileId).find(symbol => symbol.name === 'Parent');
+        db.db.prepare('DELETE FROM symbols WHERE id = ?').run(parent.id);
+        assert.equal(db.getSymbolsByFile(fileId)[0].parent_symbol_id, null);
+        db.upsertSymbols(fileId, [{ name: 'replacement', kind: 'function', lineStart: 1 }]);
+        assert.deepEqual(db.getSymbolsByFile(fileId).map(symbol => symbol.name), ['replacement']);
+      } finally { db.close(); }
+    });
+
     it("upserts and retrieves symbols for a file", () => {
       const db = new ContextPlusDB(FIXTURE_DIR);
       const fileId = db.upsertFile("src/utils.ts", "hash", null, "typescript");
