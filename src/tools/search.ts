@@ -122,6 +122,7 @@ function computeTopBreakdown(input: {
 function buildAmbiguities(input: {
   files?: SemanticCodeSearchData;
   identifiers?: SemanticIdentifierSearchData;
+  keywordOnlyRequested?: boolean;
 }): string[] {
   const filesAllKeywordOnly = input.files
     && input.files.results.length > 0
@@ -139,8 +140,9 @@ function buildAmbiguities(input: {
     ...(topKeywordOnly
       ? [`top hit is keyword-only (semantic≈0); it matches the query text but may not be semantically relevant — verify before trusting`]
       : []),
-    ...(filesAllKeywordOnly ? ["file search is keyword-only because semantic embeddings are unavailable or empty"] : []),
-    ...(identifiersAllKeywordOnly ? ["identifier search is keyword-only because semantic embeddings are unavailable or empty"] : []),
+    ...(input.keywordOnlyRequested ? ["keyword_only preset selected; semantic evidence was not requested"] : []),
+    ...(filesAllKeywordOnly && !input.keywordOnlyRequested ? ["file search is keyword-only because semantic embeddings are unavailable or empty"] : []),
+    ...(identifiersAllKeywordOnly && !input.keywordOnlyRequested ? ["identifier search is keyword-only because semantic embeddings are unavailable or empty"] : []),
     ...(input.files && input.files.results.length > 1 && Math.abs(input.files.results[0].score - input.files.results[1].score) < 5
       ? ["top file matches are close in score"]
       : []),
@@ -349,7 +351,7 @@ async function unifiedSearchDataUncached(options: UnifiedSearchOptions): Promise
   if (identifiers) identifiers.results = identifiers.results.filter((result) => matchesSearchConstraints(result, options)).slice(0, options.topK ?? 5);
 
   const evidence = buildEvidence({ mode, files, identifiers, freshness });
-  const ambiguities = buildAmbiguities({ files, identifiers });
+  const ambiguities = buildAmbiguities({ files, identifiers, keywordOnlyRequested: options.preset === "keyword_only" });
   const topResultBreakdown = computeTopBreakdown({ mode, files, identifiers });
   // Base confidence reflects the actual signal quality. A keyword-only top hit (semantic≈0)
   // can't read as high confidence — bound by min(semantic, keyword) of the top result.

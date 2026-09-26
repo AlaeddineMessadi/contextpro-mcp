@@ -93,7 +93,8 @@ export async function collectSourceEvidence(options: ContextOptions): Promise<So
       }
     }
     if (found.freshness.warning) notices.push(found.freshness.warning);
-    if (!exact && found.trust.ambiguities.some(warning => warning.includes("keyword-only"))) notices.push("Discovery used lexical fallback; semantic vectors unavailable or weak. Reindex if semantic retrieval is needed.");
+    if (!exact && options.retrievalPreset === "keyword_only") notices.push("Discovery used the requested keyword_only preset; semantic vectors were not consulted.");
+    else if (!exact && found.trust.ambiguities.some(warning => warning.includes("keyword-only"))) notices.push("Discovery used lexical fallback; semantic vectors unavailable or weak. Reindex if semantic retrieval is needed.");
     if (!["fresh", "refreshed"].includes(found.freshness.indexState)) notices.push(`Discovery index: ${found.freshness.indexState}; verify scope with native search if incomplete.`);
     const primary = found.files?.results.map(item => ({ file: item.path })) ?? [];
     primary.forEach((item, index) => filePriors.set(item.file, 1 / (1 + index * .5)));

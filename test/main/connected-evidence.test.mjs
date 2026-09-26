@@ -15,6 +15,7 @@ import { reindex } from '../../build/tools/reindex.js';
 import { closeDB } from '../../build/core/db.js';
 import { readArtifact, persistArtifact } from '../../build/core/artifacts.js';
 import { finishSourceContext } from '../../build/core/source-context.js';
+import { unifiedSearchData } from '../../build/tools/search.js';
 
 async function fixture() {
   const root = await mkdtemp(join(tmpdir(), 'contextpro-connected-'));
@@ -56,6 +57,18 @@ it('exact targets stay stateless and provider-free when connected retrieval is e
     assert.match(result.value, /export const value = 1/); assert.deepEqual(result.usage, []);
     await assert.rejects(access(join(root, '.contextpro')));
     await assert.rejects(getContext({ rootDir: root, targets: [{ file: 'file.ts' }], previousContextId: 'source_context-aaaaaaaaaaaaaa' }), /stateless/);
+  } finally { await cleanup(root); }
+});
+
+it('explicit lexical retrieval is not diagnosed as unavailable semantic vectors', async () => {
+  const root = await fixture();
+  try {
+    const search = await unifiedSearchData({ rootDir: root, query: 'upload reservation', preset: 'keyword_only', mode: 'hybrid', persistArtifact: false });
+    assert.match(search.trust.ambiguities.join('\n'), /semantic evidence was not requested/);
+    assert.doesNotMatch(search.trust.ambiguities.join('\n'), /embeddings are unavailable/);
+    const context = await getContext({ rootDir: root, query: 'upload reservation', connected: true, retrievalPreset: 'keyword_only', maxTokens: 1200 });
+    assert.match(context, /requested keyword_only preset/);
+    assert.doesNotMatch(context, /lexical fallback|vectors unavailable/);
   } finally { await cleanup(root); }
 });
 
