@@ -6,7 +6,7 @@ import { isTestFile } from "./retrieval-helpers.js";
 export function queryLiterals(query: string): string[] {
   const quoted = [...query.matchAll(/(["'`])([^"'`\n]{2,200})\1/g)].map(match => match[2]);
   const keys = query.match(/\b[A-Za-z][\w$]*(?:[._][A-Za-z][\w$]*)+\b/g) ?? [];
-  return [...new Set((quoted.length ? quoted : keys).map(text => text.normalize("NFC").toLowerCase()))].slice(0, 8);
+  return [...new Set([...quoted, ...keys].map(text => text.normalize("NFC").toLowerCase()))].slice(0, 8);
 }
 
 /** Secondary evidence stays available, but must not crowd out implementations. */
