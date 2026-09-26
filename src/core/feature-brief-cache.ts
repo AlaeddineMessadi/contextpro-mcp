@@ -16,6 +16,21 @@ export interface FeatureBrief {
   warnings: string[];
 }
 export const briefQuery = (query: string) => query.trim().replace(/\s+/g, " ");
+
+function validCitations(brief: FeatureBrief): boolean {
+  if (!Array.isArray(brief.files) || !brief.files.every(file => typeof file === "string")
+    || !Array.isArray(brief.citations) || !Array.isArray(brief.facts) || !Array.isArray(brief.interpretations)) return false;
+  const ids = new Set<string>();
+  for (const citation of brief.citations) {
+    if (!citation || !/^E\d+$/.test(citation.id) || ids.has(citation.id) || !brief.files.includes(citation.file)
+      || !Number.isInteger(citation.start) || citation.start < 1 || !Number.isInteger(citation.end) || citation.end < citation.start
+      || !/^[a-f0-9]{64}$/.test(citation.hash)) return false;
+    ids.add(citation.id);
+  }
+  return brief.facts.every(fact => typeof fact === "string" && ids.has(fact.match(/^\[(E\d+)\]/)?.[1] ?? ""))
+    && brief.interpretations.every(claim => claim && typeof claim.text === "string" && Array.isArray(claim.citations)
+      && claim.citations.length > 0 && claim.citations.every(id => ids.has(id)));
+}
 export async function featureSignature(rootDir: string, files: string[], expectedHashes?: Record<string, string>): Promise<string | null> {
   const db = await getDB(rootDir), rows: unknown[] = [];
   for (const file of [...files].sort()) {
@@ -43,7 +58,7 @@ export async function lookupFeatureBrief(rootDir: string, query: string): Promis
       const artifact = await readArtifact<FeatureBrief>(rootDir, ref.id);
       const brief = artifact?.payload;
       if (!brief || artifact?.repoRoot !== resolve(rootDir) || brief.query !== briefQuery(query) || brief.version !== FEATURE_BRIEF_VERSION
-        || (brief.model !== "deterministic" && brief.model !== model)) continue;
+        || (brief.model !== "deterministic" && brief.model !== model) || !validCitations(brief)) continue;
       if (await featureSignature(rootDir, brief.files) === brief.signature) return { artifact: ref, brief };
     }
   } catch { /* A corrupt or unavailable cache is a miss. */ }

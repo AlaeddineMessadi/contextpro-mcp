@@ -59,6 +59,29 @@ it('exact targets stay stateless and provider-free when connected retrieval is e
   } finally { await cleanup(root); }
 });
 
+it('connected task caches distinguish graph settings and source budgets', async () => {
+  const root = await fixture(), old = process.env.CONTEXTPRO_CONNECTED_CONTEXT;
+  process.env.CONTEXTPRO_CONNECTED_CONTEXT = 'true';
+  try {
+    const options = { rootDir: root, task: 'upload reservation outstanding intents', preset: 'keyword_only', includeMemory: false, includeRecentDiffs: false, format: 'json', maxTokens: 4000 };
+    const get = async extra => JSON.parse(await buildTaskPack({ ...options, ...extra }));
+    const noGraph = await get({ graphHops: 0 });
+    assert.ok(noGraph.files.every(file => !file.reason.includes('graph:')));
+    const defaultGraph = await get({});
+    assert.ok(defaultGraph.files.some(file => file.reason.includes('graph:')));
+    const limited = await get({ graphMaxFiles: 1 });
+    const wider = await get({ graphMaxFiles: 8 });
+    assert.notEqual(limited.context.id, wider.context.id);
+    await get({ maxTokens: 512 });
+    const large = await get({ maxTokens: 9000 });
+    assert.ok(!large.trust.evidence.includes('served from artifact cache (no recompute)'));
+    assert.ok(large.source.length > 0);
+  } finally {
+    old === undefined ? delete process.env.CONTEXTPRO_CONNECTED_CONTEXT : process.env.CONTEXTPRO_CONNECTED_CONTEXT = old;
+    await cleanup(root);
+  }
+});
+
 it('source deltas detect edits and deletions and recover across incompatible roots and budgets', async () => {
   const root = await fixture(), other = await fixture();
   try {
@@ -92,6 +115,10 @@ it('feature briefs invalidate on source, dependency membership and model changes
     assert.ok(Buffer.byteLength(first) <= 4800);
     assert.ok(await lookupFeatureBrief(root, query));
     assert.match(await getFeatureBrief({ rootDir: root, query }), /validated cache/);
+    const cached = await lookupFeatureBrief(root, query);
+    const corrupt = { ...cached.brief, query: 'corrupt brief', interpretations: [{ text: 'Unsupported cached claim', citations: ['E999'] }] };
+    await persistArtifact({ rootDir: root, kind: 'feature_brief', key: 'invalid-cached-citation', payload: corrupt });
+    assert.equal(await lookupFeatureBrief(root, 'corrupt brief'), null);
     await writeFile(join(root, 'new-caller.ts'), 'import { reserveUpload } from "./upload.js"; export const another = reserveUpload;');
     assert.equal(await lookupFeatureBrief(root, query), null);
     await reindex({ rootDir: root, noEmbed: true, autoHubs: false });

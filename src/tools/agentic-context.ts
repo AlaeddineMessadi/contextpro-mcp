@@ -26,6 +26,8 @@ import {
 import { findDirectoryPriorMatches } from "./directory-prior.js";
 import { connectedRetrievalEnabled, retrieveEvidence } from "./evidence-retrieval.js";
 import { collectSourceEvidence, type Excerpt } from "./context.js";
+import { chatModelIdentity } from "../core/chat-model.js";
+import { getProvider, getEmbedModelName } from "../core/provider-config.js";
 
 type OutputFormat = "text" | "json";
 
@@ -89,14 +91,21 @@ interface TaskPackBudgetReport {
 
 // The cache identity for a task pack: same task + same option flags → same artifact. The repo
 // fingerprint and index generation gate freshness separately (handled by lookupFreshArtifact).
-function taskPackArtifactKey(task: string, maxFiles: number, opts: TaskPackOptions): string {
+async function taskPackArtifactKey(task: string, maxFiles: number, opts: TaskPackOptions): Promise<string> {
+  const connected = connectedRetrievalEnabled();
+  const graphHops = opts.graphHops ?? (connected ? 1 : 0);
   return createHash("sha256").update(JSON.stringify({
     task,
-    connected: connectedRetrievalEnabled(),
+    connected,
     rerank: process.env.CONTEXTPRO_CHAT_RERANK === "true",
+    chatModel: process.env.CONTEXTPRO_CHAT_RERANK === "true" ? await chatModelIdentity(opts.rootDir) : null,
+    embeddingModel: `${getProvider()}:${getEmbedModelName()}`,
     preset: opts.preset ?? "balanced",
-    graphHops: opts.graphHops ?? 0,
-    graphMaxFiles: opts.graphHops ? Math.max(1, Math.min(opts.graphMaxFiles ?? 4, 10)) : 0,
+    graphHops,
+    graphMaxFiles: graphHops ? (connected ? Math.max(0, Math.min(opts.graphMaxFiles ?? 8, 16)) : Math.max(1, Math.min(opts.graphMaxFiles ?? 4, 10))) : 0,
+    // Connected payloads already contain source selected under this budget.
+    // A later larger request must recompute rather than reuse the small packet.
+    sourceBudget: connected ? Math.max(512, Math.floor((opts.maxTokens ?? 3000) * .65)) : null,
     maxFiles,
     includeTests: opts.includeTests !== false,
     includeRecentDiffs: opts.includeRecentDiffs !== false,
@@ -521,7 +530,7 @@ export function buildTaskPack(options: TaskPackOptions): Promise<string> {
 async function buildTaskPackUncached(options: TaskPackOptions): Promise<string> {
   if (options.previousContextId && !/^task_context-[a-f0-9]{14}$/.test(options.previousContextId)) throw new Error("Invalid previous_context_id; use the task_context ID from a previous response.");
   const maxFiles = Math.max(1, Math.floor(options.maxFiles ?? 8));
-  const taskKey = taskPackArtifactKey(options.task, maxFiles, options);
+  const taskKey = await taskPackArtifactKey(options.task, maxFiles, options);
   const db = await getDB(options.rootDir);
   let memoryRevision = options.includeMemory === false ? 0 : db.getMemoryRevision();
   const gitHead = options.includeRecentDiffs === false ? "" : await promisify(execFile)("git", ["rev-parse", "HEAD"], { cwd: options.rootDir, timeout: 3000 }).then(({ stdout }) => stdout.trim()).catch(() => "");
