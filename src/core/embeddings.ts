@@ -6,6 +6,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { mkdir } from "fs/promises";
 import { join } from "path";
 import { getProvider, getEmbedModelName, getApiKey, getBaseUrl } from "./provider-config.js";
+import { observeProviderCall } from "./provider-usage.js";
 
 const EMBED_TIMEOUT_MS = 60_000;
 let embedAbortController = new AbortController();
@@ -137,7 +138,7 @@ async function callOllamaEmbed(input: string[], signal: AbortSignal): Promise<nu
   const request: Record<string, unknown> = { model: EMBED_MODEL, input };
   if (options) request.options = options;
   try {
-    const response = await ollamaSignals.run(signal, () => client.embed(request));
+    const response = await observeProviderCall({ kind: "embedding", provider: "ollama", model: EMBED_MODEL }, () => ollamaSignals.run(signal, () => client.embed(request)), result => ({ input: (result as { prompt_eval_count?: number }).prompt_eval_count }));
     return response.embeddings;
   } catch (error) {
     throw new Error(formatOllamaModelError(error, "embedding", EMBED_MODEL));
@@ -145,6 +146,7 @@ async function callOllamaEmbed(input: string[], signal: AbortSignal): Promise<nu
 }
 
 async function callOpenAIEmbed(input: string[], signal: AbortSignal): Promise<number[][]> {
+  return observeProviderCall({ kind: "embedding", provider: "openai", model: OPENAI_EMBED_MODEL }, async () => {
   const url = `${OPENAI_BASE_URL.replace(/\/+$/, "")}/embeddings`;
   const response = await fetch(url, {
     method: "POST",
@@ -161,8 +163,8 @@ async function callOpenAIEmbed(input: string[], signal: AbortSignal): Promise<nu
     throw new Error(`OpenAI embed API error ${response.status}: ${body}`);
   }
 
-  const data = await response.json() as { data: { embedding: number[] }[] };
-  return data.data.map((item) => item.embedding);
+  return await response.json() as { data: { embedding: number[] }[]; usage?: { prompt_tokens?: number; total_tokens?: number } };
+  }, result => ({ input: result.usage?.prompt_tokens ?? result.usage?.total_tokens })).then(data => data.data.map(item => item.embedding));
 }
 
 async function callProviderEmbed(input: string[], signal: AbortSignal): Promise<number[][]> {

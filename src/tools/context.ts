@@ -1,7 +1,9 @@
 // Locate and read evidence in one round trip. All excerpts come from one disk
-// snapshot per file; no generated summaries, arbitrary code execution, or writes.
+// snapshot per file. Query packets can persist regenerable evidence artifacts;
+// exact targets remain stateless and never request model enrichment.
 import { readFile, stat } from "node:fs/promises";
 import { relative } from "node:path";
+import { createHash } from "node:crypto";
 import ts from "typescript";
 import { analyzeContent, flattenSymbols, type FileAnalysis } from "../core/parser.js";
 import { maskSourceText } from "../core/source-mask.js";
@@ -12,6 +14,11 @@ import { walkDirectory } from "../core/walker.js";
 import { extractIdentifierHints, unifiedSearchData } from "./search.js";
 import { mentionedFiles, isOrientationQuery, orientationFiles, isLockfile, wantsLockfile, queryLiterals, discoveryPathWeight } from "./discovery-hints.js";
 import { discoverDocuments, wantsDocuments } from "./discovery-documents.js";
+import { connectedRetrievalEnabled, retrieveEvidence, type EvidenceCandidate } from "./evidence-retrieval.js";
+import { finishSourceContext } from "../core/source-context.js";
+import { lookupFeatureBrief } from "../core/feature-brief-cache.js";
+import { chatModelIdentity } from "../core/chat-model.js";
+import { getProvider, getEmbedModelName } from "../core/provider-config.js";
 
 export interface ContextTarget {
   file: string;
@@ -24,8 +31,18 @@ export interface ContextOptions {
   query?: string;
   targets?: ContextTarget[];
   maxTokens?: number;
+  previousContextId?: string;
+  /** Internal evaluation override; the MCP surface uses configured defaults. */
+  retrievalPreset?: "balanced" | "keyword_only" | "semantic_only";
+  connected?: boolean;
+  retrieved?: Awaited<ReturnType<typeof retrieveEvidence>>;
 }
-interface Excerpt { file: string; start: number; end: number; text: string; }
+export interface Excerpt { file: string; start: number; end: number; text: string; }
+export interface SourceEvidence {
+  text: string; ranges: Excerpt[]; hashes: Record<string, string>; notices: string[];
+  /** Delivery completeness, not a claim of exhaustive repository coverage. */
+  complete: boolean; settings: string;
+}
 const bytes = (value: string): number => Buffer.byteLength(value, "utf8");
 const render = (part: Excerpt): string => `${part.file}:${part.start}-${part.end}\n${part.text}`;
 
@@ -45,6 +62,13 @@ function uncoveredRanges(part: Excerpt, selected: Excerpt[]): Excerpt[] {
 }
 
 export async function getContext(options: ContextOptions): Promise<string> {
+  if (options.previousContextId && !/^source_context-[a-f0-9]{14}$/.test(options.previousContextId)) throw new Error("Invalid previous_context_id; use a source_context ID from a context response.");
+  if (options.previousContextId && options.targets?.length) throw new Error("previous_context_id is for query discovery only; exact targets are stateless.");
+  const packet = await collectSourceEvidence(options);
+  return options.targets?.length ? packet.text : finishSourceContext(options, packet);
+}
+
+export async function collectSourceEvidence(options: ContextOptions): Promise<SourceEvidence> {
   const query = options.query?.trim() ?? "";
   const literals = [...new Set([...queryLiterals(query), query.replace(/^(["'`])([\s\S]*)\1$/, "$2").normalize("NFC").toLowerCase()])];
   if (!query && !options.targets?.length) throw new Error("Provide query or targets.");
@@ -62,19 +86,39 @@ export async function getContext(options: ContextOptions): Promise<string> {
   const readRequestedFiles = !orientation && /\b(?:read|show|open|whole|entire|full)\b/i.test(query);
   const overviewFiles = new Set<string>();
   const documentFiles = new Set<string>();
+  let connectedCandidates: EvidenceCandidate[] = [];
+  const connected = options.connected ?? connectedRetrievalEnabled();
   if (!targets.length) {
     // Exact identifiers need no embedding round trip. Natural language keeps the
     // hybrid retriever: no unvalidated lexical confidence gate discards recall.
     const exact = /^[A-Za-z_$][\w$]*$/.test(query);
-    const found = await unifiedSearchData({ rootDir: options.rootDir, query,
-      mode: "file", preset: exact ? "keyword_only" : "balanced", topK: 4,
+    const packet = options.retrieved ?? (connected && !exact ? await retrieveEvidence({ rootDir: options.rootDir, query, preset: options.retrievalPreset }) : undefined);
+    const found = packet?.search ?? await unifiedSearchData({ rootDir: options.rootDir, query,
+      mode: "file", preset: exact ? "keyword_only" : options.retrievalPreset ?? "balanced", topK: 4,
       inlineCode: "off", includeDependencies: true, persistArtifact: false });
+    connectedCandidates = packet?.candidates ?? [];
+    if (packet?.relationNotice) notices.push(packet.relationNotice);
+    if (packet?.limited) notices.push("Candidate pool capped at 32 files; additional paths omitted.");
+    if (packet) {
+      const brief = await lookupFeatureBrief(options.rootDir, query);
+      if (brief) {
+        const interpretation = brief.brief.interpretations[0];
+        const detail = interpretation ? `Model interpretation: ${interpretation.text}` : brief.brief.facts[0];
+        notices.push(`Cached feature explanation: ${brief.artifact.id}${detail ? `; ${detail.slice(0, 260)}` : ""}. Read artifact for citations.`);
+      }
+    }
     if (found.freshness.warning) notices.push(found.freshness.warning);
-    if (!exact && found.trust.ambiguities.some(warning => warning.includes("keyword-only"))) notices.push("Discovery used lexical fallback; semantic vectors unavailable or weak. Reindex if semantic retrieval is needed.");
+    if (!exact && options.retrievalPreset === "keyword_only") notices.push("Discovery used the requested keyword_only preset; semantic vectors were not consulted.");
+    else if (!exact && found.trust.ambiguities.some(warning => warning.includes("keyword-only"))) notices.push("Discovery used lexical fallback; semantic vectors unavailable or weak. Reindex if semantic retrieval is needed.");
     if (!["fresh", "refreshed"].includes(found.freshness.indexState)) notices.push(`Discovery index: ${found.freshness.indexState}; verify scope with native search if incomplete.`);
     const primary = found.files?.results.map(item => ({ file: item.path })) ?? [];
     primary.forEach((item, index) => filePriors.set(item.file, 1 / (1 + index * .5)));
     targets = [...primary.slice(0, 2), ...found.dependencies?.slice(0, 2).map(item => ({ file: item.path, helper: true })) ?? [], ...primary.slice(2)];
+    if (packet) {
+      targets = packet.candidates.map(item => ({ file: item.path, helper: item.roles.includes("dependency") }));
+      const high = Math.max(...packet.candidates.map(item => item.score), .001);
+      packet.candidates.forEach(item => filePriors.set(item.path, .5 + item.score / high));
+    }
     // A literal symbol is stronger evidence of the requested definition than
     // prose similarity. Look up defining files even if ranking omitted them;
     // ranges are still resolved against the current source below.
@@ -84,7 +128,7 @@ export async function getContext(options: ContextOptions): Promise<string> {
     // Multi-key questions need evidence for each literal, even when one key's
     // many callers fill the primary result window before another key's source.
     const literalFiles = new Set<string>();
-    for (const literal of queryLiterals(query)) {
+    for (const literal of options.retrievalPreset === "semantic_only" ? [] : queryLiterals(query)) {
       const match = db.searchFileText(literal, 40, true)
         .sort((a, b) => discoveryPathWeight(query, b.path) - discoveryPathWeight(query, a.path) || a.score - b.score)[0];
       if (match) { literalFiles.add(match.path); filePriors.set(match.path, 1); }
@@ -92,7 +136,7 @@ export async function getContext(options: ContextOptions): Promise<string> {
     targets = [...literalFiles].map(file => ({file})).concat(targets.filter(target => !literalFiles.has(target.file)));
     const files = new Map(indexed.map(file => [file.id, file.path]));
     const definingFiles = new Set<string>();
-    for (const hint of hints.slice(0, 16)) {
+    for (const hint of options.retrievalPreset === "semantic_only" ? [] : hints.slice(0, 16)) {
       for (const symbol of db.searchSymbolsByName(hint).filter(symbol => symbol.name === hint)) {
         const file = files.get(symbol.file_id);
         if (file && discoveryPathWeight(query, file) >= 1) {
@@ -125,6 +169,10 @@ export async function getContext(options: ContextOptions): Promise<string> {
     if (!wantsLockfile(query) && targets.some(target => !isLockfile(target.file))) {
       targets = targets.filter(target => !isLockfile(target.file) || requestedFiles.has(target.file));
     }
+    if (packet) {
+      targets = [...new Map(targets.map(target => [target.file, target])).values()];
+      if (targets.length > 32) { targets = targets.slice(0, 32); notices.push("Additional discovery targets omitted at the 32-file bound."); }
+    }
   }
   const terms = new Set(searchTerms(query));
   const candidates: Excerpt[] = [];
@@ -140,7 +188,7 @@ export async function getContext(options: ContextOptions): Promise<string> {
   const limit = budget * 4;
   // Explicit targets are admitted whole. Discovery may select labelled interior
   // ranges, always copied verbatim from the snapshot rather than synthesized.
-  let available = limit - 768;
+  let available = limit - 768 - (options.targets?.length ? 0 : 384);
   for (const target of targets) {
     const fullPath = resolveProjectPath(options.rootDir, target.file, "context target");
     const file = relative(options.rootDir, fullPath).split("\\").join("/");
@@ -237,6 +285,14 @@ export async function getContext(options: ContextOptions): Promise<string> {
       endLine: syntax.getLineAndCharacterOfPosition(s.end).line + 1,
     })) : (await analyze()).symbols.filter(s => s.line >= 1 && s.endLine <= lines.length);
     const add = (from: number, to: number) => discoveryParts.push({ file, start: from, end: to, text: lines.slice(from - 1, to).join("\n") });
+    // A connected helper may not repeat any prose query terms. Its symbol or
+    // call anchors supply real source evidence without treating a file header
+    // as the implementation. Other windows still compete on query coverage.
+    const connectedCandidate = connectedCandidates.find(item => item.path === file);
+    for (const line of connectedCandidate?.anchors ?? []) add(Math.max(1, line - 2), Math.min(lines.length, line + 16));
+    if (connectedCandidate && connectedCandidate.roles.some(role => role !== "implementation")) {
+      for (const span of spans.slice(0, 4)) add(span.line, Math.min(span.endLine, span.line + 20));
+    }
     if (lines.length <= 40 && bytes(render(excerpt)) <= available) {
       add(1, lines.length);
       if (target.helper) smallDependencies.push(excerpt);
@@ -270,6 +326,9 @@ export async function getContext(options: ContextOptions): Promise<string> {
   const weights = new Map([...terms].map(term => [term, 1 + Math.log(1 + remaining.length / (1 + remaining.filter(item => item.words.has(term)).length))]));
   const covered = new Set(candidates.flatMap(part => searchTerms(part.text)));
   const selectedBytes = new Map<string, number>();
+  const coveredRoles = new Set<string>();
+  const roles = (part: Excerpt) => connectedCandidates.find(item => item.path === part.file)?.roles ?? [];
+  for (const part of candidates) for (const role of roles(part)) coveredRoles.add(role);
   for (const part of candidates) selectedBytes.set(part.file, (selectedBytes.get(part.file) ?? 0) + bytes(render(part)));
   while (remaining.length && available > 0) {
     let best = -1, bestScore = 0;
@@ -280,7 +339,12 @@ export async function getContext(options: ContextOptions): Promise<string> {
       const size = parts.reduce((sum, item) => sum + bytes(render(item)) + 2, 0);
       if (!parts.length || size > available) continue;
       const words = new Set(parts.flatMap(item => searchTerms(item.text)));
-      const gain = [...terms].reduce((n, term) => n + (words.has(term) ? weights.get(term)! * (covered.has(term) ? .25 : 1) : 0), 0);
+      let gain = [...terms].reduce((n, term) => n + (words.has(term) ? weights.get(term)! * (covered.has(term) ? .25 : 1) : 0), 0);
+      const linkedRoles = roles(part).filter(role => role !== "implementation");
+      if (linkedRoles.some(role => !coveredRoles.has(role))) gain += 5;
+      // Retain control-flow predicates with their surrounding source; this is a
+      // packing hint, not a claim that a particular predicate is a constraint.
+      if (connectedCandidates.length && gain > 0 && parts.some(item => /\b(?:if|throw|assert|reject)\b/.test(item.text))) gain *= 1.15;
       // Keep the retriever's ordering as a prior; otherwise a rare incidental
       // word in a lower-ranked UI/test file can displace implementation evidence.
       // A large first-ranked file must not monopolize a cross-module question.
@@ -294,6 +358,7 @@ export async function getContext(options: ContextOptions): Promise<string> {
     candidates.push(...bestParts); available -= bestSize;
     selectedBytes.set(next.part.file, (selectedBytes.get(next.part.file) ?? 0) + bestSize);
     for (const part of bestParts) for (const term of searchTerms(part.text)) covered.add(term);
+    for (const role of roles(next.part)) coveredRoles.add(role);
   }
   for (const part of smallDependencies) {
     const cost = bytes(render(part)) + 2;
@@ -321,6 +386,15 @@ export async function getContext(options: ContextOptions): Promise<string> {
     bytes(noticeText) <= 400 ? noticeText : "Discovery index has freshness warnings; verify scope with native search.",
     "Some targets or lines omitted. Narrow query/targets or increase max_tokens; verify scope with native search.",
   ].filter(Boolean).join("\n");
-  return ["Source evidence (only the indicated ranges are included):", ...merged.map(render), footer,
+  if (connectedCandidates.length) {
+    const missing = ["implementation", "caller", "dependency", "test"].filter(role => !merged.some(part => roles(part).includes(role as never)));
+    if (missing.length) notices.push(`Evidence not returned for: ${missing.join(", ")}; this is not proof of absence.`);
+  }
+  const summary = notices.at(-1)?.startsWith("Evidence not returned") ? notices.at(-1) : undefined;
+  const text = ["Source evidence (only the indicated ranges are included):", ...merged.map(render), footer, summary,
     !merged.length ? "No source fit or matched. Try exact file/line targets or native search." : ""].filter(Boolean).join("\n\n");
+  return { text, ranges: merged, hashes: Object.fromEntries([...snapshots].map(([file, source]) => [file, createHash("sha256").update(source).digest("hex")])),
+    notices: [footer, summary].filter((value): value is string => !!value), complete: true,
+    settings: JSON.stringify({ version: 1, connected, preset: options.retrievalPreset ?? "balanced", rerank: process.env.CONTEXTPRO_CHAT_RERANK === "true",
+      embedding: `${getProvider()}:${getEmbedModelName()}`, chat: options.targets?.length ? "unused" : await chatModelIdentity(options.rootDir) }) };
 }

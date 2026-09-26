@@ -1,4 +1,17 @@
 // Pure helpers for matched trials and observed evidence; no model/provider calls.
+export function validatePilotResume(saved, current, rows) {
+  for (const key of ['contractHash', 'plan', 'config', 'agentCommand', 'agentVersion', 'fingerprints']) {
+    if (JSON.stringify(saved[key]) !== JSON.stringify(current[key])) throw new Error(`Cannot resume: ${key} changed`);
+  }
+  if (rows.length > saved.plan.length) throw new Error('Cannot resume: too many results');
+  rows.forEach((row, index) => {
+    const planned = saved.plan[index];
+    if (row.contractHash !== saved.contractHash || ['taskId', 'variant', 'repeat'].some(key => row[key] !== planned[key])) {
+      throw new Error('Cannot resume: results are not the recorded plan prefix');
+    }
+  });
+}
+
 export function buildTrialPlan(taskIds, repeats = 3, indexStates = ['seeded']) {
   if (!Number.isInteger(repeats) || repeats < 1 || repeats > 20) throw new Error('repeats must be an integer from 1 to 20');
   if (!indexStates.length || new Set(indexStates).size !== indexStates.length || indexStates.some(x => !['empty', 'seeded'].includes(x))) throw new Error('index states must be empty and/or seeded');

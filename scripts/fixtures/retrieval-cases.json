@@ -1,0 +1,7 @@
+[
+  {"id":"connected-reservation","query":"guest upload shot-limit reservation and finalization after erasure","maxTokens":1200,"expected":["used + reserved >= limit","!guest.active","reserveUpload"],"relevantFiles":["router.ts","quota.ts","tests/upload.test.ts"]},
+  {"id":"named-definition","query":"Find implementation of reserveUpload","maxTokens":1200,"expected":["export function reserveUpload"],"relevantFiles":["router.ts"]},
+  {"id":"semantic-paraphrase","query":"Where are outstanding photo slots counted before accepting another submission?","maxTokens":1200,"expected":["used + reserved >= limit"],"relevantFiles":["quota.ts","router.ts","tests/upload.test.ts"]},
+  {"id":"unknown-symbol","query":"QuantizeLunarTelemetryZX9","maxTokens":1200,"expected":[],"relevantFiles":[],"negative":true},
+  {"id":"unrelated-question","query":"How does this code calculate planetary orbital eccentricity?","maxTokens":1200,"expected":[],"relevantFiles":[],"negative":true}
+]

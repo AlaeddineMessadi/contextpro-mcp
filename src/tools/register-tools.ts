@@ -27,6 +27,7 @@ import { getRelated } from "./related.js";
 import { getTestMap } from "./test-map.js";
 import { explain } from "./explain.js";
 import { getContext } from "./context.js";
+import { getFeatureBrief } from "./feature-brief.js";
 import { getRepoMap } from "./repo-map.js";
 import { resolveSymbol } from "./resolve-symbol.js";
 import { grepProject } from "./grep.js";
@@ -97,7 +98,7 @@ export function registerTools(
   const invocations = new Map<string, { schema: z.AnyZodObject; handler: (args: unknown) => Promise<CallToolResult> }>();
   // This compatibility route must never dispatch source edits or destructive
   // maintenance under discovery's non-destructive annotation.
-  const callable = new Set(["context", "exact_references", "search", "grep", "skeleton", "explain", "tree", "status", "health", "reindex", "blast_radius", "validate_scope", "efficiency_report", "task_pack", "repo_map"]);
+  const callable = new Set(["context", "exact_references", "search", "grep", "skeleton", "explain", "tree", "status", "health", "reindex", "blast_radius", "validate_scope", "efficiency_report", "task_pack", "repo_map", "feature_brief", "artifact_read"]);
   const refreshCatalogCost = (): void => setToolSchemaTokens(Buffer.byteLength(JSON.stringify({ tools: [...catalog.values()].filter(tool => active.has(tool.name)) }), "utf8") / 4);
   const noteSchema = (name: string, description: string, shape: Record<string, unknown>, output?: unknown): void => {
     const entry = { name, description, inputSchema: toJsonSchemaCompat(z.object({ ...shape, root: rootArg } as z.ZodRawShape).strict()), annotations: annotationsForTool(name),
@@ -150,9 +151,18 @@ export function registerTools(
     query: z.string().max(2000).optional().describe("Discovery query, at most 2000 characters. Use a literal symbol name to prioritize its definition."),
     targets: z.array(z.object({ file: z.string().max(240), symbol: z.string().max(200).optional(), start: z.number().int().min(1).optional(), end: z.number().int().min(1).optional() }).strict()).min(1).max(6).optional().describe("Exact reads: 1–6 file/symbol/line targets per call. Split larger batches."),
     max_tokens: z.number().int().min(512).max(12000).optional().describe("Integer response budget: 512–12000, UTF-8 bytes/4; default 4000. Raise within this range or narrow targets if omitted."),
-  }, withRequestActivity(async ({ query, targets, max_tokens }) => ({
-    content: [{ type: "text" as const, text: await getContext({ rootDir: rootDir(), query, targets, maxTokens: max_tokens }) }],
+    previous_context_id: z.string().regex(/^source_context-[a-f0-9]{14}$/).optional().describe("Query mode only: source_context ID from a complete packet you still hold. Returns source changes; omit after compaction. Exact targets are stateless."),
+  }, withRequestActivity(async ({ query, targets, max_tokens, previous_context_id }) => ({
+    content: [{ type: "text" as const, text: await getContext({ rootDir: rootDir(), query, targets, maxTokens: max_tokens, previousContextId: previous_context_id }) }],
   }), { toolName: "context", waitForIndexing: false }));
+
+  server.tool("feature_brief", "Explain connected implementation and tests with source citations. Reuses hash-validated artifacts. Deterministic by default; model summaries require CONTEXTPRO_FEATURE_SUMMARIES=true.", {
+    query: z.string().min(1).max(2000).describe("Feature or task to explain, 1–2000 characters."),
+    refresh: z.boolean().optional().describe("Recompute the cached brief. Model generation still requires explicit configuration. Default false."),
+    max_tokens: z.number().int().min(512).max(12000).optional().describe("Integer response budget 512–12000, UTF-8 bytes/4; default 2000."),
+  }, withRequestActivity(async ({ query, refresh, max_tokens }) => ({ content: [{ type: "text" as const,
+    text: await getFeatureBrief({ rootDir: rootDir(), query, refresh, maxTokens: max_tokens }) }],
+  }), { toolName: "feature_brief", waitForIndexing: false }));
 
   const discoveryShape = {
     query: z.string().max(500).optional().describe("Purpose, e.g. rename, tests, or memory."),
@@ -1103,7 +1113,7 @@ export function registerTools(
     task: z.string().min(1).describe("Task description or engineering objective."),
     previous_context_id: z.string().min(1).optional().describe("Context ID from a previous packet you still hold; return a delta. Omit after context loss to recover full context."),
     preset: z.enum(["balanced", "keyword_only"]).optional().describe("balanced (default) or keyword_only for zero-provider lexical discovery."),
-    graph_hops: z.union([z.literal(0), z.literal(1), z.literal(2)]).optional().describe("Opt-in related import context: 0 (default), 1 or 2 hops. Benchmark before enabling routinely."),
+    graph_hops: z.union([z.literal(0), z.literal(1), z.literal(2)]).optional().describe("Related import context: 0, 1 or 2 hops. Default 1 with CONTEXTPRO_CONNECTED_CONTEXT=true, otherwise 0. Relationships are heuristic."),
     graph_max_files: z.number().int().min(1).max(10).optional().describe("Maximum additional graph-related file pointers. Default: 4."),
     max_files: z.number().optional().describe("Maximum ranked files to include. Default: 8."),
     max_memory: z.number().optional().describe("Maximum memory hits to include. Default: 3, max: 10."),

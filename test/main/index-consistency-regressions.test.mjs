@@ -164,6 +164,18 @@ describe("index consistency regressions", () => {
   });
 
   for (const mode of ["structural", "quick", "scoped-reindex"]) {
+    it(`keeps SQL text searchable without introducing application callers (${mode})`, async () => {
+      await writeFile(join(root, 'app.ts'), 'export function handle() {}\n');
+      await reindex({rootDir:root, noEmbed:true});
+      await writeFile(join(root, 'migration.sql'), '-- handle()\nselect handle();\nDO $$ BEGIN PERFORM handle(); END $$;\n');
+      if (mode === 'structural') await structural(['migration.sql']);
+      else if (mode === 'quick') await quickRefresh(root, {includeEmbeddings:false});
+      else await reindex({rootDir:root, targetPath:'migration.sql', noEmbed:true});
+      const db = await getDB(root);
+      assert.ok(db.searchFileText('handle', 10, true).some(file => file.path === 'migration.sql'));
+      assert.deepEqual(db.getCallersOf('handle'), []);
+    });
+
     it(`repairs incoming imports of an unchanged source when a dependency appears (${mode})`, async () => {
       await writeFile(join(root, "main.ts"), "import { dep } from './dep.js';\nexport const use = dep;\n");
       await structural(["main.ts"]);

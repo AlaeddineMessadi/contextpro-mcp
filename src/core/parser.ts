@@ -727,6 +727,10 @@ const STDLIB_GLOBALS = new Set([
 ]);
 
 export function extractCallSites(content: string, filePath?: string): CallSite[] {
+  // SQL is indexed for literal source discovery, not cross-language call edges.
+  // Its comments, dollar-quoted bodies and database functions need a SQL-aware
+  // binding model before they can be exposed as application callers.
+  if (filePath && /\.sql$/i.test(filePath)) return [];
   const lines = content.split("\n");
   const codeLines = maskSourceText(content, filePath).split("\n");
   const sites: CallSite[] = [];
