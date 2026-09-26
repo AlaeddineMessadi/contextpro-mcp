@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
-import { createEventCollector, providerUsage, fingerprintLauncher, latencyDistribution } from './benchmark-evidence.mjs';
+import { createEventCollector, providerUsage, fingerprintLauncher, latencyDistribution, validatePilotResume } from './benchmark-evidence.mjs';
 
 const exec = promisify(execFile), here = dirname(fileURLToPath(import.meta.url));
 const flags = new Set(process.argv.slice(2));
@@ -121,21 +121,41 @@ if (flags.has('--prepare') || flags.has('--recheck')) {
     await rm(after, { recursive: true, force: true });
   }
   if (records.some(row => !row.discriminates)) process.exitCode = 1;
-} else if (flags.has('--run')) {
+} else if (flags.has('--run') || flags.has('--resume')) {
   const preflight = JSON.parse(await readFile(join(output, 'preflight.json'), 'utf8'));
   for (const task of tasks) if (!preflight.some(row => row.taskId === task.id && row.contractHash === contractHash && row.discriminates)) throw Error(`Validator not qualified: ${task.id}`);
-  if (await existing(join(output, 'runs.json'))) throw Error('runs.json exists; never silently overwrite/retry a campaign');
+  const resuming = flags.has('--resume');
+  if (!resuming && await existing(join(output, 'runs.json'))) throw Error('runs.json exists; use --resume to retain results and continue unstarted trials');
   const config = JSON.parse((await exec('python3', ['-c', 'import pathlib,tomllib,json; c=tomllib.loads((pathlib.Path.home()/".codex/config.toml").read_text()); print(json.dumps({k:c.get(k) for k in ("model","model_reasoning_effort")}))'])).stdout);
   if (!config.model) throw Error('Explicit configured agent model required');
   const agentCommand = process.env.CONTEXTPRO_PILOT_CODEX ?? 'codex';
   const agentVersion = (await exec(agentCommand, ['--version'])).stdout.trim();
   const launchers = Object.fromEntries(variants.filter(variant => variant !== 'native').map(variant => [variant, { command: process.execPath, args: [join(output, variant, 'build/index.js')] }]));
   const fingerprints = Object.fromEntries(await Promise.all(Object.entries(launchers).map(async ([variant, launcher]) => [variant, await fingerprintLauncher(launcher)])));
-  await save(join(output, 'plan.json'), { contractHash, plan, config, agentCommand, agentVersion, fingerprints, dependencyPolicy: 'APFS copies of existing installed dependencies, identical per task; not a clean lockfile install', contextPolicy: 'structurally seeded, no corpus embeddings; local semantic evaluation is a separate campaign' });
-  const rows = [];
-  for (const trial of plan) {
+  const campaign = { contractHash, plan, config, agentCommand, agentVersion, fingerprints, dependencyPolicy: 'APFS copies of existing installed dependencies, identical per task; not a clean lockfile install', contextPolicy: 'structurally seeded, no corpus embeddings; local semantic evaluation is a separate campaign' };
+  const rows = resuming ? JSON.parse(await readFile(join(output, 'runs.json'), 'utf8')) : [];
+  if (resuming) validatePilotResume(JSON.parse(await readFile(join(output, 'plan.json'), 'utf8')), campaign, rows);
+  else await save(join(output, 'plan.json'), campaign);
+  for (const trial of plan.slice(rows.length)) {
     const task = tasks.find(task => task.id === trial.taskId), label = `${task.id}-${trial.repeat}-${trial.variant}`;
     const root = join(output, 'runs', label), launcher = launchers[trial.variant];
+    // A residual trial after an interrupted process is retained as a failure,
+    // never silently retried or counted as zero-token/zero-time work.
+    if (await existing(root)) {
+      if (!resuming) throw Error(`Existing trial directory: ${label}`);
+      if (await existing(join(root, '.git'))) {
+        await exec('git', ['add', '-N', '.'], { cwd: root });
+        await writeFile(join(output, `${label}.patch`), (await exec('git', ['diff', '--binary'], { cwd: root, maxBuffer: 20 * 1024 * 1024 })).stdout, { mode: 0o600 });
+      }
+      const validation = await validate(task, root, label);
+      rows.push({ ...trial, contractHash, interrupted: true, interruptionReason: 'Harness/host stopped before durable trial completion; agent start and usage are unknown',
+        preparationMs: null, agentMs: null, validation, wallTimeMs: null, exitCode: null, timedOut: false, success: false,
+        usage: null, toolCalls: [], toolCallsUnavailable: true, nativeCommandCalls: null, nativeReadCommandCandidates: null, providerUsage: null, costUsd: null });
+      await save(join(output, 'runs.json'), rows);
+      console.log(`INTERRUPTED ${label}: retained without retry; validation=${validation.passed}`);
+      // Preserve the interrupted copy for inspection; completed trials are removed.
+      continue;
+    }
     console.log(`START ${label}`);
     const prepStart = performance.now();
     await cloneDirectory(join(output, 'corpus', `${task.id}-before`), root);

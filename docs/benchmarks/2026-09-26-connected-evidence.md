@@ -59,7 +59,11 @@ CONTEXTPRO_PILOT_OUTPUT=/absolute/output node scripts/benchmark-coding-pilot.mjs
 
 `CONTEXTPRO_PILOT_CODEX` selects a specific CLI executable; its path and version
 are recorded with the campaign. `--recheck` requalifies validators. Do not prepare/recheck concurrently in one
-output directory. Existing `runs.json` is never overwritten.
+output directory. `--run` refuses an existing `runs.json`. After stopping a failed
+harness process, `--resume` verifies the saved contracts, build fingerprints,
+CLI/model settings and completed plan prefix before continuing. A residual
+interrupted trial is retained as a failure with unavailable timing/usage rather
+than retried; only unstarted trials run. Never resume a still-running harness.
 `CONTEXTPRO_PILOT_VARIANTS` also accepts `native` and
 `CONTEXTPRO_PILOT_REPEATS` supports repeated runs. This campaign uses only
 `baseline,candidate`, once each.
@@ -87,7 +91,9 @@ results and their provider-reported counts. Irrelevant output is measured as
 file occurrences against each fixture's declared relevant-file set; follow-up
 need means a missing expected predicate, not an observed human/agent read.
 These small sequential measurements have no warm/cold randomization or confidence
-intervals. Named-definition source paths remain eligible even in a semantic-only
+intervals. Main tests ran alongside the final development retrieval evaluation;
+its latency values are contended and are not used for the rollout gate.
+Named-definition source paths remain eligible even in a semantic-only
 experiment, while exact-name fast paths are separately marked.
 
 The broad visual replay archives app-a at
@@ -108,11 +114,23 @@ these infrastructure failures are retained separately. Desktop bundled CLI
 0.155.0-alpha.16.4 accepted the same model in a readiness probe (18,191 input,
 11,776 cached-input subset, 5 output tokens), counted as setup rather than a
 coding task. The unchanged 16-trial contract runs with that executable at
-`gpt-6-sol` / `xhigh`. Results are pending.
+`gpt-6-sol` / `xhigh`. A host restart interrupted the eleventh planned attempt
+(country-normalization candidate). Its unchanged source copy is retained;
+agent start, duration and usage could not be recovered. It is an infrastructure
+failure, not a demonstrated retrieval failure. The first ten completed results
+were preserved and only the five unstarted trials resumed, with identical builds,
+contracts and CLI/model settings. Results are pending.
 
 The machine also hosts other user work; isolated source copies do not imply
 isolated CPU or network resources. Local implementation tests are paused during
 timed coding runs to avoid additional contention from this task.
+
+Agent commands use the `workspace-write` sandbox. Captured command output shows
+`listen EPERM` for local-server tests inside it; independent validators run on the
+host and can start their servers. Removing instruction documents also causes
+unrelated full-suite assertions when agents run every repository test. These
+environment differences can affect agent behavior and timing; a historical
+validator passing before/after qualification does not remove those limitations.
 
 Independent review after freezing found cache-identity omissions for connected
 task-pack graph limits/source budgets, and missing validation of citation IDs in
