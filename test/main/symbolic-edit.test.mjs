@@ -182,6 +182,22 @@ describe("symbolic editing tools", () => {
     assert.ok(after.includes("`oldName is only documentation`"), "template text should remain unchanged");
   });
 
+  it("rename_symbol preserves regex text while renaming code after quoted regexes", async () => {
+    const { renameSymbol } = await import("../../build/tools/symbolic-edit.js");
+    const filePath = join(fixtureRoot, "src", "regex-rename.ts");
+    await writeFile(filePath, [
+      'export function oldName() { return 1; }',
+      'const quoted = /["\'`]/;',
+      'const pattern = /oldName\\(\\)/;',
+      'oldName();',
+    ].join('\n'));
+    await renameSymbol({rootDir:fixtureRoot, relativePath:'src/regex-rename.ts', namePath:'oldName', newName:'newName'});
+    const updated = await readFile(filePath, 'utf8');
+    assert.match(updated, /function newName\(\)/);
+    assert.ok(updated.includes('/oldName\\(\\)/'));
+    assert.ok(updated.endsWith('newName();'));
+  });
+
   it("rename_symbol keeps Rust lifetimes visible while renaming calls", async () => {
     const { renameSymbol } = await import("../../build/tools/symbolic-edit.js");
     const filePath = join(fixtureRoot, "src", "lifetime.rs");

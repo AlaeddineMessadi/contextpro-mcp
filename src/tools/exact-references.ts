@@ -3,6 +3,7 @@
 
 import { readFile } from "fs/promises";
 import { extname } from "path";
+import ts from "typescript";
 import { getDB } from "../core/db.js";
 import { resolveProjectPath, toProjectRelativePath } from "../core/path-guard.js";
 import { findScipReferences } from "../core/scip-index.js";
@@ -55,8 +56,36 @@ async function resolveTarget(options: ExactReferencesOptions): Promise<ResolvedT
       line: options.line,
     };
   }
-  const db = await getDB(options.rootDir);
   const relativeFile = options.file ? toProjectRelativePath(options.rootDir, options.file, "file") : null;
+  if (relativeFile && isTypeScriptLike(relativeFile)) {
+    // The structural index intentionally omits some declarations (notably
+    // interface properties). Infer from current syntax, including the name's
+    // actual line rather than a stale index or the declaration's first line.
+    const source = await readFile(resolveProjectPath(options.rootDir, relativeFile, "reference target"), "utf8");
+    const syntax = ts.createSourceFile(relativeFile, source, ts.ScriptTarget.Latest, true);
+    const candidates: Array<{ file: string; line: number; kind: string }> = [];
+    const visit = (node: ts.Node): void => {
+      if (ts.isFunctionDeclaration(node) || ts.isFunctionExpression(node) || ts.isClassDeclaration(node)
+        || ts.isClassExpression(node) || ts.isInterfaceDeclaration(node) || ts.isTypeAliasDeclaration(node)
+        || ts.isEnumDeclaration(node) || ts.isModuleDeclaration(node) || ts.isVariableDeclaration(node)
+        || ts.isBindingElement(node) || ts.isParameter(node) || ts.isMethodDeclaration(node)
+        || ts.isMethodSignature(node) || ts.isPropertyDeclaration(node) || ts.isPropertySignature(node)
+        || ts.isPropertyAssignment(node) || ts.isShorthandPropertyAssignment(node)
+        || ts.isGetAccessorDeclaration(node) || ts.isSetAccessorDeclaration(node) || ts.isEnumMember(node)) {
+        const name = node.name;
+        if (name && (ts.isIdentifier(name) || ts.isStringLiteral(name)) && name.text === options.symbolName) {
+          candidates.push({ file: relativeFile, line: syntax.getLineAndCharacterOfPosition(name.getStart(syntax)).line + 1,
+            kind: ts.SyntaxKind[node.kind] });
+        }
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(syntax);
+    const selected = candidates[0];
+    return selected ? { file: relativeFile, line: selected.line,
+      ...(candidates.length > 1 ? { ambiguousCandidates: candidates.slice(0, 5) } : {}) } : null;
+  }
+  const db = await getDB(options.rootDir);
   const exact = db.searchSymbolsByName(options.symbolName)
     .filter((symbol) => symbol.name === options.symbolName);
   if (relativeFile) {
@@ -69,7 +98,7 @@ async function resolveTarget(options: ExactReferencesOptions): Promise<ResolvedT
         return { file: relativeFile, line: inFile[0].line_start };
       }
     }
-    return { file: relativeFile, line: options.line ?? 1 };
+    return null;
   }
   const files = db.getAllFiles();
   const fileById = new Map(files.map((file) => [file.id, file]));
@@ -132,7 +161,7 @@ function formatReferencePayload(input: {
   }
   const ambiguityLines = ambiguousCandidates.length > 0
     ? [
-        `⚠ AMBIGUOUS: "${input.symbolName}" matched ${ambiguousCandidates.length} definition sites; the target below is a best guess (prefers a real definition over a same-named local variable, non-test files first), not a certainty:`,
+        `⚠ AMBIGUOUS: "${input.symbolName}" matched multiple declaration sites; showing up to five candidates. The inferred target is a best guess; with a supplied file, its first declaration is selected:`,
         ...ambiguousCandidates.map((c) => `    ${c.file}:L${c.line} [${c.kind}]`),
         `  Pass file/line explicitly to disambiguate if this looks wrong.`,
         "",
@@ -304,6 +333,7 @@ export async function exactReferencesTool(options: ExactReferencesOptions): Prom
   if (!target) {
     const scipResult = await formatScipFallback(options);
     if (scipResult) return scipResult;
+    if (options.file) return `No declaration found for symbol "${options.symbolName}" in ${options.file}. Provide the line of a known occurrence explicitly, or choose its definition file.`;
     return `No indexed definition found for symbol "${options.symbolName}". Run reindex, import a SCIP JSON index, or provide file and line.`;
   }
   if (!isTypeScriptLike(target.file)) {

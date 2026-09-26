@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { promises as fs, writeFileSync } from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
 import { getDB, closeDB, hashContent } from "../../build/core/db.js";
 import { reconcileIndex, forgetReconcileStatCache } from "../../build/core/index-reconcile.js";
 import { refreshFilesStructural, quickRefresh, reindex } from "../../build/tools/reindex.js";
@@ -26,6 +28,71 @@ describe("index consistency regressions", () => {
     invalidateProjectGraphCache(root);
     closeDB(root);
     await rm(root, { recursive: true, force: true });
+  });
+
+  for (const mode of ['stat', 'hash']) {
+    it(`excludes oversized SQL before quick-refresh reads and drops old indexed contents (${mode})`, async () => {
+      const previous = process.env.CONTEXTPRO_MAX_FILE_SIZE;
+      const previousMode = process.env.CONTEXTPRO_REFRESH;
+      process.env.CONTEXTPRO_MAX_FILE_SIZE = '1024';
+      process.env.CONTEXTPRO_REFRESH = mode;
+      try {
+        await writeFile(join(root, 'small.ts'), 'export const small = true;\n');
+        await writeFile(join(root, 'dump.sql'), 'create table old_dump (id int);\n');
+        await reindex({rootDir:root, noEmbed:true});
+        const db = await getDB(root);
+        assert.ok(db.getFile('dump.sql'));
+        await writeFile(join(root, 'dump.sql'), '-- large dump\n'.repeat(200));
+        await writeFile(join(root, 'new.sql'), '-- new dump\n'.repeat(200));
+        const originalRead = fs.readFile;
+        let dumpReads = 0;
+        fs.readFile = async (...args) => {
+          if ([join(root, 'dump.sql'), join(root, 'new.sql')].includes(String(args[0]))) dumpReads++;
+          return originalRead(...args);
+        };
+        syncBuiltinESMExports();
+        let result;
+        try { result = await quickRefresh(root, {includeEmbeddings:false}); }
+        finally { fs.readFile = originalRead; syncBuiltinESMExports(); }
+        assert.equal(dumpReads, 0, 'oversized content must never be read');
+        assert.equal(result.complete, true);
+        assert.equal(db.getFile('dump.sql'), null);
+        assert.equal(db.getFile('new.sql'), null);
+        assert.deepEqual(db.searchFileText('old_dump', 10, true), []);
+        assert.equal((await quickRefresh(root, {includeEmbeddings:false})).staleCount, 0);
+        await writeFile(join(root, 'dump.sql'), 'create table restored (id int);\n');
+        assert.equal((await quickRefresh(root, {includeEmbeddings:false})).complete, true);
+        assert.ok(db.getFile('dump.sql'));
+      } finally {
+        if (previous === undefined) delete process.env.CONTEXTPRO_MAX_FILE_SIZE;
+        else process.env.CONTEXTPRO_MAX_FILE_SIZE = previous;
+        if (previousMode === undefined) delete process.env.CONTEXTPRO_REFRESH;
+        else process.env.CONTEXTPRO_REFRESH = previousMode;
+      }
+    });
+  }
+
+  it('rechecks the size cap after acquiring the refresh lock', async () => {
+    const previous = process.env.CONTEXTPRO_MAX_FILE_SIZE;
+    process.env.CONTEXTPRO_MAX_FILE_SIZE = '1024';
+    try {
+      await writeFile(join(root, 'dump.sql'), 'select 1;');
+      await reindex({rootDir:root, noEmbed:true});
+      await writeFile(join(root, 'dump.sql'), 'select 2;');
+      const db = await getDB(root);
+      const original = db.getStaleFiles;
+      let scans = 0;
+      db.getStaleFiles = function (...args) {
+        if (++scans === 2) writeFileSync(join(root, 'dump.sql'), '-- grew while waiting\n'.repeat(200));
+        return original.apply(this, args);
+      };
+      try { assert.equal((await quickRefresh(root, {includeEmbeddings:false})).complete, true); }
+      finally { db.getStaleFiles = original; }
+      assert.equal(db.getFile('dump.sql'), null);
+    } finally {
+      if (previous === undefined) delete process.env.CONTEXTPRO_MAX_FILE_SIZE;
+      else process.env.CONTEXTPRO_MAX_FILE_SIZE = previous;
+    }
   });
 
   it("drains capped changes to already-indexed files across repeated stat-cache sweeps", async () => {

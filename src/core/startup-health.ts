@@ -30,6 +30,11 @@ function readBuildStamp(): string {
   }
 }
 
+// Capture identity when this module loads. Reading the artifact timestamp on
+// every health request falsely labels an old process as a newly compiled build.
+const runtimeBuild = Object.freeze({ serverVersion: readServerVersion(), buildStamp: readBuildStamp() });
+export function getRuntimeBuildIdentity(): typeof runtimeBuild { return runtimeBuild; }
+
 export interface StartupHealthReport {
   status: "ok" | "degraded";
   timestamp: string;
@@ -128,8 +133,7 @@ export async function runStartupHealthCheck(rootDir: string, options: { autoRepa
       parserBackend: "isolated-process/liftoff",
       nodeAbi: process.versions.modules ?? "unknown",
       pid: process.pid,
-      serverVersion: readServerVersion(),
-      buildStamp: readBuildStamp(),
+      ...getRuntimeBuildIdentity(),
     },
     project,
     storage: {

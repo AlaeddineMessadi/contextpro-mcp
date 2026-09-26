@@ -3,11 +3,12 @@
 
 import { applySearchPreset, formatSemanticCodeSearchData, semanticCodeSearchResults, invalidateSearchCache, type SemanticSearchOptions, type SemanticCodeSearchData } from "./semantic-search.js";
 import { formatSemanticIdentifierSearchData, semanticIdentifierSearchResults, invalidateIdentifierSearchCache, type SemanticIdentifierSearchOptions, type SemanticIdentifierSearchData } from "./semantic-identifiers.js";
-import { quickRefresh } from "./reindex.js";
+import { ensureFreshIndex } from "../core/index-freshness.js";
 import { loadProjectConfig } from "../core/project-config.js";
 import { persistArtifact, canonicalArtifactKey } from "../core/artifacts.js";
 import { buildFreshnessMetadata, buildTrustMetadata, getIndexState, type FreshnessMetadata, type TrustMetadata } from "../core/context-metadata.js";
 import { getDB } from "../core/db.js";
+import { discoveryPathWeight } from "./discovery-hints.js";
 import { withQueryEmbeddingCache, matchesSearchConstraints, type SearchResult } from "../core/embeddings.js";
 
 export { invalidateSearchCache, invalidateIdentifierSearchCache };
@@ -149,13 +150,17 @@ function buildAmbiguities(input: {
   ];
 }
 
-function extractIdentifierHints(query: string): string[] {
-  const rawTokens = query.match(/\b[A-Za-z_][A-Za-z0-9_]*\b/g) ?? [];
+export function extractIdentifierHints(query: string): string[] {
+  const rawTokens = query.match(/[A-Za-z_$][\w$]*/g) ?? [];
+  const marked = new Set([
+    ...[...query.matchAll(/[`'"]([A-Za-z_$][\w$]*)[`'"]/g)].map(match => match[1]),
+    ...[...query.matchAll(/\b(?:function|class|method|symbol|(?:definition|implementation)(?:\s+of)?)\s+([A-Za-z_$][\w$]*)/gi)].map(match => match[1]),
+  ]);
   const unique = new Map<string, string>();
   const queryTrimmed = query.trim();
   for (const token of rawTokens) {
-    if (token.length < 3) continue;
-    const looksIdentifier = /[A-Z_]/.test(token) || rawTokens.length === 1 || queryTrimmed === token;
+    if (token.length < 3 && rawTokens.length !== 1 && !marked.has(token)) continue;
+    const looksIdentifier = /[A-Z_$]/.test(token) || marked.has(token) || rawTokens.length === 1 || queryTrimmed === token;
     if (!looksIdentifier) continue;
     unique.set(token.toLowerCase(), token);
   }
@@ -172,13 +177,16 @@ async function applyExactSymbolFileBoosts(
   files: SemanticCodeSearchData | undefined,
   topK: number | undefined,
 ): Promise<SemanticCodeSearchData | undefined> {
-  if (!files || files.results.length === 0) return files;
+  if (!files) return files;
   const hints = extractIdentifierHints(query);
   if (hints.length === 0) return files;
 
   const db = await getDB(rootDir);
   const exactSymbols = hints.flatMap((hint) =>
-    db.searchSymbolsByName(hint).filter((symbol) => symbol.name.toLowerCase() === hint.toLowerCase())
+    // Prose capitalizations such as "Pro" are not evidence for a local `pro`
+    // variable in every test. Standalone name lookups remain case-insensitive.
+    db.searchSymbolsByName(hint).filter((symbol) => query.trim() === hint
+      ? symbol.name.toLowerCase() === hint.toLowerCase() : symbol.name === hint)
   );
   if (exactSymbols.length === 0) return files;
 
@@ -215,10 +223,11 @@ async function applyExactSymbolFileBoosts(
     // Keep exact-name evidence, but never let a zero-semantic result jump above a result with
     // strong semantic agreement. The keyword component remains honest at 100.
     const rawCombined = result.score + exactPathBoost + exactSymbolBoost;
-    const cap = result.semanticScore < 15 ? keywordOnlyCap : 100;
+    const weight = discoveryPathWeight(query, result.path);
+    const cap = (result.semanticScore < 15 ? keywordOnlyCap : 100) * weight;
     return {
       ...result,
-      score: Math.min(cap, Math.round(rawCombined * 100) / 100),
+      score: Math.max(result.score, Math.min(cap, Math.round(rawCombined * 100) / 100)),
       keywordScore: Math.min(100, Math.round(Math.max(result.keywordScore, matchedExactSymbols.length > 0 ? 96 : result.keywordScore) * 10) / 10),
       matchedSymbols: [...new Set([...matchedExactSymbols, ...result.matchedSymbols])],
       matchedSymbolLocations: [...new Set([...(symbolLocationsByPath.get(result.path) ?? []), ...result.matchedSymbolLocations])],
@@ -231,7 +240,7 @@ async function applyExactSymbolFileBoosts(
     boosted.push({
       path,
       // A hit found only through the symbol table stays below every strong semantic result.
-      score: keywordOnlyCap,
+      score: keywordOnlyCap * discoveryPathWeight(query, path),
       semanticScore: 0,
       keywordScore: 100,
       header: dbFile?.header ?? "",
@@ -255,22 +264,11 @@ export function unifiedSearchData(options: UnifiedSearchOptions): Promise<Unifie
 async function unifiedSearchDataUncached(options: UnifiedSearchOptions): Promise<UnifiedSearchData> {
   const started = performance.now();
   options = { ...options, ...applySearchPreset(options) };
-  let refreshError: string | null = null;
-  const refreshState = await quickRefresh(options.rootDir, { includeEmbeddings: false }).catch((error) => {
-    refreshError = error instanceof Error ? error.message : String(error);
-    return { staleCount: 0, refreshed: false, complete: false, remainingStaleCount: undefined, indexingTimedOut: false };
-  });
+  const refreshState = await ensureFreshIndex(options.rootDir);
   const { staleCount, refreshed } = refreshState;
   const refreshedAt = performance.now();
   const mode = options.mode ?? "hybrid";
-  let staleWarning: string | null = null;
-  if (refreshError) {
-    staleWarning = `Index refresh failed: ${refreshError}. Results may be incomplete.`;
-  } else if (refreshState.indexingTimedOut) {
-    staleWarning = "Indexing is still in progress. Wait for it to finish before trusting search results.";
-  } else if (!refreshState.complete) {
-    staleWarning = `${refreshState.remainingStaleCount ?? staleCount} files remain stale. Run reindex for accurate results.`;
-  }
+  const staleWarning = refreshState.warning;
 
   const [config, indexState] = await Promise.all([
     loadProjectConfig(options.rootDir),
@@ -280,8 +278,7 @@ async function unifiedSearchDataUncached(options: UnifiedSearchOptions): Promise
     staleCount,
     refreshed,
     warning: staleWarning,
-    complete: refreshState.complete,
-    remainingStaleCount: refreshState.remainingStaleCount,
+    complete: refreshState.checked && !refreshState.warning,
   });
   const repo = {
     root: options.rootDir,

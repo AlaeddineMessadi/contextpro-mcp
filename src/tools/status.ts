@@ -10,6 +10,7 @@ import { extname } from "path";
 import { loadProjectConfig } from "../core/project-config.js";
 import { getIndexState } from "../core/context-metadata.js";
 import { getToolTimingSnapshots } from "../core/tool-metrics.js";
+import { getRuntimeBuildIdentity } from "../core/startup-health.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -34,6 +35,7 @@ export interface EmbeddingStatus {
 }
 
 export interface StatusSnapshot {
+  runtime: ReturnType<typeof getRuntimeBuildIdentity> & { pid: number };
   repo: {
     root: string;
     projectId: string | null;
@@ -162,7 +164,7 @@ export async function getStatusData(options: StatusOptions): Promise<StatusSnaps
     } else if (indexState.state === "empty") {
       warnings.push("Semantic embeddings are empty because the index has never been built. Run reindex.");
     } else {
-      warnings.push("Semantic embeddings are empty. They will populate lazily on the first search call (cold cost depends on file count). Run reindex to warm them eagerly.");
+      warnings.push("Semantic embeddings are empty; discovery uses lexical ranking. Search does not generate corpus embeddings. Configure an embedding provider and run reindex without no_embed to populate them.");
     }
   }
   if (embeddings.stale) {
@@ -170,6 +172,7 @@ export async function getStatusData(options: StatusOptions): Promise<StatusSnaps
   }
 
   return {
+    runtime: { ...getRuntimeBuildIdentity(), pid: process.pid },
     repo: {
       root: options.rootDir,
       projectId: config?.projectId ?? null,
@@ -224,6 +227,7 @@ export async function getStatus(options: StatusOptions): Promise<string> {
 
   const lines = [
     `=== ContextPro Status ===`,
+    `Runtime: ${snapshot.runtime.serverVersion} | Build: ${snapshot.runtime.buildStamp ?? "unknown"} | PID: ${snapshot.runtime.pid}`,
     ``,
     `Project: ${options.rootDir.split("/").pop()} (${projectType})`,
     `Project ID: ${snapshot.repo.projectId ?? "unknown"} | Client ID: ${snapshot.repo.clientId ?? "none"}`,

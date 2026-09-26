@@ -12,7 +12,7 @@ import { autoGenerateHubData } from "./feature-hub.js";
 import { refreshMemoryEmbeddings, toolUpsertMemoryNode } from "./memory-tools.js";
 import { resolveProjectPath } from "../core/path-guard.js";
 import { getEmbedProvider, getEmbedModel } from "../core/embeddings.js";
-import { matchesFileFingerprint, readSourceSnapshot } from "../core/file-fingerprint.js";
+import { matchesFileFingerprint, maxSourceFileSize, readSourceSnapshot } from "../core/file-fingerprint.js";
 import { getExtractorStamp } from "../core/extractor-stamp.js";
 
 export interface ReindexOptions {
@@ -60,7 +60,6 @@ const INDEX_OWNER_PID_KEY = "index_owner_pid";
 const LAST_INDEX_ERROR_KEY = "last_index_error";
 const INDEXING_STATUS = "indexing";
 const IDLE_STATUS = "idle";
-const MAX_SEARCH_BODY_CHARS = 4000;
 
 function tryAcquireIndexLock(db: ContextPlusDB, targetPath: string): boolean {
   const extra: Array<[string, string]> = [
@@ -86,27 +85,9 @@ function detectLanguage(filePath: string): string | null {
     ".ts": "typescript", ".tsx": "typescript", ".js": "javascript", ".jsx": "javascript",
     ".mjs": "javascript", ".py": "python", ".rs": "rust", ".go": "go",
     ".java": "java", ".cs": "csharp", ".c": "c", ".cpp": "cpp",
-    ".rb": "ruby", ".swift": "swift", ".kt": "kotlin",
+    ".rb": "ruby", ".swift": "swift", ".kt": "kotlin", ".sql": "sql",
   };
   return map[ext] ?? null;
-}
-
-function buildSearchBody(content: string): string {
-  const lines = content.split("\n");
-  const selected: string[] = [];
-
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (!trimmed) continue;
-    const isComment = /^(\/\/|#|--|\/\*|\*)/.test(trimmed);
-    const isMeaningfulCode = /\b(function|class|interface|type|const|let|var|def|return|if|for|while|match|case|filter|map|reduce|where|select)\b/.test(trimmed);
-    if (!isComment && !isMeaningfulCode) continue;
-    selected.push(trimmed.slice(0, 180));
-    if (selected.join("\n").length >= MAX_SEARCH_BODY_CHARS) break;
-  }
-
-  const summary = selected.join("\n");
-  return (summary || content).slice(0, MAX_SEARCH_BODY_CHARS);
 }
 
 function toProjectRelative(rootDir: string, candidate: string): string | null {
@@ -387,8 +368,7 @@ export async function reindex(options: ReindexOptions): Promise<string> {
         // Hard size cap to defend against checked-in minified bundles and other megabyte-scale
         // pseudo-source files. Default 5MB; env-var override for projects that genuinely need
         // a higher cap.
-        const sizeCapEnv = parseInt(process.env.CONTEXTPRO_MAX_FILE_SIZE ?? process.env.CONTEXTPLUS_MAX_FILE_SIZE ?? "", 10);
-        const sizeCap = Number.isFinite(sizeCapEnv) && sizeCapEnv > 0 ? sizeCapEnv : 5 * 1024 * 1024;
+        const sizeCap = maxSourceFileSize();
         const fileStats = await stat(file.path).catch(() => null);
         if (fileStats && fileStats.size > sizeCap) {
           process.stderr.write(`[contextpro/reindex] skipping oversized file (${(fileStats.size / 1024 / 1024).toFixed(2)} MB > ${(sizeCap / 1024 / 1024).toFixed(2)} MB cap): ${file.relativePath}\n`);
@@ -449,7 +429,7 @@ export async function reindex(options: ReindexOptions): Promise<string> {
             header: analysis.header,
             language: lang,
             symbols: flatSymbols.map((s) => ({ name: s.name, kind: s.kind, signature: s.signature })),
-            content: buildSearchBody(content),
+            content, // Full source for local FTS; embedding summaries stay separate.
           });
 
           replaceFileImports(db, options.rootDir, fileId, file.relativePath, imports, resolvablePaths);
@@ -630,10 +610,17 @@ async function quickRefreshAttempt(rootDir: string, options: QuickRefreshOptions
   const indexedByPath = new Map(indexedBefore.map((file) => [file.path, file] as const));
   const hashMode = (process.env.CONTEXTPRO_REFRESH ?? process.env.CONTEXTPLUS_REFRESH ?? "").trim().toLowerCase() === "hash";
   const currentHashes = new Map<string, string>();
+  const currentPaths = new Set(files.map((f) => f.relativePath));
   const fingerprintUpdates: Array<{ path: string; size: number; mtimeMs: number; ctimeMs: number; hash: string }> = [];
   for (const file of files) {
     try {
       const fileStats = await stat(file.path);
+      if (fileStats.size > maxSourceFileSize()) {
+        // Exclude newly oversized files and remove any prior indexed contents.
+        // Do this before fingerprint/hash reads, including explicit hash mode.
+        currentPaths.delete(file.relativePath);
+        continue;
+      }
       const existing = indexedByPath.get(file.relativePath);
       if (!hashMode && existing && matchesFileFingerprint(existing, fileStats)) {
         currentHashes.set(file.relativePath, existing.content_hash);
@@ -653,7 +640,6 @@ async function quickRefreshAttempt(rootDir: string, options: QuickRefreshOptions
   }
 
   const stale = db.getStaleFiles(currentHashes);
-  const currentPaths = new Set(files.map((f) => f.relativePath));
   const added = [...currentPaths].filter((path) => !indexedByPath.has(path));
   const removed = db.getRemovedFiles(currentPaths);
   let totalStale = new Set([...stale, ...added, ...removed]).size;
@@ -700,6 +686,11 @@ async function quickRefreshAttempt(rootDir: string, options: QuickRefreshOptions
       for (const path of changedAfterLock) {
         try {
         const fullPath = resolveProjectPath(rootDir, path, "indexed file");
+        if ((await stat(fullPath)).size > maxSourceFileSize()) {
+          // The file may have grown since the initial scan while awaiting the lock.
+          if (db.getFile(path)) { db.deleteFile(path); removedAfterLock.push(path); }
+          continue;
+        }
         const snapshot = await readSourceSnapshot(fullPath);
         const content = snapshot.content;
         const hash = hashContent(content);
@@ -725,7 +716,7 @@ async function quickRefreshAttempt(rootDir: string, options: QuickRefreshOptions
             header: analysis.header,
             language: lang,
             symbols: flatSymbols.map((s) => ({ name: s.name, kind: s.kind, signature: s.signature })),
-            content: buildSearchBody(content),
+            content, // Full source for local FTS; embedding summaries stay separate.
           });
           replaceFileImports(db, rootDir, fileId, path, imports, resolvablePaths);
           db.upsertCallSites(fileId, callSites);
@@ -898,7 +889,7 @@ export async function refreshFilesStructural(
           header: analysis.header,
           language: lang,
           symbols: flatSymbols.map((s) => ({ name: s.name, kind: s.kind, signature: s.signature })),
-          content: buildSearchBody(content),
+          content, // Full source for local FTS; embedding summaries stay separate.
         });
         replaceFileImports(db, rootDir, fileId, path, imports, resolvablePaths);
         db.upsertCallSites(fileId, callSites);

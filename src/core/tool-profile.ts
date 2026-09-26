@@ -59,6 +59,7 @@ const WORKFLOW_TOOLS = new Set([
 ]);
 
 const MUTATING_TOOLS = new Set([
+  "discover_tools", // Compatibility dispatch can rebuild the derived index.
   "gc",
   "graph_export",
   "scip_import",

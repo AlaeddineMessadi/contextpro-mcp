@@ -13,7 +13,7 @@ interface Project {
   service: ts.LanguageService; touched: number;
 }
 const projects = new Map<string, Project>();
-const MAX_PROJECTS = 3;
+const MAX_PROJECTS = 1;
 const IDLE_MS = 60_000;
 let idleTimer: NodeJS.Timeout | undefined;
 
@@ -159,7 +159,7 @@ export function findTypeScriptReferences(input: { rootDir: string; files: string
   const checkedFiles = new Set<string>();
   let reusedProjects = 0;
   let projectCount = 0;
-  for (const [config, indexedFiles] of configs) {
+  const checkProject = (config: string, indexedFiles: string[]): void => {
     let options: ts.CompilerOptions = { allowJs: true, checkJs: false, jsx: ts.JsxEmit.ReactJSX, target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext, moduleResolution: ts.ModuleResolutionKind.NodeJs };
     let references: readonly ts.ProjectReference[] | undefined;
     let files = indexedFiles;
@@ -169,7 +169,7 @@ export function findTypeScriptReferences(input: { rootDir: string; files: string
       const errors = [loaded.error, ...parsed.errors].filter((error): error is ts.Diagnostic => !!error && error.code !== 18003);
       if (errors.length) {
         warnings.push(`Invalid configuration ${relative(root, config)}: ${ts.flattenDiagnosticMessageText(errors[0].messageText, " ")}`);
-        continue; // Do not pretend a guessed configuration resolved this project.
+        return; // Do not pretend a guessed configuration resolved this project.
       }
       options = { allowJs: true, ...parsed.options };
       references = parsed.projectReferences;
@@ -178,15 +178,19 @@ export function findTypeScriptReferences(input: { rootDir: string; files: string
       files = [...new Set([...indexedFiles, ...parsed.fileNames.filter(file => allowed.has(file))])].sort();
     }
     const { project, reused } = getProject(`${root}\0${config}`, root, files, options, references);
+    // The isolated worker exposes GC so disposed compiler graphs are reclaimed
+    // before allocating the next one. In-process callers use normal V8 GC.
+    if (!reused) global.gc?.();
     projectCount++; if (reused) reusedProjects++;
     const program = project.service.getProgram();
-    if (!program) { warnings.push(`Could not load project ${config || root}`); continue; }
+    if (!program) { warnings.push(`Could not load project ${config || root}`); return; }
     for (const file of indexedFiles) if (program.getSourceFile(file)) checkedFiles.add(file);
     // References need binding resolution, not a complete semantic typecheck of
     // all dependencies. Check unresolved workspace imports without paying for
     // unrelated diagnostic work (React Native projects can load thousands of libs).
     const resolutionCache = ts.createModuleResolutionCache(root, file => file, options);
     let unresolved = 0;
+    const unresolvedDetails: string[] = [];
     for (const file of indexedFiles) {
       for (const statement of program.getSourceFile(file)?.statements ?? []) {
         const specifier = ts.isImportDeclaration(statement) || ts.isExportDeclaration(statement) ? statement.moduleSpecifier : undefined;
@@ -196,12 +200,21 @@ export function findTypeScriptReferences(input: { rootDir: string; files: string
           const star = pattern.indexOf("*");
           return star < 0 ? name === pattern : name.startsWith(pattern.slice(0, star)) && name.endsWith(pattern.slice(star + 1));
         });
-        if (local && !ts.resolveModuleName(name, file, options, ts.sys, resolutionCache).resolvedModule) unresolved++;
+        if (local && !ts.resolveModuleName(name, file, options, ts.sys, resolutionCache).resolvedModule) {
+          // Existing bundler assets have no TypeScript declarations, but their
+          // absence from the compiler graph does not mean code callers are lost.
+          // Missing assets and unresolved code imports still produce warnings.
+          const asset = resolve(dirname(file), name.split(/[?#]/)[0]);
+          if (name.startsWith(".") && /\.(?:css|scss|sass|less|svg|png|jpe?g|gif|webp|ico|woff2?|ttf|eot)(?:[?#].*)?$/i.test(name)
+            && inRoot(root, asset) && ts.sys.fileExists(asset)) continue;
+          unresolved++;
+          if (unresolvedDetails.length < 5) unresolvedDetails.push(`${relative(root, file).slice(0, 200)}: ${name.slice(0, 120)}`);
+        }
       }
     }
-    if (unresolved) warnings.push(`${unresolved} unresolved workspace imports in ${config ? relative(root, config) : "inferred project"}; reference coverage may be incomplete.`);
+    if (unresolved) warnings.push(`${unresolved} unresolved workspace imports in ${config ? relative(root, config) : "inferred project"}; reference coverage may be incomplete. ${unresolvedDetails.join("; ")}${unresolved > unresolvedDetails.length ? `; +${unresolved - unresolvedDetails.length} more` : ""}`);
     const source = program.getSourceFile(target);
-    if (!source) continue;
+    if (!source) return;
     const starts = source.getLineStarts();
     if (!Number.isInteger(input.line) || input.line < 1 || input.line > starts.length) throw new Error("Reference target line is outside the source file.");
     const lineStart = starts[input.line - 1];
@@ -251,7 +264,16 @@ export function findTypeScriptReferences(input: { rootDir: string; files: string
       }
     }
   }
-  if (checkedFiles.size < allowed.size) warnings.push(`${allowed.size - checkedFiles.size} indexed TS/JS files could not be checked.`);
+  // A returned stack frame releases its program/checker before the next config.
+  // Keeping several monorepo programs alive duplicates large dependency graphs.
+  for (const [config, indexedFiles] of configs) {
+    if (configs.size > 1) {
+      clearTypeScriptReferenceCache();
+    }
+    checkProject(config, indexedFiles);
+  }
+  const unchecked = [...allowed].filter(file => !checkedFiles.has(file));
+  if (unchecked.length) warnings.push(`${unchecked.length} indexed TS/JS files could not be checked: ${unchecked.slice(0, 5).map(file => relative(root, file).slice(0, 200)).join(", ")}${unchecked.length > 5 ? `; +${unchecked.length - 5} more` : ""}.`);
   return { references: results, total: locations.size, counts,
     callsByFile: [...callsByFile].sort(([a], [b]) => a.localeCompare(b)).slice(0, 50).map(([file, calls]) => ({ file, calls })),
     callFileCount: callsByFile.size,

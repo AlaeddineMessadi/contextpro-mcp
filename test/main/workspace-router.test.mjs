@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -49,6 +49,21 @@ describe("workspace-router", () => {
     const first = await mod.resolveWorkspace(worktreeDir);
     const second = await mod.resolveWorkspace(worktreeDir);
     assert.equal(first, second);
+  });
+
+  it("uses the startup identity for a symlinked non-Git project", async () => {
+    const mod = await import('../../build/core/workspace-router.js');
+    const project = join(scratch,'plain');
+    const alias = join(scratch,'alias');
+    await mkdir(project);
+    await symlink(project,alias,'dir');
+    const first = await mod.resolveWorkspace(alias);
+    assert.equal(first.rootDir,project);
+    assert.equal(first.baseRoot,project);
+    assert.equal(await mod.resolveWorkspace(project),first);
+    assert.equal(mod.listActiveWorkspaces().length,1);
+    mod.forgetWorkspace(alias);
+    assert.equal(mod.listActiveWorkspaces().length,0);
   });
 
   it("resolves the main checkout to itself as base", async () => {

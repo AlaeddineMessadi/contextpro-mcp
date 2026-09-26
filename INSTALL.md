@@ -120,6 +120,7 @@ Do not rebuild shared `node_modules` merely to satisfy one client: clients using
 
 ## Worktrees and common problems
 
+- **Tools absent after a startup/handshake failure:** run the configured Node executable and server path directly to inspect stderr. `ERR_MODULE_NOT_FOUND` with a missing checkout `node_modules` directory means the installation is incomplete, not a discovery-profile problem. In that checkout, restore the locked dependencies with `npm ci` using the configured Node runtime, run `npm run build`, then reconnect/restart the MCP server in the client. Keep the configured checkout's dependencies and build while clients use it; deleting them to free disk space prevents startup. Native ABI failures have the separate recovery procedure above.
 - **Wrong repository/worktree:** subagents must pass their absolute worktree `root` on every call. Shell `cd` does not retarget a shared MCP server. Linked worktrees require explicit roots, including reindex calls; verify the chosen checkout before attempting recovery. Client-advertised roots may describe the parent agent.
 - **Stale embeddings:** check provider/model settings, then reindex. Interactive search does not rebuild the whole vector corpus.
 - **Slow or failed calls:** inspect `health` and `status`; use bounded results and keyword-only discovery when the provider is unavailable. Do not loop blindly on connection errors.

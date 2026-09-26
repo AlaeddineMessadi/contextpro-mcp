@@ -18,8 +18,10 @@ one-based line numbers, mutually exclusive with `symbol`.
 The response budget defaults to 4000 estimated tokens (UTF-8 bytes/4). Omissions
 are explicit; request narrower targets or raise the budget if evidence is missing.
 Exact identifier queries use lexical search; natural-language queries retain
-hybrid ranking. Large discovered files use bounded whole declarations selected
-by query-term coverage per byte. This is an extractive heuristic, not a trained
+hybrid ranking. Large discovered files use complete declarations and query-anchored
+interior ranges, ranked across files by weighted term coverage and output cost.
+Ranges preserve exact source text, but may omit surrounding control flow.
+This is an extractive heuristic, not a trained
 retrieval policy or a guarantee that all relevant code was found.
 
 Use `discover_tools` to enable editing, graph, validation or diagnostics only when
@@ -54,8 +56,51 @@ response budget. Batch requests reduce model turns and repeated input history.
 
 The default catalog exposes 14 workflow tools, including `exact_references`.
 For other experts, call `discover_tools(query:"rename")`, then
-`discover_tools(enable:["rename_symbol"])` to expose its schema for this session. Enabling does not execute the tool. Clients without dynamic
-catalog support can configure `CONTEXTPRO_TOOL_PROFILE=full` before startup.
+`discover_tools(enable:["rename_symbol"])` to expose its schema for this session.
+Enabling returns the requested schemas and does not execute the tool. If the client
+cannot refresh its catalog, tools marked `callable` can run through the existing tool:
+
+```json
+{"root":"/absolute/repo","call":{"name":"skeleton","arguments":{"file_path":"src/api.ts"}}}
+```
+
+Pass this to `discover_tools` after reading the enabled tool's schema. The fallback
+supports source reads, references, validation planning, status/health, and reindex;
+it excludes source edits and destructive maintenance. It uses the target's normal
+root routing, validation, freshness and metrics. Put `root` only at the top level.
+For other experts, configure `CONTEXTPRO_TOOL_PROFILE=full` before startup.
+Unknown top-level arguments and unknown `context.targets` keys are rejected;
+use `root` and `max_tokens`, not `projectPath` or `maxTokens`.
+`context` accepts 1–6 exact targets and an integer `max_tokens` from 512 to 12000
+(default 4000, estimated UTF-8 bytes/4). Split larger batches or narrow the ranges.
+Discovery checks structural freshness and falls back to a structural reindex when
+the quick-refresh threshold is exceeded, without generating embeddings or hubs.
+`CONTEXTPRO_AUTO_REFRESH=false` disables that maintenance; freshness warnings remain
+visible. Exact targets read current source without initializing the index.
+Project verification leaves unchanged configuration files untouched. Actual config
+updates use a temporary file and atomic replacement so failed writes preserve the
+previous settings. Initialization, indexing and other persistent operations still
+need writable storage; this is not a general read-only server mode.
+Literal symbol names in discovery queries prioritize their definitions; large
+bodies can still be partial, so inspect the returned ranges and omissions.
+Literal UI phrases, including Unicode text, use full-source local text search;
+matching lines get priority in the returned source windows. Quotes can delimit
+the phrase. Existing summary-only indexes rebuild automatically on refresh.
+Repository orientation queries also include structural entry points, import hubs,
+their dependencies and a root README when available. File mentions within an
+overview supplement that orientation instead of narrowing it to the named files.
+Outside an overview, explicit `Read path/to/file`
+queries prioritize up to six known indexed or discovered document paths, returning whole files when the
+budget permits; use `targets` for deterministic reads without discovery.
+Project-status, readiness, handoff and documentation queries also search visible
+Markdown/text filenames and bounded heading/intro previews, even when those files
+are outside the structural index. This respects repository ignore rules and skips
+symlinks. At most 64 document prefixes (16 KiB each) are inspected and six documents
+selected; omissions remain explicit. These excerpts do not prove the newest or
+complete project status. Use exact reads for the selected report's remaining sections.
+General discovery downweights dependency lockfiles. When source alternatives
+exist, `context` excludes lockfiles unless the query names one or asks about
+dependencies or resolution; lockfile-only evidence remains available.
 
 Do not repeat the entire workflow for a one-line lookup. Check supporting import
 pointers before trusting a top result as the complete edit scope. If a packet says
@@ -157,11 +202,22 @@ to regex parsing when unavailable; this is reduced precision, not exact semantic
 analysis. Supported-language syntax validation fails closed on parser failure.
 `health` reports the executable path and parser backend so a client using an old
 cached launch command is visible. Restart the client to reload changed MCP config.
+Both `health` and `status` include the version and build timestamp captured when
+the process loaded, plus its PID. Rebuilding on disk does not update that running
+identity; restart the server to load the new build. `health` checks runtime and
+storage readiness. Use `status` for index freshness and vector availability.
+An empty vector index uses lexical discovery; searches do not generate corpus
+embeddings. Configure a provider and reindex without `no_embed` when semantic
+retrieval is required.
 
 ## Reference counts and compiler availability
 
 `exact_references` uses TS/JS project configuration, inherited aliases and referenced
-source projects. Indexed tests remain in scope even when excluded from production
+source projects. With a TS/JS `file` and no `line`, it infers a named declaration
+from current source, including interface and object properties. Several candidates
+produce an ambiguity warning; pass `file` and `line` to select the intended binding.
+If no declaration exists, the response requests an explicit occurrence rather than
+assuming line one. Indexed tests remain in scope even when excluded from production
 compilation. Retained compiler services observe source/config changes and run in a
 separate worker with a 30-second active deadline and idle disposal. Cold initialization
 can still be slow; retry or use native/compiler tools when analysis cannot complete.

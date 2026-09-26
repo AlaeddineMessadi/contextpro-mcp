@@ -16,6 +16,7 @@ import {
 } from "../core/embeddings.js";
 import { getDB, type FileRow, type SymbolRow } from "../core/db.js";
 import { resolveProjectPath } from "../core/path-guard.js";
+import { discoveryPathWeight, queryLiterals } from "./discovery-hints.js";
 
 const FILE_SEARCH_SOURCE_TYPE = "file_search_cache";
 import { readFile, stat } from "fs/promises";
@@ -273,27 +274,9 @@ function queryTerms(query: string): string[] {
   return searchTerms(query);
 }
 
-function hasTestIntent(query: string): boolean {
-  return /\b(test|tests|spec|coverage|regression|assert|fixture)\b/i.test(query);
-}
-
-function isLikelyTestPath(path: string): boolean {
-  const name = path.split("/").pop()?.toLowerCase() ?? path.toLowerCase();
-  return /\.test\.\w+$|\.spec\.\w+$|\.demo\.\w+$/.test(path)
-    || /^test_[^/]+\.py$/.test(name)
-    || /_test\.py$/.test(name);
-}
-
 function rankSearchResults(query: string, results: SearchResult[], topK: number | undefined): SearchResult[] {
-  const queryWantsTests = hasTestIntent(query);
   return results
-    .map((result) => {
-      if (queryWantsTests || !isLikelyTestPath(result.path)) return result;
-      return {
-        ...result,
-        score: Math.round(result.score * 8.2) / 10,
-      };
-    })
+    .map(result => ({ ...result, score: result.score * discoveryPathWeight(query, result.path) }))
     .sort((a, b) => b.score - a.score || b.semanticScore - a.semanticScore || b.keywordScore - a.keywordScore || a.path.localeCompare(b.path))
     .slice(0, topK ?? 5);
 }
@@ -301,8 +284,13 @@ function rankSearchResults(query: string, results: SearchResult[], topK: number 
 async function fuseFtsMatches(rootDir: string, query: string, results: SearchResult[], topK: number | undefined, options: SemanticSearchOptions): Promise<SearchResult[]> {
   if (options.requireSemanticMatch) return results;
   const db = await getDB(rootDir);
-  const ftsQuery = /^[A-Za-z_$][\w$]*$/.test(query.trim()) ? query : queryTerms(query).join(" ");
-  const ftsMatches = db.searchFileText(ftsQuery, Math.max((topK ?? 5) * 4, 20));
+  // FTS tokenization preserves compound identifiers. Splitting listOwnMedia
+  // into prose (list own media) rewards unrelated text over its actual callers.
+  const ftsQuery = query;
+  const candidateLimit = Math.max((topK ?? 5) * 4, 20);
+  const literalMatches = queryLiterals(query).flatMap(literal => db.searchFileText(literal, candidateLimit, true));
+  const literalPaths = new Set(literalMatches.map(match => match.path));
+  const ftsMatches = [...new Map([...literalMatches, ...db.searchFileText(ftsQuery, candidateLimit)].map(match => [match.path, match])).values()];
   if (ftsMatches.length === 0) return results;
   const terms = queryTerms(query);
   const byPath = new Map(results.map((result) => [result.path, result]));
@@ -316,7 +304,7 @@ async function fuseFtsMatches(rootDir: string, query: string, results: SearchRes
 
   for (let i = 0; i < ftsMatches.length; i++) {
     const match = ftsMatches[i];
-    const lexicalScore = Math.max(45, 100 - i * 6);
+    const lexicalScore = literalPaths.has(match.path) ? 100 : Math.max(45, 100 - i * 6);
     const existing = byPath.get(match.path);
     if (existing) {
       const semantic = existing.semanticScore;
@@ -354,8 +342,9 @@ async function fuseFtsMatches(rootDir: string, query: string, results: SearchRes
     .filter((result) => !options.requireKeywordMatch || result.keywordScore > 0)
     .filter((result) => options.minKeywordScore === undefined || result.keywordScore >= (options.minKeywordScore > 1 ? options.minKeywordScore : options.minKeywordScore * 100))
     .filter((result) => options.minCombinedScore === undefined || result.score >= (options.minCombinedScore > 1 ? options.minCombinedScore : options.minCombinedScore * 100))
-    .sort((a, b) => b.score - a.score || b.keywordScore - a.keywordScore || a.path.localeCompare(b.path))
-    .slice(0, topK ?? 5);
+    // Intent-aware ranking must run before truncation, otherwise locale copies
+    // and tests consume the candidate window before implementations compete.
+    .sort((a, b) => b.score - a.score || b.keywordScore - a.keywordScore || a.path.localeCompare(b.path));
 }
 
 const INLINE_CRUX_LINES = 8;

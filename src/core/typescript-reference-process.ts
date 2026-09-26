@@ -4,6 +4,9 @@ import type { findTypeScriptReferences } from "./typescript-references.js";
 type Input = Parameters<typeof findTypeScriptReferences>[0];
 type Result = ReturnType<typeof findTypeScriptReferences>;
 interface Pending { id: number; input: Input; resolve: (value: Result) => void; reject: (error: Error) => void }
+// Full compiler graphs for ordinary monorepos exceed 512 MB even when projects
+// are disposed sequentially. This is a ceiling, not an up-front allocation.
+const DEFAULT_HEAP_MB = 1024;
 
 /** Compiler work cannot block MCP heartbeats or take down the stdio process. */
 export class TypeScriptReferenceProcess {
@@ -13,7 +16,7 @@ export class TypeScriptReferenceProcess {
   private deadline: NodeJS.Timeout | undefined;
   private idle: NodeJS.Timeout | undefined;
   private sequence = 0;
-  constructor(private options: { worker?: URL; timeoutMs?: number; idleMs?: number } = {}) {}
+  constructor(private options: { worker?: URL; timeoutMs?: number; idleMs?: number; heapMb?: number } = {}) {}
 
   query(input: Input): Promise<Result> {
     if (this.queue.length >= 16 || input.files.length > 20_000) return Promise.reject(new Error("Reference lookup exceeds queue or file capacity; narrow the workspace."));
@@ -35,12 +38,29 @@ export class TypeScriptReferenceProcess {
     clearTimeout(this.idle);
     try {
       if (!this.child) {
+        const configured = this.options.heapMb ?? Number(process.env.CONTEXTPRO_REFERENCE_HEAP_MB ?? DEFAULT_HEAP_MB);
+        const heapMb = Number.isInteger(configured) && configured >= 256 && configured <= 4096 ? configured : DEFAULT_HEAP_MB;
+        let stderrTail = "";
+        let outOfMemory = false;
         const child = fork(this.options.worker ?? new URL("./typescript-reference-worker.js", import.meta.url), [], {
-          execArgv: ["--max-old-space-size=512"], stdio: ["ignore", "ignore", "inherit", "ipc"], serialization: "advanced",
+          execArgv: [`--max-old-space-size=${heapMb}`, "--expose-gc"], stdio: ["ignore", "ignore", "pipe", "ipc"], serialization: "advanced",
         });
         this.child = child;
+        child.stderr?.on("data", chunk => {
+          stderrTail = (stderrTail + String(chunk)).slice(-8192);
+          outOfMemory ||= /heap out of memory|allocation failed|reached heap limit/i.test(stderrTail);
+        });
+        // Captured diagnostics must not keep an otherwise idle MCP/test process
+        // alive. Active requests are held by the child and deadline timer.
+        (child.stderr as typeof child.stderr & { unref?: () => void })?.unref?.();
         child.on("error", error => { if (this.child === child) this.fail(error); });
-        child.on("exit", (code, signal) => { if (this.child === child) this.fail(new Error(`Reference worker exited (${signal ?? code}); retry or use native references.`)); });
+        // close follows stderr drain, so an OOM report cannot race the exit event.
+        child.on("close", (code, signal) => {
+          if (this.child !== child) return;
+          this.fail(new Error(outOfMemory
+            ? `Reference worker exhausted its ${heapMb} MB JavaScript heap; no reference result is available. Set CONTEXTPRO_REFERENCE_HEAP_MB (256–4096) to a larger limit and restart the MCP host, or use native references.`
+            : `Reference worker exited (${signal ?? code}); retry or use native references.`));
+        });
         child.on("message", (message: { id?: number; result?: Result; error?: string }) => {
           if (this.child !== child || !this.active || message?.id !== this.active.id) return;
           clearTimeout(this.deadline);

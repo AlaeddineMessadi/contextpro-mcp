@@ -4,6 +4,7 @@
 // so parallel agents in different worktrees each hit the correct index.
 
 import { resolve } from "path";
+import { realpath } from "fs/promises";
 import { detectWorktreeInfo } from "./project-config.js";
 import { validateSelectedRoot } from "./root-guard.js";
 import { seedWorktreeFromBase } from "./worktree-seed.js";
@@ -44,12 +45,16 @@ export async function resolveWorkspace(
   defaultRoot?: string,
   beforeInitialize?: (workspace: ResolvedWorkspace) => Promise<void>,
 ): Promise<ResolvedWorkspace> {
-  const normalized = normalizeRequestRoot(requestRoot, defaultRoot);
+  const requested = normalizeRequestRoot(requestRoot, defaultRoot);
+  // Startup canonicalizes symlinks too. Keep one identity/cache entry for an
+  // alias and its real directory, including projects without Git metadata.
+  const normalized = await realpath(requested).catch(() => requested);
   const cached = workspaces.get(normalized);
   if (cached) {
     // Routing must be checked for every request: worktrees may have appeared
     // since this metadata was cached, or the prior caller passed an explicit root.
     if (beforeInitialize) await beforeInitialize(cached);
+    workspaces.set(requested, cached);
     return cached;
   }
 
@@ -79,8 +84,9 @@ export async function resolveWorkspace(
     }
   }
 
-  // Cache under both the request-normalized path and the resolved worktree root,
+  // Cache under the request path, canonical path and resolved worktree root,
   // since git may realpath the toplevel to a different string than the request.
+  workspaces.set(requested, workspace);
   workspaces.set(normalized, workspace);
   workspaces.set(workspace.rootDir, workspace);
   return workspace;
@@ -97,7 +103,8 @@ export function listActiveWorkspaces(): ResolvedWorkspace[] {
 
 /** Drop a single workspace from the cache (e.g. on worktree teardown). */
 export function forgetWorkspace(rootDir: string): void {
-  const normalized = resolve(rootDir);
+  const requested = resolve(rootDir);
+  const normalized = workspaces.get(requested)?.rootDir ?? requested;
   for (const [key, ws] of workspaces) {
     if (key === normalized || ws.rootDir === normalized) workspaces.delete(key);
   }

@@ -24,6 +24,22 @@ describe("file-skeleton", async () => {
       assert.match(result, /values/);
       assert.doesNotMatch(result, /return first/);
     });
+    it("preserves multiline imports and never renders import fragments as header comments", async () => {
+      const source = `import {
+  cleanText,
+  cookie,
+  type Claims,
+  verify as check,
+} from './security';
+import * as namespace from './other';
+export function run() { return check(cookie()); }
+`;
+      await writeFile(join(FIXTURE_DIR, "imports.ts"), source);
+      const result = await getFileSkeleton({ rootDir: FIXTURE_DIR, filePath: "imports.ts" });
+      assert.match(result, /\.\/security: cleanText, cookie, Claims, verify/);
+      assert.match(result, /\.\/other: namespace/);
+      assert.doesNotMatch(result, /\/\/ cleanText|cookie, \|/);
+    });
     it("returns skeleton for a TypeScript file", async () => {
       await writeFile(
         join(FIXTURE_DIR, "app.ts"),
