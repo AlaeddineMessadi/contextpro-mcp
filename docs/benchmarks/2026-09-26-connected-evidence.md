@@ -57,7 +57,8 @@ CONTEXTPRO_PILOT_OUTPUT=/absolute/output node scripts/benchmark-coding-pilot.mjs
 CONTEXTPRO_PILOT_OUTPUT=/absolute/output node scripts/benchmark-coding-pilot.mjs --run
 ```
 
-`--recheck` requalifies validators. Do not prepare/recheck concurrently in one
+`CONTEXTPRO_PILOT_CODEX` selects a specific CLI executable; its path and version
+are recorded with the campaign. `--recheck` requalifies validators. Do not prepare/recheck concurrently in one
 output directory. Existing `runs.json` is never overwritten.
 `CONTEXTPRO_PILOT_VARIANTS` also accepts `native` and
 `CONTEXTPRO_PILOT_REPEATS` supports repeated runs. This campaign uses only
@@ -89,4 +90,14 @@ open. This development replay does not demonstrate a coding-task speed gain.
 
 ## Coding-pilot results
 
-Pending the frozen campaign.
+The frozen candidate is `ba3d3aa789173cf0579e588158acc04e0f87358b`. Its compiled
+JavaScript fingerprint is `6dae30731cbe2fd0a53c8b113d72342ca0b20663cf48b479012e09c036f17292`;
+baseline fingerprint is `58600b5288de007ec603d7317dd71e5b9fcfca5c6be7416fc13a0dba56148741`.
+
+Four initial starts through standalone CLI 0.154.0 rejected `gpt-6-sol` before
+coding (zero source calls/patches, usage unavailable). Execution was stopped;
+these infrastructure failures are retained separately. Desktop bundled CLI
+0.155.0-alpha.16.4 accepted the same model in a readiness probe (18,191 input,
+11,776 cached-input subset, 5 output tokens), counted as setup rather than a
+coding task. The unchanged 16-trial contract runs with that executable at
+`gpt-6-sol` / `xhigh`. Results are pending.

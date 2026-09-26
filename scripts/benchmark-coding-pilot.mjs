@@ -127,9 +127,11 @@ if (flags.has('--prepare') || flags.has('--recheck')) {
   if (await existing(join(output, 'runs.json'))) throw Error('runs.json exists; never silently overwrite/retry a campaign');
   const config = JSON.parse((await exec('python3', ['-c', 'import pathlib,tomllib,json; c=tomllib.loads((pathlib.Path.home()/".codex/config.toml").read_text()); print(json.dumps({k:c.get(k) for k in ("model","model_reasoning_effort")}))'])).stdout);
   if (!config.model) throw Error('Explicit configured agent model required');
+  const agentCommand = process.env.CONTEXTPRO_PILOT_CODEX ?? 'codex';
+  const agentVersion = (await exec(agentCommand, ['--version'])).stdout.trim();
   const launchers = Object.fromEntries(['baseline', 'candidate'].map(variant => [variant, { command: process.execPath, args: [join(output, variant, 'build/index.js')] }]));
   const fingerprints = Object.fromEntries(await Promise.all(Object.entries(launchers).map(async ([variant, launcher]) => [variant, await fingerprintLauncher(launcher)])));
-  await save(join(output, 'plan.json'), { contractHash, plan, config, fingerprints, dependencyPolicy: 'APFS copies of existing installed dependencies, identical per task; not a clean lockfile install', contextPolicy: 'structurally seeded, no corpus embeddings; local semantic evaluation is a separate campaign' });
+  await save(join(output, 'plan.json'), { contractHash, plan, config, agentCommand, agentVersion, fingerprints, dependencyPolicy: 'APFS copies of existing installed dependencies, identical per task; not a clean lockfile install', contextPolicy: 'structurally seeded, no corpus embeddings; local semantic evaluation is a separate campaign' });
   const rows = [];
   for (const trial of plan) {
     const task = tasks.find(task => task.id === trial.taskId), label = `${task.id}-${trial.repeat}-${trial.variant}`;
@@ -158,7 +160,7 @@ if (flags.has('--prepare') || flags.has('--recheck')) {
     }
     const prompt = `${task.prompt}\n\nImplement and validate the change in this isolated repository. Do not browse, delegate, inspect files outside this repository, or access another checkout or git history. Do not alter dependency installations. Preserve unrelated behavior and stop when done. ${launcher ? 'Use ContextPro first for unfamiliar code, bounded outputs and batched reads. Native search and reads are available when needed. Pass this absolute repository root to every MCP call.' : 'Use ordinary native search and file reads.'}`;
     const collector = createEventCollector(), start = performance.now();
-    const child = spawn('codex', ['exec', '--ignore-user-config', '--ephemeral', '--json', '--sandbox', 'workspace-write', '-C', root, ...overrides.flatMap(value => ['-c', value]), prompt], { cwd: root, detached: process.platform !== 'win32', stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn(agentCommand, ['exec', '--ignore-user-config', '--ephemeral', '--json', '--sandbox', 'workspace-write', '-C', root, ...overrides.flatMap(value => ['-c', value]), prompt], { cwd: root, detached: process.platform !== 'win32', stdio: ['ignore', 'pipe', 'pipe'] });
     let stdout = '', stderr = '', timedOut = false;
     child.stdout.on('data', chunk => { stdout += chunk; collector.push(chunk.toString(), performance.now() - start); }); child.stderr.on('data', chunk => { stderr += chunk; });
     const kill = signal => { try { process.kill(-child.pid, signal); } catch {} };
