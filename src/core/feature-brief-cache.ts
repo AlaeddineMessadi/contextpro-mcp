@@ -19,7 +19,8 @@ export const briefQuery = (query: string) => query.trim().replace(/\s+/g, " ");
 
 function validCitations(brief: FeatureBrief): boolean {
   if (!Array.isArray(brief.files) || !brief.files.every(file => typeof file === "string")
-    || !Array.isArray(brief.citations) || !Array.isArray(brief.facts) || !Array.isArray(brief.interpretations)) return false;
+    || !Array.isArray(brief.citations) || !Array.isArray(brief.facts) || !Array.isArray(brief.interpretations)
+    || !Array.isArray(brief.warnings) || !brief.warnings.every(warning => typeof warning === "string")) return false;
   const ids = new Set<string>();
   for (const citation of brief.citations) {
     if (!citation || !/^E\d+$/.test(citation.id) || ids.has(citation.id) || !brief.files.includes(citation.file)
@@ -31,7 +32,7 @@ function validCitations(brief: FeatureBrief): boolean {
     && brief.interpretations.every(claim => claim && typeof claim.text === "string" && Array.isArray(claim.citations)
       && claim.citations.length > 0 && claim.citations.every(id => ids.has(id)));
 }
-export async function featureSignature(rootDir: string, files: string[], expectedHashes?: Record<string, string>): Promise<string | null> {
+export async function featureSignature(rootDir: string, files: string[], expectedHashes?: Record<string, string>, citations?: BriefCitation[]): Promise<string | null> {
   const db = await getDB(rootDir), rows: unknown[] = [];
   for (const file of [...files].sort()) {
     try {
@@ -41,6 +42,10 @@ export async function featureSignature(rootDir: string, files: string[], expecte
       if (source.length > 2_000_000) return null;
       const sourceHash = createHash("sha256").update(source).digest("hex");
       if (expectedHashes && expectedHashes[file] !== sourceHash) return null;
+      if (citations) {
+        const lineCount = source.toString("utf8").split("\n").length;
+        if (citations.some(citation => citation.file === file && (citation.hash !== sourceHash || citation.end > lineCount))) return null;
+      }
       const row = db.getFile(file);
       if (!row) return null;
       const edges = [...db.getImportsFrom(row.id).map(edge => `out:${edge.target_path}:${edge.target_file_id ? db.getFileById(edge.target_file_id)?.path : "?"}`),
@@ -59,7 +64,7 @@ export async function lookupFeatureBrief(rootDir: string, query: string): Promis
       const brief = artifact?.payload;
       if (!brief || artifact?.repoRoot !== resolve(rootDir) || brief.query !== briefQuery(query) || brief.version !== FEATURE_BRIEF_VERSION
         || (brief.model !== "deterministic" && brief.model !== model) || !validCitations(brief)) continue;
-      if (await featureSignature(rootDir, brief.files) === brief.signature) return { artifact: ref, brief };
+      if (await featureSignature(rootDir, brief.files, undefined, brief.citations) === brief.signature) return { artifact: ref, brief };
     }
   } catch { /* A corrupt or unavailable cache is a miss. */ }
   return null;

@@ -132,6 +132,15 @@ it('feature briefs invalidate on source, dependency membership and model changes
     const corrupt = { ...cached.brief, query: 'corrupt brief', interpretations: [{ text: 'Unsupported cached claim', citations: ['E999'] }] };
     await persistArtifact({ rootDir: root, kind: 'feature_brief', key: 'invalid-cached-citation', payload: corrupt });
     assert.equal(await lookupFeatureBrief(root, 'corrupt brief'), null);
+    for (const [name, change] of [
+      ['out-of-source-range', brief => { brief.citations[0].end = 999999; }],
+      ['wrong-source-hash', brief => { brief.citations[0].hash = '0'.repeat(64); }],
+      ['invalid-warning-shape', brief => { brief.warnings = null; }],
+    ]) {
+      const malformed = structuredClone(cached.brief); malformed.query = name; change(malformed);
+      await persistArtifact({ rootDir: root, kind: 'feature_brief', key: name, payload: malformed });
+      assert.equal(await lookupFeatureBrief(root, name), null, name);
+    }
     await writeFile(join(root, 'new-caller.ts'), 'import { reserveUpload } from "./upload.js"; export const another = reserveUpload;');
     assert.equal(await lookupFeatureBrief(root, query), null);
     await reindex({ rootDir: root, noEmbed: true, autoHubs: false });
