@@ -2,6 +2,7 @@
 // FEATURE: Tool registration layer extracted from index.ts for readability
 
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import { toJsonSchemaCompat } from "@modelcontextprotocol/sdk/server/zod-json-schema-compat.js";
 import { runtimeSessionId, runtimeSessionStartedAt, setToolSchemaTokens } from "../core/runtime-session.js";
@@ -93,9 +94,13 @@ export function registerTools(
   const catalog = new Map<string, { name: string; description: string; inputSchema: unknown; annotations: unknown; outputSchema?: unknown }>();
   const active = new Set<string>();
   const handles = new Map<string, { enable?: () => void; disable?: () => void }>();
+  const invocations = new Map<string, { schema: z.AnyZodObject; handler: (args: unknown) => Promise<CallToolResult> }>();
+  // This compatibility route must never dispatch source edits or destructive
+  // maintenance under discovery's non-destructive annotation.
+  const callable = new Set(["context", "exact_references", "search", "grep", "skeleton", "explain", "tree", "status", "health", "reindex", "blast_radius", "validate_scope", "efficiency_report", "task_pack", "repo_map"]);
   const refreshCatalogCost = (): void => setToolSchemaTokens(Buffer.byteLength(JSON.stringify({ tools: [...catalog.values()].filter(tool => active.has(tool.name)) }), "utf8") / 4);
   const noteSchema = (name: string, description: string, shape: Record<string, unknown>, output?: unknown): void => {
-    const entry = { name, description, inputSchema: toJsonSchemaCompat(z.object({ ...shape, root: rootArg } as z.ZodRawShape)), annotations: annotationsForTool(name),
+    const entry = { name, description, inputSchema: toJsonSchemaCompat(z.object({ ...shape, root: rootArg } as z.ZodRawShape).strict()), annotations: annotationsForTool(name),
       ...(output ? { outputSchema: toJsonSchemaCompat(output as z.AnyZodObject) } : {}) };
     catalog.set(name, entry);
     refreshCatalogCost();
@@ -104,11 +109,10 @@ export function registerTools(
     tool: (name: string, description: string, shape: Record<string, unknown>, handler: unknown) => {
       if (isToolEnabled(name, toolProfile)) active.add(name);
       noteSchema(name, description, shape);
-      const registered = (serverInput.tool as unknown as (...a: unknown[]) => { enable?: () => void; disable?: () => void })(
-        name,
-        description,
-        { ...shape, root: rootArg },
-        annotationsForTool(name),
+      const schema = z.object({ ...shape, root: rootArg } as z.ZodRawShape).strict();
+      invocations.set(name, { schema, handler: handler as (args: unknown) => Promise<CallToolResult> });
+      const registered = (serverInput.registerTool as unknown as (...a: unknown[]) => { enable?: () => void; disable?: () => void })(
+        name, { description, inputSchema: schema, annotations: annotationsForTool(name) },
         handler,
       );
       if (registered) handles.set(name, registered);
@@ -125,11 +129,13 @@ export function registerTools(
   ): unknown => {
     if (isToolEnabled(name, toolProfile)) active.add(name);
     noteSchema(name, description, inputSchema, outputSchema);
+    const schema = z.object({ ...inputSchema, root: rootArg } as z.ZodRawShape).strict();
+    invocations.set(name, { schema, handler: handler as (args: unknown) => Promise<CallToolResult> });
     const registered = (serverInput.registerTool as unknown as (...args: unknown[]) => { enable?: () => void; disable?: () => void })(
       name,
       {
         description,
-        inputSchema: { ...inputSchema, root: rootArg },
+        inputSchema: schema,
         outputSchema,
         annotations: annotationsForTool(name),
       },
@@ -141,18 +147,20 @@ export function registerTools(
   };
 
   server.tool("context", "Find and read source evidence in one call. Query for discovery; targets for batched exact file/symbol/line reads without search. Returns deduplicated source ranges with explicit omissions. Prefer this for repository questions; stop when evidence suffices.", {
-    query: z.string().max(2000).optional(),
-    targets: z.array(z.object({ file: z.string().max(240), symbol: z.string().max(200).optional(), start: z.number().int().min(1).optional(), end: z.number().int().min(1).optional() })).min(1).max(6).optional(),
-    max_tokens: z.number().int().min(512).max(12000).optional().describe("Response budget, UTF-8 bytes/4; default 4000. Raise or narrow targets if omitted."),
+    query: z.string().max(2000).optional().describe("Discovery query, at most 2000 characters. Use a literal symbol name to prioritize its definition."),
+    targets: z.array(z.object({ file: z.string().max(240), symbol: z.string().max(200).optional(), start: z.number().int().min(1).optional(), end: z.number().int().min(1).optional() }).strict()).min(1).max(6).optional().describe("Exact reads: 1–6 file/symbol/line targets per call. Split larger batches."),
+    max_tokens: z.number().int().min(512).max(12000).optional().describe("Integer response budget: 512–12000, UTF-8 bytes/4; default 4000. Raise within this range or narrow targets if omitted."),
   }, withRequestActivity(async ({ query, targets, max_tokens }) => ({
     content: [{ type: "text" as const, text: await getContext({ rootDir: rootDir(), query, targets, maxTokens: max_tokens }) }],
   }), { toolName: "context", waitForIndexing: false }));
 
-  server.tool("discover_tools", "Find expert tools by purpose, or enable named tools for this session. Enabling exposes their schemas; it does not execute them.", {
+  const discoveryShape = {
     query: z.string().max(500).optional().describe("Purpose, e.g. rename, tests, or memory."),
     enable: z.array(z.string()).max(6).optional().describe("Exact tool names to add to this session's catalog."),
     limit: z.number().int().min(1).max(10).optional().describe("Maximum discovery matches; default 5."),
-  }, withRequestActivity(async ({ query, enable, limit }) => {
+    call: z.object({ name: z.string(), arguments: z.record(z.unknown()).optional() }).strict().optional().describe("If the client cannot refresh tools, execute a supported read/index tool using its discovered schema. Pass root outside call; source edits are excluded."),
+  };
+  const discover = withRequestActivity(async ({ query, enable, limit }: { query?: string; enable?: string[]; limit?: number }) => {
     const unknown = (enable ?? []).filter(name => !catalog.has(name));
     if (unknown.length) return { isError: true, content: [{ type: "text" as const, text: `Unknown tools: ${unknown.join(", ")}. Search by query first.` }] };
     for (const name of enable ?? []) {
@@ -160,12 +168,30 @@ export function registerTools(
       active.add(name);
     }
     refreshCatalogCost();
-    const terms = (query ?? "").toLowerCase().split(/[\s_]+/).filter(Boolean);
-    const found = [...catalog.values()].map(tool => ({ tool, score: terms.reduce((n, term) => n + (tool.name.includes(term) ? 3 : 0) + (tool.description.toLowerCase().includes(term) ? 1 : 0), 0) }))
+    const normalizedQuery = (query ?? "").trim().toLowerCase();
+    const terms = normalizedQuery.split(/[\s_]+/).filter(Boolean);
+    const found = [...catalog.values()].map(tool => ({ tool, score: (tool.name === normalizedQuery ? 100 : 0)
+      + terms.reduce((n, term) => n + (tool.name.includes(term) ? 3 : 0) + (tool.description.toLowerCase().includes(term) ? 1 : 0), 0) }))
       .filter(({ score }) => !terms.length || score > 0).sort((a, b) => b.score - a.score || a.tool.name.localeCompare(b.tool.name))
       .slice(0, limit ?? 5).map(({ tool }) => ({ name: tool.name, description: tool.description.slice(0, 180), enabled: active.has(tool.name) }));
-    return { content: [{ type: "text" as const, text: JSON.stringify({ enabled: enable ?? [], matches: found, next: "Call discover_tools with enable:[name], then call that tool normally." }) }] };
-  }, { toolName: "discover_tools" }));
+    return { content: [{ type: "text" as const, text: JSON.stringify({ enabled: enable ?? [], matches: found,
+      schemas: (enable ?? []).map(name => ({ ...catalog.get(name), callable: callable.has(name) })),
+      next: "Call an enabled tool normally. If unavailable in your client, use discover_tools({root,call:{name,arguments}}) for tools marked callable." }) }] };
+  }, { toolName: "discover_tools", waitForIndexing: false, skipProjectVerification: true });
+  server.tool("discover_tools", "Discover or enable experts and return their schemas. If the client cannot refresh its catalog, call runs a supported read/index tool; never source edits.", discoveryShape,
+    async (args: z.infer<z.ZodObject<typeof discoveryShape>> & { root?: string }) => {
+      if (!args.call) return discover(args);
+      const fail = (text: string) => ({ isError: true, content: [{ type: "text" as const, text }] });
+      if (args.enable || args.query || args.limit !== undefined) return fail("Use call alone with root; discover the schema first.");
+      if (!callable.has(args.call.name)) return fail("This tool cannot be dispatched. Enable it and use a client with tool refresh or the full profile.");
+      const invocation = invocations.get(args.call.name)!;
+      if (Object.hasOwn(args.call.arguments ?? {}, "root")) return fail("Pass root at the top level, not inside call.arguments.");
+      const parsed = invocation.schema.safeParse({ ...args.call.arguments, root: args.root });
+      if (!parsed.success) return fail(`Invalid arguments for ${args.call.name}: ${parsed.error.message}`);
+      // Use the target's normal wrapper once: identical routing, freshness,
+      // errors and metrics to a direct call, without a second discovery record.
+      return invocation.handler(parsed.data);
+    });
 
   // Deprecated tool names (start_task, impact, plan_edit, validate, remember) delegate to
   // their replacement's exact schema + implementation instead of re-declaring both, so the
@@ -395,7 +421,7 @@ export function registerTools(
     {
       symbol_name: z.string().min(1),
       file: z.string().optional().describe("Definition file; omit to infer."),
-      line: z.number().int().min(1).optional().describe("1-based definition line."),
+      line: z.number().int().min(1).optional().describe("1-based symbol line. Omit to infer a declaration; when several match, the response warns about the chosen candidate. Pass file and line to disambiguate."),
       limit: z.number().int().min(1).max(500).optional().describe("Shown occurrences; default 100."),
       format: z.enum(["text", "json"]).optional().describe("Default text."),
     },
@@ -880,7 +906,7 @@ export function registerTools(
     {
       target_path: z.string().optional().describe("Scope reindex to a specific directory (relative to root)."),
       force: z.boolean().optional().describe("Force re-process all files, ignoring cache. Default: false."),
-      no_embed: z.boolean().optional().describe("Skip eager embedding population. Search/identifier semantic ranking will populate lazily on first call. Default: false."),
+      no_embed: z.boolean().optional().describe("Skip corpus embedding generation. Search does not generate corpus embeddings; it uses existing vectors or lexical fallback. Configure an embedding provider and run reindex with no_embed:false to populate vectors (also unset CONTEXTPRO_REINDEX_NO_EMBED). Default: false."),
       auto_hubs: z.boolean().optional().describe("Generate feature-hub labels (one chat-model call per hub). Off by default to keep reindex fast and free. Or set CONTEXTPRO_AUTO_HUBS=1."),
     },
     withRequestActivity(async ({ target_path, force, no_embed, auto_hubs }) => ({

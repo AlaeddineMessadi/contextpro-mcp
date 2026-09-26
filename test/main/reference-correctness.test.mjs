@@ -44,6 +44,80 @@ describe("reference correctness and incremental projects", () => {
     assert.match(text, /src\/relative.ts:2:\d+ \[call\]/);
   });
 
+  it("infers an omitted line from current property declarations, with explicit ambiguity", async () => {
+    await write('src/settings.ts', [
+      '// updateSettings is not a declaration here',
+      'const label = "updateSettings";',
+      'interface Settings {',
+      '  updateSettings: (value: number) => void;',
+      '}',
+      'export const settings: Settings = {',
+      '  updateSettings: value => { console.log(value); },',
+      '};',
+      'settings.updateSettings(1);',
+    ].join('\n'));
+    await index();
+    const options = { symbolName: 'updateSettings', file: 'src/settings.ts', line: undefined };
+    const inferred = await refs(options);
+    const explicit = await refs({ ...options, line: 4 });
+    assert.deepEqual(inferred.references, explicit.references);
+    assert.equal(inferred.counts.call, 1);
+    assert.equal(inferred.target.line, 4);
+    assert.equal(inferred.ambiguous, true);
+    assert.deepEqual(inferred.ambiguousCandidates.map(c => c.line), [4, 7]);
+    assert.equal(explicit.ambiguous, false);
+  });
+
+  it("infers the identifier line from live source even when the indexed declaration moved", async () => {
+    await write('src/math.ts', '// moved after indexing\nexport function\nadd(a: number, b: number) { return a + b; }\n');
+    const result = await refs({ line: undefined });
+    assert.equal(result.target.line, 3);
+    assert.equal(result.counts.call, 3);
+    assert.equal(result.ambiguous, false);
+    await assert.rejects(refs({ line: 1 }), /not present on target line 1/);
+  });
+
+  it("requests an explicit occurrence when a file has no declaration instead of assuming line one", async () => {
+    const text = await exactReferencesTool({ rootDir: root, file: 'src/math.ts', symbolName: 'absent' });
+    assert.match(text, /No declaration.*absent.*src\/math\.ts/);
+    assert.match(text, /line/);
+  });
+
+  it("names unresolved imports and unchecked files with bounded diagnostic samples", async () => {
+    await write("src/broken.ts", Array.from({length: 8}, (_, i) => `import { missing } from './absent${i}';`).join('\n'));
+    await mkdir(join(root, 'broken'));
+    await write('broken/tsconfig.json', '{ invalid');
+    await write('broken/unchecked.ts', 'export const ignored = 1;');
+    await index();
+    const result = await refs();
+    const warnings = result.warnings.join('\n');
+    assert.match(warnings, /8 unresolved workspace imports/);
+    assert.match(warnings, /src\/broken.ts: \.\/absent0/);
+    assert.match(warnings, /\+3 more/);
+    assert.doesNotMatch(warnings, /absent7/);
+    assert.match(warnings, /could not be checked: broken\/unchecked.ts/);
+    assert.equal(result.counts.call, 3);
+  });
+
+  it("does not treat existing bundler assets as unchecked code but still warns about missing assets and modules", async () => {
+    await write('src/styles.module.css', '.label { color: red; }');
+    await write('src/globals.css', 'body { margin: 0; }');
+    await write('src/assets.ts', [
+      "import styles from './styles.module.css';",
+      "import './globals.css?inline';",
+      "import './missing.css';",
+      "import { absent } from './missing-code';",
+    ].join('\n'));
+    await index();
+    const result = await refs();
+    const warnings = result.warnings.join('\n');
+    assert.match(warnings, /2 unresolved workspace imports/);
+    assert.match(warnings, /missing\.css/);
+    assert.match(warnings, /missing-code/);
+    assert.doesNotMatch(warnings, /styles\.module\.css|globals\.css/);
+    assert.equal(result.counts.call, 3);
+  });
+
   it("reports totals before truncation, including more than the maximum display limit", async () => {
     await write("src/relative.ts", "import { add } from './math';\n" + Array.from({ length: 600 }, () => "add(1, 2);").join("\n"));
     const result = await refs({ limit: 500 });

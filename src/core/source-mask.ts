@@ -2,6 +2,7 @@
 // FEATURE: Preserve offsets while excluding comments and string literals from code matches
 
 import { extname } from "path";
+import ts from "typescript";
 
 const HASH_COMMENT_EXTENSIONS = new Set([
   ".py", ".rb", ".sh", ".bash", ".zsh", ".yaml", ".yml", ".toml", ".pl", ".r",
@@ -37,10 +38,28 @@ export function sourceMaskFlags(content: string, filePath?: string): boolean[] {
   const extension = filePath ? extname(filePath).toLowerCase() : "";
   const hashComments = HASH_COMMENT_EXTENSIONS.has(extension);
   const isRust = extension === ".rs";
+  const regexEnds = new Map<number, number>();
+  if (/^\.[cm]?[jt]sx?$/.test(extension)) {
+    // The parser distinguishes regex literals from division and finds regexes
+    // inside template expressions. Quotes/backticks inside a regex must never
+    // change the string/template state used to scan subsequent code.
+    const source = ts.createSourceFile(filePath!, content, ts.ScriptTarget.Latest, false);
+    const visit = (node: ts.Node): void => {
+      if (ts.isRegularExpressionLiteral(node)) regexEnds.set(node.getStart(source), node.end);
+      ts.forEachChild(node, visit);
+    };
+    visit(source);
+  }
   const modes: MaskMode[] = [{ kind: "code" }];
   const hide = (index: number) => { masked[index] = true; };
 
   for (let i = 0; i < content.length; i++) {
+    const regexEnd = regexEnds.get(i);
+    if (regexEnd !== undefined) {
+      masked.fill(true, i, regexEnd);
+      i = regexEnd - 1;
+      continue;
+    }
     const ch = content[i];
     const next = content[i + 1];
     const mode = modes[modes.length - 1];

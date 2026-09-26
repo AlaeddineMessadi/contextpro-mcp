@@ -95,13 +95,32 @@ describe("automatic index freshness", () => {
     assert.notEqual(result.freshness.indexState, "stale");
   });
 
-  it("reports the remaining backlog when the quick refresh cap is exceeded", async () => {
+  it("repairs the backlog before search when the quick refresh cap is exceeded", async () => {
     process.env.CONTEXTPRO_QUICKREFRESH_MAX_FILES = "1";
     for (let i = 0; i < 2; i++) await writeFile(join(root, "src", `new-${i}.ts`), `export const unique${i} = ${i};\n`);
     const { unifiedSearchData } = await import("../../build/tools/search.js");
     const result = await unifiedSearchData({ rootDir: root, query: "alpha", mode: "file", preset: "keyword_only" });
-    assert.equal(result.freshness.indexState, "stale");
-    assert.match(result.freshness.warning, /2 files remain stale/);
+    assert.equal(result.freshness.indexState, "refreshed");
+    assert.equal(result.freshness.warning, null);
+    assert.equal(result.freshness.indexedFiles, 3);
+  });
+
+  it("respects disabled automatic refresh and reports incomplete discovery", async () => {
+    const prior = process.env.CONTEXTPRO_AUTO_REFRESH;
+    process.env.CONTEXTPRO_AUTO_REFRESH = "false";
+    try {
+      await writeFile(join(root, "src", "new.ts"), "export function newDiscovery() { return 3; }\n");
+      const { unifiedSearchData } = await import("../../build/tools/search.js");
+      const { getDB } = await import("../../build/core/db.js");
+      const result = await unifiedSearchData({ rootDir: root, query: "newDiscovery", mode: "file", preset: "keyword_only" });
+      assert.equal(result.freshness.refreshed, false);
+      assert.equal(result.freshness.indexState, "stale");
+      assert.match(result.freshness.warning, /refresh is disabled/);
+      assert.equal((await getDB(root)).getFile("src/new.ts"), null);
+    } finally {
+      if (prior === undefined) delete process.env.CONTEXTPRO_AUTO_REFRESH;
+      else process.env.CONTEXTPRO_AUTO_REFRESH = prior;
+    }
   });
 
   it("invalidates every structural row when the extractor identity changes", async () => {

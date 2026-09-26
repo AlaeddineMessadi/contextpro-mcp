@@ -6,7 +6,7 @@ import { readFileSync } from "fs";
 import { dirname, resolve } from "path";
 import { fileURLToPath } from "url";
 
-const EXTRACTOR_ABI = "contextpro-structural-v1";
+const EXTRACTOR_ABI = "contextpro-structural-v2-full-source-fts";
 let cachedStamp: string | null = null;
 
 function firstReadable(paths: string[]): Buffer | null {
@@ -33,6 +33,7 @@ export function getExtractorStamp(): string {
   const hash = createHash("sha256").update(EXTRACTOR_ABI);
   const inputs = [
     [resolve(here, "parser.js"), resolve(here, "parser.ts")],
+    [resolve(here, "source-mask.js"), resolve(here, "source-mask.ts")],
     [resolve(here, "tree-sitter.js"), resolve(here, "tree-sitter.ts")],
     [resolve(here, "../../package.json")],
   ];

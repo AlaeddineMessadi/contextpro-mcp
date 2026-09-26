@@ -6,7 +6,8 @@ import {join} from 'node:path';
 import {getContext} from '../../build/tools/context.js';
 import {explain} from '../../build/tools/explain.js';
 import {reindex} from '../../build/tools/reindex.js';
-import {closeDB} from '../../build/core/db.js';
+import {closeDB,getDB} from '../../build/core/db.js';
+import {unifiedSearchData} from '../../build/tools/search.js';
 
 it('batches direct sources without an index; deduplicates overlap and preserves exact source',async()=>{
  const root=await mkdtemp(join(tmpdir(),'contextpro-direct-'));
@@ -78,5 +79,100 @@ it('keeps a relevant whole declaration when a large discovered file exceeds the 
   assert.match(text,/export function authenticateUser\(\) \{ return "verified"; \}/);
   assert.match(text,/Omitted: api.ts: partial/);assert.doesNotMatch(text,/noisenoise/);
   assert.ok(Buffer.byteLength(text)<=2048);
+ }finally{closeDB(root);await rm(root,{recursive:true,force:true});}
+});
+
+it('retains decisive interior predicates in oversized functions across files with verbatim bounded ranges', async () => {
+ const root=await mkdtemp(join(tmpdir(),'contextpro-interior-'));
+ try {
+  const source = `import { auditUpload } from './audit';\nexport async function router(request) {\n${'  unrelatedWork();\n'.repeat(160)}  // Reserve outstanding upload intents against the shot limit.\n  const reserved = intents.filter(i => !i.completedAt).length;\n  if (used + reserved >= event.shotLimit) throw new Error('Shot limit reached');\n${'  unrelatedWork();\n'.repeat(160)}  // Finalization must reject a guest removed by erasure.\n  if (!db.guests.some(g => g.id === intent.guestId)) return null;\n${'  unrelatedWork();\n'.repeat(100)}}\n`;
+  await writeFile(join(root,'router.ts'),source);
+  await writeFile(join(root,'audit.ts'), 'export function auditUpload() { return "upload audit"; }\n');
+  await reindex({rootDir:root,noEmbed:true,autoHubs:false});
+  const text=await getContext({rootDir:root,query:'guest upload shot limit reservation finalization erasure',maxTokens:1200});
+  assert.match(text,/used \+ reserved >= event.shotLimit/);
+  assert.match(text,/!db.guests.some/);
+  assert.ok(Buffer.byteLength(text)<=4800);
+  assert.match(text,/Omitted: router.ts: partial/);
+  for (const match of text.matchAll(/router\.ts:(\d+)-(\d+)\n([^]*?)(?=\n\n|$)/g)) {
+   assert.equal(match[3],source.split('\n').slice(Number(match[1])-1,Number(match[2])).join('\n'));
+  }
+ }finally{closeDB(root);await rm(root,{recursive:true,force:true});}
+});
+
+it('initializes discovery above the quick-refresh cap and catches a later large change', async () => {
+ const root=await mkdtemp(join(tmpdir(),'contextpro-cold-discovery-'));
+ try {
+  for(let i=0;i<35;i++) await writeFile(join(root,`item-${i}.ts`),`export function item${i}() { return ${i}; }\n`);
+  const first=await getContext({rootDir:root,query:'item34',maxTokens:512});
+  assert.equal((await getDB(root)).getAllFiles().length,35);
+  assert.match(first,/function item34/);
+  assert.doesNotMatch(first,/remain stale|Discovery index: (empty|stale|refreshed)/);
+  for(let i=0;i<35;i++) await writeFile(join(root,`item-${i}.ts`),`export function updated${i}() { return ${i+100}; }\n`);
+  const next=await getContext({rootDir:root,query:'updated34',maxTokens:512});
+  assert.match(next,/function updated34/);
+  assert.equal((await getDB(root)).searchSymbolsByName('item34').length,0);
+  assert.doesNotMatch(next,/remain stale|Discovery index: (empty|stale|refreshed)/);
+ }finally{closeDB(root);await rm(root,{recursive:true,force:true});}
+});
+
+it('prioritizes a named definition over short calls and documentation in a prose query', async () => {
+ const root=await mkdtemp(join(tmpdir(),'contextpro-named-definition-'));
+ try {
+  const definition=`export function reusableAnswers(records) {\n${'  validate(records);\n'.repeat(30)}  return records.filter(record => record.approved && record.current);\n}\n`;
+  await writeFile(join(root,'pipeline.ts'),`${'// processing implementation pipeline\n'.repeat(80)}${definition}${Array.from({length:25},(_,i)=>`export function preflight${i}() { return reusableAnswers([]); }`).join('\n')}`);
+  for(let i=0;i<6;i++) await writeFile(join(root,`guide-${i}.md`),'# Find implementation of reusableAnswers in pipeline.ts\nReusable answers implementation publication validation pipeline.\n');
+  await reindex({rootDir:root,noEmbed:true,autoHubs:false});
+  const text=await getContext({rootDir:root,query:'Find implementation of reusableAnswers in pipeline.ts',maxTokens:512});
+  assert.ok(text.includes(definition.trimEnd()),text);
+  assert.ok(Buffer.byteLength(text)<=2048);
+ }finally{closeDB(root);await rm(root,{recursive:true,force:true});}
+});
+
+it('recognizes quoted lowercase and dollar-prefixed names without confusing calls with definitions', async () => {
+ const root=await mkdtemp(join(tmpdir(),'contextpro-literal-definition-'));
+ try {
+  await writeFile(join(root,'api.ts'),'export function parse() { return "parser-body"; }\nexport const $resolve = () => "resolver-body";\n');
+  for(const query of ['Find implementation of parse', 'Where is `parse` defined?', '$resolve']) {
+   const text=await getContext({rootDir:root,query,maxTokens:512});
+   assert.match(text,query === '$resolve' ? /resolver-body/ : /parser-body/);
+   assert.ok(Buffer.byteLength(text)<=2048);
+  }
+ }finally{closeDB(root);await rm(root,{recursive:true,force:true});}
+});
+
+it('discovers literal UI text beyond summaries and retains the matching source window', async () => {
+ const root=await mkdtemp(join(tmpdir(),'contextpro-literal-ui-'));
+ try {
+  const filler=Array.from({length:180},(_,i)=>`  const validation${i} = "unrelated setup";`).join('\n');
+  await writeFile(join(root,'ui.tsx'),`export function Screen() {\n${filler}\n  return <button>Bericht erneut prüfen</button>;\n}\n`);
+  await writeFile(join(root,'noise.ts'),'export const bericht = "Bericht";\nexport const erneut = "erneut";\n');
+  await reindex({rootDir:root,noEmbed:true,autoHubs:false});
+  for(const query of ['Bericht erneut prüfen','"Bericht erneut prüfen"']) {
+   const text=await getContext({rootDir:root,query,maxTokens:512});
+   assert.match(text,/<button>Bericht erneut prüfen<\/button>/);
+   assert.ok(Buffer.byteLength(text)<=2048);
+  }
+  const ranked=await unifiedSearchData({rootDir:root,query:'Bericht erneut prüfen',mode:'file',preset:'keyword_only',topK:1});
+  assert.equal(ranked.files.results[0].path,'ui.tsx');
+  await writeFile(join(root,'ui.tsx'),`export function Screen() {\n${filler}\n  return <button>Eintrag auswählen</button>;\n}\n`);
+  const updated=await getContext({rootDir:root,query:'Eintrag auswählen',maxTokens:512});
+  assert.match(updated,/<button>Eintrag auswählen<\/button>/);
+ }finally{closeDB(root);await rm(root,{recursive:true,force:true});}
+});
+
+it('retains Unicode lexical queries, including text with no ASCII letters', async () => {
+ const root=await mkdtemp(join(tmpdir(),'contextpro-unicode-'));
+ try {
+  const db=await getDB(root);
+  for(const [i,label] of ['重新分析','選','ausführen','café','تجربة'].entries()) {
+   const file=`label${i}.ts`;
+   await writeFile(join(root,file),`export const label${i} = "${label}";\n`);
+  }
+  await reindex({rootDir:root,noEmbed:true,autoHubs:false});
+  for(const [i,label] of ['重新分析','選','ausführen','café','تجربة'].entries()) {
+   assert.ok(db.searchFileText(label).some(row=>row.path===`label${i}.ts`),label);
+   assert.match(await getContext({rootDir:root,query:label,maxTokens:512}),new RegExp(label));
+  }
  }finally{closeDB(root);await rm(root,{recursive:true,force:true});}
 });

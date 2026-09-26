@@ -304,6 +304,10 @@ export class ContextPlusDB {
     const { Database, sqliteVec } = loadNativeStorageBindings();
     this.db = new Database(dbPath);
     sqliteVec.load(this.db);
+    // FTS stemming/punctuation folding finds candidates, but a literal key must
+    // also occur in the indexed text. Verify before LIMIT, not after truncation.
+    this.db.function("contextpro_literal_contains", { deterministic: true }, (body, needle) =>
+      Number(String(body ?? "").normalize("NFC").toLowerCase().includes(String(needle))));
     this.db.pragma("journal_mode = WAL");
     this.db.pragma("synchronous = NORMAL");
     this.db.pragma("busy_timeout = 5000");
@@ -954,26 +958,31 @@ export class ContextPlusDB {
     this.db.prepare("DELETE FROM file_search_fts WHERE path = ?").run(path);
   }
 
-  searchFileText(query: string, topK: number = 10): FileTextSearchMatch[] {
+  searchFileText(query: string, topK: number = 10, phraseOnly = false): FileTextSearchMatch[] {
     const stopwords = new Set([
       "a", "an", "and", "are", "as", "at", "be", "by", "can", "do", "does", "for", "from",
       "how", "i", "if", "in", "is", "it", "of", "on", "or", "the", "to", "what", "where",
       "which", "who", "why", "with",
     ]);
-    const terms = (query.match(/[A-Za-z0-9_]+/g) ?? [])
+    const terms = (query.normalize("NFC").match(/[\p{L}\p{M}\p{N}_]+/gu) ?? [])
       .map((term) => term.toLowerCase())
-      .filter((term) => term.length > 1 && !stopwords.has(term))
+      .filter((term) => (term.length > 1 || /[^\x00-\x7F]/u.test(term)) && !stopwords.has(term))
       .slice(0, 12);
-    if (terms.length === 0) return [];
+    if (terms.length === 0 && !phraseOnly) return [];
     const limit = Math.max(1, topK);
-    const runQuery = (ftsQuery: string) => this.db.prepare("SELECT path, bm25(file_search_fts) as score FROM file_search_fts WHERE file_search_fts MATCH ? ORDER BY score LIMIT ?")
-      .all(ftsQuery, limit) as FileTextSearchMatch[];
+    const literal = query.normalize("NFC").trim().replace(/^(["'`])([\s\S]*)\1$/, "$2");
+    const runQuery = (ftsQuery: string) => this.db.prepare(`SELECT path, bm25(file_search_fts) as score FROM file_search_fts WHERE file_search_fts MATCH ?${phraseOnly ? " AND contextpro_literal_contains(body, ?)" : ""} ORDER BY score LIMIT ?`)
+      .all(...(phraseOnly ? [ftsQuery, literal.toLowerCase(), limit] : [ftsQuery, limit])) as FileTextSearchMatch[];
     try {
+      // Preserve phrase order before broadening to token/prefix matches. Quoting
+      // tokens also keeps Unicode and FTS syntax out of the query grammar.
+      const phraseRows = runQuery(`"${literal.replace(/"/g, '""')}"`);
+      if (phraseOnly || phraseRows.length > 0) return phraseRows;
       if (terms.length > 1) {
-        const andRows = runQuery(terms.map((term) => `${term}*`).join(" "));
+        const andRows = runQuery(terms.map((term) => `"${term}"*`).join(" "));
         if (andRows.length > 0) return andRows;
       }
-      return runQuery(terms.map((term) => `${term}*`).join(" OR "));
+      return runQuery(terms.map((term) => `"${term}"*`).join(" OR "));
     } catch {
       return [];
     }

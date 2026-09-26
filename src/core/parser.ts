@@ -2,6 +2,7 @@
 // Supports 36 languages via WASM grammars, regex fallback for unsupported
 
 import { readFile } from "fs/promises";
+import ts from "typescript";
 import { extname } from "path";
 import { parseWithTreeSitter, getSupportedExtensions } from "./tree-sitter.js";
 import { maskSourceText } from "./source-mask.js";
@@ -72,6 +73,9 @@ const LANG_MAP: Record<string, string> = {
   ".kt": "kotlin",
   ".lua": "lua",
   ".zig": "zig",
+  // SQL participates in bounded source/FTS retrieval. No generic brace-based
+  // symbol extraction: SQL bodies and dollar quoting require a real grammar.
+  ".sql": "sql",
 };
 
 const TS_PATTERNS: RegExp[] = [
@@ -115,12 +119,18 @@ function detectLanguage(filePath: string): string | null {
 
 function extractHeader(lines: string[]): string {
   const headerLines: string[] = [];
+  let block = false;
   for (const line of lines.slice(0, 10)) {
-    const stripped = line.replace(/^\/\/\s?|^#\s?|^--\s?|^\*\s?|^\/\*\*?\s?|\*\/$/g, "").trim();
-    if (stripped && !stripped.startsWith("!") && !stripped.startsWith("use ") && !stripped.startsWith("import ")) {
-      headerLines.push(stripped);
-      if (headerLines.length >= 2) break;
-    }
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    if (trimmed.startsWith("#!")) continue;
+    if (!block && !/^(?:\/\/|#|--|\/\*)/.test(trimmed)) break;
+    const closes = trimmed.includes("*/");
+    if (trimmed.startsWith("/*")) block = true;
+    const stripped = trimmed.replace(/\*\/.*$/, "").replace(/^(?:\/\/|#|--|\/\*+|\*)\s?/, "").trim();
+    if (stripped) headerLines.push(stripped);
+    if (closes) block = false;
+    if (headerLines.length >= 2) break;
   }
   return headerLines.join(" | ");
 }
@@ -513,6 +523,7 @@ export async function analyzeContent(filePath: string, raw: string): Promise<Fil
       java: parseJava,
       csharp: parseJava,
       kotlin: parseJava,
+      sql: () => [],
     };
     symbols = (parsers[lang ?? ""] ?? parseGeneric)(lines);
   }
@@ -613,6 +624,36 @@ const IMPORT_PATTERNS: Record<string, RegExp[]> = {
 };
 
 export function extractImports(content: string, filePath: string): ImportDeclaration[] {
+  // Parse TS/JS declarations as units: imports may span lines and contain
+  // aliases, type-only specifiers, or namespace bindings. Comments are not imports.
+  if (/\.[cm]?[jt]sx?$/i.test(filePath)) {
+    const source = ts.createSourceFile(filePath, content, ts.ScriptTarget.Latest, true);
+    const imports: ImportDeclaration[] = [];
+    const add = (node: ts.Node, module: ts.Expression | undefined, specifiers: string[], type: ImportDeclaration["type"]) => {
+      if (module && ts.isStringLiteral(module)) imports.push({ source: module.text, specifiers, type,
+        line: source.getLineAndCharacterOfPosition(node.getStart(source)).line + 1 });
+    };
+    const visit = (node: ts.Node): void => {
+      if (ts.isImportDeclaration(node)) {
+        const clause = node.importClause, bindings = clause?.namedBindings;
+        const specs = clause?.name ? [clause.name.text] : [];
+        if (bindings && ts.isNamedImports(bindings)) specs.push(...bindings.elements.map(item => (item.propertyName ?? item.name).text));
+        else if (bindings) specs.push(bindings.name.text);
+        add(node, node.moduleSpecifier, specs, "static");
+      } else if (ts.isExportDeclaration(node)) {
+        const clause = node.exportClause;
+        const specs = clause && ts.isNamedExports(clause) ? clause.elements.map(item => (item.propertyName ?? item.name).text) : clause ? [clause.name.text] : [];
+        add(node, node.moduleSpecifier, specs, "re-export");
+      } else if (ts.isImportEqualsDeclaration(node) && ts.isExternalModuleReference(node.moduleReference)) {
+        add(node, node.moduleReference.expression, [node.name.text], "static");
+      } else if (ts.isCallExpression(node) && (node.expression.kind === ts.SyntaxKind.ImportKeyword || ts.isIdentifier(node.expression) && node.expression.text === "require")) {
+        add(node, node.arguments[0], [], "dynamic");
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(source);
+    return imports;
+  }
   const ext = extname(filePath).toLowerCase();
   const lang = LANG_MAP[ext];
   if (!lang) return [];
@@ -629,32 +670,6 @@ export function extractImports(content: string, filePath: string): ImportDeclara
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i].trim();
-
-    if (langKey === "typescript" || langKey === "javascript") {
-      const staticMatch = line.match(/^import\s+(?:type\s+)?(?:\{([^}]+)\}|(\w+)(?:\s*,\s*\{([^}]+)\})?)\s+from\s+["']([^"']+)["']/);
-      if (staticMatch) {
-        const specParts = (staticMatch[1] || staticMatch[3] || "").split(",").map(s => s.trim().split(/\s+as\s+/)[0].trim()).filter(Boolean);
-        if (staticMatch[2]) specParts.unshift(staticMatch[2]);
-        imports.push({ source: staticMatch[4], specifiers: specParts, type: "static", line: i + 1 });
-        continue;
-      }
-      const sideEffectMatch = line.match(/^import\s+["']([^"']+)["']/);
-      if (sideEffectMatch) {
-        imports.push({ source: sideEffectMatch[1], specifiers: [], type: "static", line: i + 1 });
-        continue;
-      }
-      const reExportMatch = line.match(/^export\s+(?:type\s+)?\{([^}]+)\}\s+from\s+["']([^"']+)["']/);
-      if (reExportMatch) {
-        const specParts = reExportMatch[1].split(",").map(s => s.trim().split(/\s+as\s+/)[0].trim()).filter(Boolean);
-        imports.push({ source: reExportMatch[2], specifiers: specParts, type: "re-export", line: i + 1 });
-        continue;
-      }
-      const dynamicMatch = line.match(/import\(["']([^"']+)["']\)/);
-      if (dynamicMatch) {
-        imports.push({ source: dynamicMatch[1], specifiers: [], type: "dynamic", line: i + 1 });
-        continue;
-      }
-    }
 
     if (langKey === "python") {
       const fromMatch = line.match(/^from\s+([\w.]+)\s+import\s+(.+)/);

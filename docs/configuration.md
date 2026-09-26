@@ -4,7 +4,7 @@ Defaults below describe this checkout's MCP launch path. Set environment variabl
 
 ## Profiles
 
-`CONTEXTPRO_TOOL_PROFILE` defaults to `workflow` (14 initial tools). `lean` advertises `context`, `exact_references` and `discover_tools`; `core` includes common editing/graph operations; `full` advertises everything. Existing custom profiles survive `init`. Discovering or enabling tools does not execute them, and the host must support catalog updates.
+`CONTEXTPRO_TOOL_PROFILE` defaults to `workflow` (14 initial tools). `lean` advertises `context`, `exact_references` and `discover_tools`; `core` includes common editing/graph operations; `full` advertises everything. Existing custom profiles survive `init`. Discovering or enabling tools does not execute them. Enabling returns schemas; hosts without catalog updates can use `discover_tools({root,call:{name,arguments}})` for tools marked `callable` (reads and indexing, never source edits). The target schema and normal request routing still apply. Use `full` for other experts on those hosts.
 
 ## Providers
 
@@ -35,7 +35,7 @@ For provider-free discovery use `search(preset:"keyword_only")` or direct `conte
 | `CONTEXTPRO_EMBED_TRACKER_MAX_FILES` | `8` | Per-tick changes, clamped to 5–10 |
 | `CONTEXTPRO_RECONCILE_INTERVAL_MS` | `30000` | Background reconciliation interval, at least 5000 ms; idle scheduling may skip ticks while watching works |
 | `CONTEXTPRO_RECONCILE_MAX_FILES` | `40` | Repair budget per sweep |
-| `CONTEXTPRO_AUTO_REFRESH` | enabled | Pre-query structural freshness gate |
+| `CONTEXTPRO_AUTO_REFRESH` | enabled | Pre-query structural freshness gate, including search/context discovery; false leaves warnings and skips automatic maintenance |
 | `CONTEXTPRO_REFRESH` | metadata fast path | Set `hash` to hash every source during quick refresh |
 | `CONTEXTPRO_QUICKREFRESH_MAX_FILES` | `30` | Quick-refresh threshold; the structural gate can fall back to a full structural refresh |
 | `CONTEXTPRO_REINDEX_NO_EMBED` | off | Skip eager corpus embeddings |
@@ -48,6 +48,12 @@ For provider-free discovery use `search(preset:"keyword_only")` or direct `conte
 Normal refresh compares size, full mtime and ctime, then hashes suspicious files. Hashing and parsing share a verified read. Freshness warnings describe remaining drift or failure, not merely the number of files already repaired. Watcher failure keeps periodic reconciliation alive when the tracker is enabled.
 
 Interactive retrieval reuses existing vectors rather than generating a corpus on demand. A failed query embedding can fall back to keyword ranking; explicit semantic-only requests still need semantic evidence.
+
+Local full-text search stores full source for indexed files, so text beyond the
+embedding summary is searchable. This increases the regenerable database size;
+embedding inputs and response budgets remain bounded separately. The extraction
+stamp automatically rebuilds older summary-only indexes on the next structural
+freshness check. Unicode query tokens and phrase matching use that local index.
 
 ## Runtime and reporting
 
@@ -63,8 +69,20 @@ Interactive retrieval reuses existing vectors rather than generating a corpus on
 | `CONTEXTPRO_INSTRUCTIONS_REMOTE` | `false` | Optional trusted remote instructions; bundled guide is the normal path |
 | `CONTEXTPRO_INSTRUCTIONS_REMOTE_URL` | `https://contextpro.dev/api/instructions` | Remote source when enabled |
 | `CONTEXTPRO_ALLOW_UNSAFE_ROOT` | `false` | Override root/home-level root checks; ordinary project roots need no override |
+| `CONTEXTPRO_REFERENCE_HEAP_MB` | `1024` | Reference-worker JavaScript heap ceiling (not preallocated); integer 256–4096, invalid values use 1024; restart the host after changing |
 
-TypeScript worker limits are currently implementation constants: at most three retained projects, 60-second idle disposal, 30-second active request deadline, 512 MB V8 heap and 20,000 input files. Parser requests have a 15-second deadline and separate queue/source limits. These are not whole-machine resource guarantees.
+The TypeScript reference worker retains at most one project and releases completed
+compiler graphs between configurations in a monorepo. Single-project queries
+reuse their compiler. Other limits are 60-second idle disposal, a 30-second active
+request deadline and 20,000 input files. Heap exhaustion returns a specific error
+with the configured limit. Parser requests have a 15-second deadline and separate
+queue/source limits. These are not whole-machine resource guarantees.
+
+Lexical discovery retains quoted phrases and compound keys, and treats tests and
+translation catalogs as secondary evidence unless requested. SQL files participate
+in source-text search and freshness checks; SQL binding references and structural
+symbol extraction are not provided by this text fallback. Source budgets still
+allow omissions, especially for broad questions spanning many modules.
 
 See [installation](../INSTALL.md) for launch examples and [maintenance](maintenance.md) for test/runtime and disk-cleanup guidance.
 

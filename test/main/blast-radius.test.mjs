@@ -68,6 +68,18 @@ describe("blast-radius", async () => {
       assert.ok(!result.includes("def.ts") || result.includes("use.ts"));
     });
 
+    it("keeps calls after regex literals visible and classifies regex mentions as literal text", async () => {
+      await writeFile(join(FIXTURE_DIR, "regex.ts"), [
+        'const quotes = /["\'`]/;',
+        'const decoy = /afterRegexCall\\(\\)/;',
+        'for (const item of afterRegexCall()) consume(item);',
+      ].join('\n'));
+      const result = await getBlastRadius({rootDir:FIXTURE_DIR, symbolName:'afterRegexCall', mode:'detailed'});
+      assert.match(result, /call=1, import=0, type-reference=0, mock\/stub=0, comment\/string=1/);
+      assert.match(result, /L3 \[call\]/);
+      assert.match(result, /L2 \[comment\/string\]/);
+    });
+
     it("shows low usage warning for single usage", async () => {
       await writeFile(join(FIXTURE_DIR, "single.ts"), "function rare() {}\n");
       await writeFile(join(FIXTURE_DIR, "once.ts"), "rare();\n");

@@ -60,7 +60,6 @@ const INDEX_OWNER_PID_KEY = "index_owner_pid";
 const LAST_INDEX_ERROR_KEY = "last_index_error";
 const INDEXING_STATUS = "indexing";
 const IDLE_STATUS = "idle";
-const MAX_SEARCH_BODY_CHARS = 4000;
 
 function tryAcquireIndexLock(db: ContextPlusDB, targetPath: string): boolean {
   const extra: Array<[string, string]> = [
@@ -86,27 +85,9 @@ function detectLanguage(filePath: string): string | null {
     ".ts": "typescript", ".tsx": "typescript", ".js": "javascript", ".jsx": "javascript",
     ".mjs": "javascript", ".py": "python", ".rs": "rust", ".go": "go",
     ".java": "java", ".cs": "csharp", ".c": "c", ".cpp": "cpp",
-    ".rb": "ruby", ".swift": "swift", ".kt": "kotlin",
+    ".rb": "ruby", ".swift": "swift", ".kt": "kotlin", ".sql": "sql",
   };
   return map[ext] ?? null;
-}
-
-function buildSearchBody(content: string): string {
-  const lines = content.split("\n");
-  const selected: string[] = [];
-
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (!trimmed) continue;
-    const isComment = /^(\/\/|#|--|\/\*|\*)/.test(trimmed);
-    const isMeaningfulCode = /\b(function|class|interface|type|const|let|var|def|return|if|for|while|match|case|filter|map|reduce|where|select)\b/.test(trimmed);
-    if (!isComment && !isMeaningfulCode) continue;
-    selected.push(trimmed.slice(0, 180));
-    if (selected.join("\n").length >= MAX_SEARCH_BODY_CHARS) break;
-  }
-
-  const summary = selected.join("\n");
-  return (summary || content).slice(0, MAX_SEARCH_BODY_CHARS);
 }
 
 function toProjectRelative(rootDir: string, candidate: string): string | null {
@@ -449,7 +430,7 @@ export async function reindex(options: ReindexOptions): Promise<string> {
             header: analysis.header,
             language: lang,
             symbols: flatSymbols.map((s) => ({ name: s.name, kind: s.kind, signature: s.signature })),
-            content: buildSearchBody(content),
+            content, // Full source for local FTS; embedding summaries stay separate.
           });
 
           replaceFileImports(db, options.rootDir, fileId, file.relativePath, imports, resolvablePaths);
@@ -725,7 +706,7 @@ async function quickRefreshAttempt(rootDir: string, options: QuickRefreshOptions
             header: analysis.header,
             language: lang,
             symbols: flatSymbols.map((s) => ({ name: s.name, kind: s.kind, signature: s.signature })),
-            content: buildSearchBody(content),
+            content, // Full source for local FTS; embedding summaries stay separate.
           });
           replaceFileImports(db, rootDir, fileId, path, imports, resolvablePaths);
           db.upsertCallSites(fileId, callSites);
@@ -898,7 +879,7 @@ export async function refreshFilesStructural(
           header: analysis.header,
           language: lang,
           symbols: flatSymbols.map((s) => ({ name: s.name, kind: s.kind, signature: s.signature })),
-          content: buildSearchBody(content),
+          content, // Full source for local FTS; embedding summaries stay separate.
         });
         replaceFileImports(db, rootDir, fileId, path, imports, resolvablePaths);
         db.upsertCallSites(fileId, callSites);

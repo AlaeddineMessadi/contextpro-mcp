@@ -406,11 +406,12 @@ export function searchTerms(text: string): string[] {
 
 function splitCamelCase(text: string): string[] {
   return text
+    .normalize("NFC")
     .replace(/([a-z])([A-Z])/g, "$1 $2")
     .replace(/([A-Z])([A-Z][a-z])/g, "$1 $2")
     .toLowerCase()
-    .split(/[^a-z0-9]+/)
-    .filter((t) => t.length > 1);
+    .split(/[^\p{L}\p{M}\p{N}]+/u)
+    .filter((t) => t.length > 1 || /[^\x00-\x7F]/u.test(t));
 }
 
 function clamp01(value: number): number {

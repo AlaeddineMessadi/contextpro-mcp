@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import fs from "node:fs/promises";
+import { syncBuiltinESMExports } from "node:module";
 
 let fixtureRoot = "";
 let originalHome = process.env.HOME;
@@ -75,5 +77,53 @@ describe("project-config", () => {
 
     const patterns = await mod.listPromotedPatterns("registry-client");
     assert.ok(patterns.some((item) => item.patternId === pattern.patternId));
+  });
+
+  it("verifies unchanged projects without writing config or requiring free disk space", async (t) => {
+    const mod = await import('../../build/core/project-config.js');
+    const config = await mod.ensureProjectConfig({rootDir:fixtureRoot});
+    const path = join(fixtureRoot, '.contextpro', 'config.json');
+    const before = await readFile(path, 'utf8');
+    const full = () => { throw Object.assign(new Error('disk full'), {code:'ENOSPC'}); };
+    t.mock.method(fs, 'writeFile', full);
+    t.mock.method(fs, 'mkdir', full);
+    t.mock.method(fs, 'open', full);
+    syncBuiltinESMExports();
+    try {
+      assert.deepEqual(await mod.ensureProjectConfig({rootDir:fixtureRoot}), config);
+      assert.deepEqual((await mod.verifyProjectContext(fixtureRoot)).config, config);
+      assert.equal(await readFile(path, 'utf8'), before);
+    } finally { t.mock.restoreAll(); syncBuiltinESMExports(); }
+  });
+
+  it("preserves the previous config when an actual update runs out of disk mid-write", async (t) => {
+    const mod = await import('../../build/core/project-config.js');
+    const initial = await mod.ensureProjectConfig({rootDir:fixtureRoot, projectId:'original'});
+    const path = join(fixtureRoot, '.contextpro', 'config.json');
+    const before = await readFile(path, 'utf8');
+    const realWrite = fs.writeFile, realOpen = fs.open;
+    const failure = () => Object.assign(new Error('disk full'), {code:'ENOSPC'});
+    // Covers the old direct-write path as well as the replacement-file path.
+    t.mock.method(fs, 'writeFile', async (file, ...args) => {
+      if (String(file) === path) { await realWrite(file, '{partial'); throw failure(); }
+      return realWrite(file, ...args);
+    });
+    t.mock.method(fs, 'open', async (file, flags, ...args) => {
+      const handle = await realOpen(file, flags, ...args);
+      if (String(flags).includes('w')) {
+        handle.writeFile = async () => { await handle.write('{partial'); throw failure(); };
+      }
+      return handle;
+    });
+    syncBuiltinESMExports();
+    try {
+      await assert.rejects(mod.ensureProjectConfig({rootDir:fixtureRoot,projectId:'changed'}), {code:'ENOSPC'});
+      assert.equal(await readFile(path,'utf8'), before);
+      assert.deepEqual(await fs.readdir(join(fixtureRoot,'.contextpro')), ['config.json']);
+    } finally { t.mock.restoreAll(); syncBuiltinESMExports(); }
+    const updated = await mod.ensureProjectConfig({rootDir:fixtureRoot,projectId:'changed'});
+    assert.equal(updated.projectId, 'changed');
+    assert.equal(updated.createdAt, initial.createdAt);
+    assert.equal(JSON.parse(await readFile(path,'utf8')).projectId, 'changed');
   });
 });

@@ -2,11 +2,11 @@
 // FEATURE: Trust foundation for multi-project and multi-client ContextPro usage
 
 import { execFile } from "child_process";
-import { createHash } from "crypto";
-import { mkdir, readFile, writeFile } from "fs/promises";
+import { createHash, randomUUID } from "crypto";
+import { mkdir, open, readFile, rename, unlink, writeFile } from "fs/promises";
 import { homedir } from "os";
 import { basename, join, resolve } from "path";
-import { promisify } from "util";
+import { isDeepStrictEqual, promisify } from "util";
 import { CONTEXTPRO_DIR } from "./data-dir.js";
 
 const execFileAsync = promisify(execFile);
@@ -262,10 +262,24 @@ export async function ensureProjectConfig(options: EnsureProjectConfigOptions): 
     repoFingerprint,
     sessionSource,
     createdAt,
-    updatedAt: new Date().toISOString(),
+    updatedAt: stringField(existing, "updatedAt") ?? new Date().toISOString(),
   };
+  // Verification runs before reads as well as writes. Do not turn every read
+  // into a config rewrite just to advance updatedAt (or require writable disk).
+  if (isDeepStrictEqual(rawExisting, config)) return config;
+  config.updatedAt = new Date().toISOString();
   await mkdir(join(workspaceRoot, CONTEXTPRO_DIR), { recursive: true });
-  await writeFile(configPath, JSON.stringify(config, null, 2) + "\n", "utf-8");
+  // A failed write must not truncate the previous identity/provider settings.
+  const temporaryPath = `${configPath}.${randomUUID()}.tmp`;
+  const handle = await open(temporaryPath, "wx", 0o600);
+  try {
+    await handle.writeFile(JSON.stringify(config, null, 2) + "\n", "utf-8");
+    await handle.close();
+    await rename(temporaryPath, configPath);
+  } finally {
+    await handle.close();
+    await unlink(temporaryPath).catch(() => {});
+  }
   return config;
 }
 

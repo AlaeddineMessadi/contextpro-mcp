@@ -94,6 +94,22 @@ describe("ContextPlusDB", () => {
       assert.equal(db.searchFileText("payment capture", 5).length, 0);
       db.close();
     });
+
+    it("verifies literal punctuation and morphology before limiting FTS candidates", () => {
+      const db = new ContextPlusDB(FIXTURE_DIR);
+      try {
+        for (let i = 0; i < 45; i++) db.upsertFileSearchDocument({path:`caller-${i}.ts`,content:'document.text.repair'});
+        db.upsertFileSearchDocument({path:'repair.sql',content:'-- padding\n'.repeat(60) + 'document_text_repairs'});
+        assert.deepEqual(db.searchFileText('document_text_repairs',1,true).map(row=>row.path), ['repair.sql']);
+        assert.ok(db.searchFileText('document.text.repair',50,true).every(row=>row.path !== 'repair.sql'));
+        db.upsertFileSearchDocument({path:'literal.ts',content:'ÉCLAIR to be'});
+        assert.deepEqual(db.searchFileText('e\u0301clair',1,true).map(row=>row.path), ['literal.ts']);
+        assert.deepEqual(db.searchFileText('to be',1,true).map(row=>row.path), ['literal.ts']);
+      } finally {
+        for (let i = 0; i < 45; i++) db.deleteFileSearchDocument(`caller-${i}.ts`);
+        db.deleteFileSearchDocument('repair.sql'); db.deleteFileSearchDocument('literal.ts'); db.close();
+      }
+    });
   });
 
   describe("symbol operations", () => {
