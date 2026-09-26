@@ -1,0 +1,47 @@
+{
+  "version": 1,
+  "baselineServerCommit": "7cf79035fa093772929218e3e517a0ede1b246bb",
+  "agentTimeoutMs": 600000,
+  "tasks": [
+    {
+      "id": "contextpro-worktree-routing", "repository": "contextpro", "fix": "69ea95572b8737a91c1684e77041e680b4ffa318",
+      "prompt": "Fix shared MCP worktree routing. When the connection root has linked worktrees, calls without an explicit root must reject ambiguous routing, including health and reindex. Explicit roots must route reads, search, reindex and health to that worktree, including edited working-tree bytes and concurrent calls. Health must still report diagnostics for the requested root when project configuration is invalid. Preserve standalone-repository default-root behavior.",
+      "validator": "node", "tests": ["test/main/worktree-routing-stdio.test.mjs"]
+    },
+    {
+      "id": "contextpro-grep-context", "repository": "contextpro", "fix": "3b9eec9b219c296a2d720259be5bbcd7ba0b67b7",
+      "prompt": "Improve grep source context. Add optional context_lines (0–10, default 0) and context_chars (40–1000, default 300) to the MCP grep schema and corresponding contextLines/contextChars handler options. Include bounded, deduplicated neighboring lines while preserving exact match counts and marking matching versus surrounding lines. Preserve literal matching, regex opt-in and existing glob behavior.",
+      "validator": "node", "tests": ["test/main/grep-glob.test.mjs"]
+    },
+    {
+      "id": "app-d-offline-contact", "repository": "app-d", "fix": "private-rev",
+      "prompt": "Fix stale privacy contact information in the public offline shell. After a successful online page navigation returns a changed public privacy contact, later offline navigation must display the current contact. Preserve the existing service-worker caching restrictions and safe behavior for failed or unsuitable network responses.",
+      "validator": "app-d-browser", "tests": ["tests/e2e/offline-contact-refresh.spec.ts"]
+    },
+    {
+      "id": "app-d-reporting-withdrawal", "repository": "app-d", "fix": "private-rev",
+      "prompt": "Preserve withdrawal of optional usage reporting when an invitation expires or becomes unavailable. A guest who previously enabled reporting must still be able to turn it off from the unavailable invitation page, with consent withdrawn and queued reporting stopped. Do not enable a new opt-in without a valid invitation, and preserve guest access restrictions.",
+      "validator": "app-d-browser", "tests": ["tests/e2e/observations.spec.ts"], "testPattern": "unavailable|withdraw|expired"
+    },
+    {
+      "id": "app-d-video-export", "repository": "app-d", "fix": "private-rev",
+      "prompt": "Enforce the video feature kill switch throughout host exports. When video is disabled, video content and pending video jobs must not enter new exports, and previously prepared exports containing video must not be downloadable. Preserve photo-only export behavior and authorize every export operation normally.",
+      "validator": "vitest", "tests": ["tests/export.test.ts"]
+    },
+    {
+      "id": "app-c-country-normalization", "repository": "app-c", "fix": "private-rev",
+      "prompt": "Normalize Austrian procurement notice country values to the canonical ISO alpha-2 country code AT. Cover the country spellings and codes used by source notices without inventing a country for unknown values or changing valid codes. Preserve parser behavior for other countries and source provenance.",
+      "validator": "vitest", "tests": ["tests/parsers.test.ts"]
+    },
+    {
+      "id": "app-c-empty-comparison", "repository": "app-c", "fix": "private-rev",
+      "prompt": "Repair AI matching comparisons for empty company-profile fields. Empty or whitespace-only arrays/strings must remain missing information, not supported matching evidence. Repair unsupported company evidence only for genuinely empty compared fields while retaining the tender citations. Do not weaken evidence validation for populated fields or fabricate capabilities.",
+      "validator": "vitest", "tests": ["tests/ai-provider.test.ts"]
+    },
+    {
+      "id": "app-c-plain-text", "repository": "app-c", "fix": "private-rev",
+      "prompt": "Add complete verified reading of plain-text source documents in the source panel. Fetch the original through the existing authorized preview URL, verify its expected byte length and SHA-256, and render the full text literally with whitespace preserved, without interpreting HTML or Markdown. Retain excerpt mode and original download. Handle loading, retryable errors, empty text and files over 512 KiB safely. Keep reading position across preview expansion, and preserve existing Markdown preview behavior.",
+      "validator": "text-preview", "tests": []
+    }
+  ]
+}

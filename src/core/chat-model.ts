@@ -5,8 +5,9 @@ import { readFile } from "fs/promises";
 import { join } from "path";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { normalizeProvider, getApiKey, getBaseUrl, getChatModelName } from "./provider-config.js";
+import { observeProviderCall } from "./provider-usage.js";
 
-type OllamaChatClient = { chat: (params: Record<string, unknown>) => Promise<{ message: { content: string } }> };
+type OllamaChatClient = { chat: (params: Record<string, unknown>) => Promise<{ message: { content: string }; prompt_eval_count?: number; eval_count?: number }> };
 
 interface ContextPlusConfig {
   provider?: string;
@@ -84,13 +85,22 @@ export async function hasConfiguredChatModel(rootDir: string): Promise<boolean> 
   return Boolean(process.env.CONTEXTPRO_CHAT_MODEL ?? process.env.OLLAMA_CHAT_MODEL ?? config?.chatModel);
 }
 
-export async function chatCompletion(rootDir: string, prompt: string, options: { timeoutMs?: number } = {}): Promise<string> {
+export async function chatModelIdentity(rootDir: string): Promise<string> {
+  const config = await readContextPlusConfig(rootDir);
+  const provider = resolveChatProvider(config);
+  const model = provider === "openai" ? getChatModelName("openai") : process.env.CONTEXTPRO_CHAT_MODEL ?? process.env.OLLAMA_CHAT_MODEL ?? config?.chatModel ?? getChatModelName("ollama");
+  return `${provider}:${model}`;
+}
+
+export async function chatCompletion(rootDir: string, prompt: string, options: { timeoutMs?: number; maxOutputTokens?: number } = {}): Promise<string> {
   const signal = AbortSignal.timeout(options.timeoutMs ?? 60_000);
   const config = await readContextPlusConfig(rootDir);
   const provider = resolveChatProvider(config);
   if (provider === "openai") {
     const apiKey = getApiKey();
     if (!apiKey) throw new Error("OpenAI-compatible chat requested but no API key is configured. Set CONTEXTPRO_API_KEY.");
+    const model = getChatModelName("openai");
+    const data = await observeProviderCall({ kind: "chat", provider: "openai", model }, async () => {
     const response = await fetch(`${getBaseUrl().replace(/\/+$/, "")}/chat/completions`, {
       method: "POST",
       headers: {
@@ -98,9 +108,10 @@ export async function chatCompletion(rootDir: string, prompt: string, options: {
         "Authorization": `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
-        model: getChatModelName("openai"),
+        model,
         messages: [{ role: "user", content: prompt }],
         stream: false,
+        ...(options.maxOutputTokens ? { max_tokens: options.maxOutputTokens } : {}),
       }),
       signal,
     });
@@ -108,7 +119,8 @@ export async function chatCompletion(rootDir: string, prompt: string, options: {
       const body = await response.text().catch(() => "");
       throw new Error(`OpenAI-compatible chat API error ${response.status}: ${body}`);
     }
-    const data = await response.json() as { choices: { message: { content: string } }[] };
+    return await response.json() as { choices: { message: { content: string } }[]; usage?: { prompt_tokens?: number; completion_tokens?: number; prompt_tokens_details?: { cached_tokens?: number } } };
+    }, result => ({ input: result.usage?.prompt_tokens, output: result.usage?.completion_tokens, cached: result.usage?.prompt_tokens_details?.cached_tokens }));
     return data.choices[0]?.message?.content ?? "";
   }
 
@@ -116,11 +128,12 @@ export async function chatCompletion(rootDir: string, prompt: string, options: {
   if (!model) throw new Error("No Ollama chat model is configured.");
   const client = await getOllamaClient();
   try {
-    const response = await chatSignals.run(signal, () => client.chat({
+    const response = await observeProviderCall({ kind: "chat", provider: "ollama", model }, () => chatSignals.run(signal, () => client.chat({
       model,
       messages: [{ role: "user", content: prompt }],
       stream: false,
-    }));
+      ...(options.maxOutputTokens ? { options: { num_predict: options.maxOutputTokens } } : {}),
+    })), result => ({ input: result.prompt_eval_count, output: result.eval_count }));
     return response.message.content;
   } catch (error) {
     throw new Error(formatOllamaChatError(error, model));
