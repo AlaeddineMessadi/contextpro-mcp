@@ -82,6 +82,14 @@ a limitation; the unknown-symbol control returned no source. `gemma4:latest`
 was not installed, so chat quality was not evaluated. Mock-provider tests verify
 deadlines, output validation and fallback behavior, not model quality.
 
+The [sanitized observations](2026-09-26-semantic-evidence.json) retain all 90
+results and their provider-reported counts. Irrelevant output is measured as
+file occurrences against each fixture's declared relevant-file set; follow-up
+need means a missing expected predicate, not an observed human/agent read.
+These small sequential measurements have no warm/cold randomization or confidence
+intervals. Named-definition source paths remain eligible even in a semantic-only
+experiment, while exact-name fast paths are separately marked.
+
 The broad visual replay archives app-a at
 `private-rev`. At a 5,000-unit budget including
 metadata, baseline returned none of three expected files; candidate returned
@@ -101,3 +109,14 @@ these infrastructure failures are retained separately. Desktop bundled CLI
 11,776 cached-input subset, 5 output tokens), counted as setup rather than a
 coding task. The unchanged 16-trial contract runs with that executable at
 `gpt-6-sol` / `xhigh`. Results are pending.
+
+The machine also hosts other user work; isolated source copies do not imply
+isolated CPU or network resources. Local implementation tests are paused during
+timed coding runs to avoid additional contention from this task.
+
+Independent review after freezing found cache-identity omissions for connected
+task-pack graph limits/source budgets, and missing validation of citation IDs in
+previously cached briefs. The final changes harden these contracts separately;
+the pilot build stays frozen at the identity above. These changes are not ranking
+tuning against held-out results, and pilot timings do not measure that later
+cache hardening.

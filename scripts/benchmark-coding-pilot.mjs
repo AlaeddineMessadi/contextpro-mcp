@@ -129,7 +129,7 @@ if (flags.has('--prepare') || flags.has('--recheck')) {
   if (!config.model) throw Error('Explicit configured agent model required');
   const agentCommand = process.env.CONTEXTPRO_PILOT_CODEX ?? 'codex';
   const agentVersion = (await exec(agentCommand, ['--version'])).stdout.trim();
-  const launchers = Object.fromEntries(['baseline', 'candidate'].map(variant => [variant, { command: process.execPath, args: [join(output, variant, 'build/index.js')] }]));
+  const launchers = Object.fromEntries(variants.filter(variant => variant !== 'native').map(variant => [variant, { command: process.execPath, args: [join(output, variant, 'build/index.js')] }]));
   const fingerprints = Object.fromEntries(await Promise.all(Object.entries(launchers).map(async ([variant, launcher]) => [variant, await fingerprintLauncher(launcher)])));
   await save(join(output, 'plan.json'), { contractHash, plan, config, agentCommand, agentVersion, fingerprints, dependencyPolicy: 'APFS copies of existing installed dependencies, identical per task; not a clean lockfile install', contextPolicy: 'structurally seeded, no corpus embeddings; local semantic evaluation is a separate campaign' });
   const rows = [];

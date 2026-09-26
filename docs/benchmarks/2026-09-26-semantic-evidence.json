@@ -1,0 +1,2891 @@
+{
+  "candidateCommit": "ba3d3aa789173cf0579e588158acc04e0f87358b",
+  "fixture": "scripts/fixtures/retrieval-cases.json",
+  "embeddingModel": "bge-m3:latest",
+  "chatReadiness": {
+    "available": false,
+    "error": "Ollama model gemma4:latest not found (model not installed)",
+    "qualityEvaluated": false
+  },
+  "method": "90 sequential development observations; three vector states, three presets, two selectors, five queries; expected strings and relevant file labels are fixture-specific, not independent coding-task outcomes",
+  "groups": [
+    {
+      "vectors": "absent",
+      "preset": "keyword_only",
+      "connected": false,
+      "observations": 5,
+      "meanCoverage": 1,
+      "followupsNeeded": 0,
+      "irrelevantFileOccurrences": 5,
+      "negativeControlsReturningSource": 0,
+      "medianMs": 136.54,
+      "medianOutputBytes": 790,
+      "semanticFileHits": 0
+    },
+    {
+      "vectors": "absent",
+      "preset": "keyword_only",
+      "connected": true,
+      "observations": 5,
+      "meanCoverage": 1,
+      "followupsNeeded": 0,
+      "irrelevantFileOccurrences": 5,
+      "negativeControlsReturningSource": 0,
+      "medianMs": 128.56,
+      "medianOutputBytes": 1142,
+      "semanticFileHits": 0
+    },
+    {
+      "vectors": "absent",
+      "preset": "semantic_only",
+      "connected": false,
+      "observations": 5,
+      "meanCoverage": 0,
+      "followupsNeeded": 3,
+      "irrelevantFileOccurrences": 0,
+      "negativeControlsReturningSource": 0,
+      "medianMs": 78.39,
+      "medianOutputBytes": 256,
+      "semanticFileHits": 0
+    },
+    {
+      "vectors": "absent",
+      "preset": "semantic_only",
+      "connected": true,
+      "observations": 5,
+      "meanCoverage": 0,
+      "followupsNeeded": 3,
+      "irrelevantFileOccurrences": 0,
+      "negativeControlsReturningSource": 0,
+      "medianMs": 104.23,
+      "medianOutputBytes": 256,
+      "semanticFileHits": 0
+    },
+    {
+      "vectors": "absent",
+      "preset": "balanced",
+      "connected": false,
+      "observations": 5,
+      "meanCoverage": 1,
+      "followupsNeeded": 0,
+      "irrelevantFileOccurrences": 5,
+      "negativeControlsReturningSource": 0,
+      "medianMs": 105.52,
+      "medianOutputBytes": 790,
+      "semanticFileHits": 0
+    },
+    {
+      "vectors": "absent",
+      "preset": "balanced",
+      "connected": true,
+      "observations": 5,
+      "meanCoverage": 1,
+      "followupsNeeded": 0,
+      "irrelevantFileOccurrences": 5,
+      "negativeControlsReturningSource": 0,
+      "medianMs": 125.47,
+      "medianOutputBytes": 1079,
+      "semanticFileHits": 0
+    },
+    {
+      "vectors": "valid",
+      "preset": "keyword_only",
+      "connected": false,
+      "observations": 5,
+      "meanCoverage": 1,
+      "followupsNeeded": 0,
+      "irrelevantFileOccurrences": 5,
+      "negativeControlsReturningSource": 0,
+      "medianMs": 86.62,
+      "medianOutputBytes": 790,
+      "semanticFileHits": 0
+    },
+    {
+      "vectors": "valid",
+      "preset": "keyword_only",
+      "connected": true,
+      "observations": 5,
+      "meanCoverage": 1,
+      "followupsNeeded": 0,
+      "irrelevantFileOccurrences": 5,
+      "negativeControlsReturningSource": 0,
+      "medianMs": 59.95,
+      "medianOutputBytes": 1142,
+      "semanticFileHits": 0
+    },
+    {
+      "vectors": "valid",
+      "preset": "semantic_only",
+      "connected": false,
+      "observations": 5,
+      "meanCoverage": 1,
+      "followupsNeeded": 0,
+      "irrelevantFileOccurrences": 3,
+      "negativeControlsReturningSource": 0,
+      "medianMs": 132.58,
+      "medianOutputBytes": 582,
+      "semanticFileHits": 20
+    },
+    {
+      "vectors": "valid",
+      "preset": "semantic_only",
+      "connected": true,
+      "observations": 5,
+      "meanCoverage": 1,
+      "followupsNeeded": 0,
+      "irrelevantFileOccurrences": 8,
+      "negativeControlsReturningSource": 1,
+      "medianMs": 227.93,
+      "medianOutputBytes": 967,
+      "semanticFileHits": 20
+    },
+    {
+      "vectors": "valid",
+      "preset": "balanced",
+      "connected": false,
+      "observations": 5,
+      "meanCoverage": 1,
+      "followupsNeeded": 0,
+      "irrelevantFileOccurrences": 3,
+      "negativeControlsReturningSource": 0,
+      "medianMs": 192.78,
+      "medianOutputBytes": 582,
+      "semanticFileHits": 20
+    },
+    {
+      "vectors": "valid",
+      "preset": "balanced",
+      "connected": true,
+      "observations": 5,
+      "meanCoverage": 1,
+      "followupsNeeded": 0,
+      "irrelevantFileOccurrences": 8,
+      "negativeControlsReturningSource": 1,
+      "medianMs": 148.19,
+      "medianOutputBytes": 967,
+      "semanticFileHits": 20
+    },
+    {
+      "vectors": "obsolete",
+      "preset": "keyword_only",
+      "connected": false,
+      "observations": 5,
+      "meanCoverage": 1,
+      "followupsNeeded": 0,
+      "irrelevantFileOccurrences": 5,
+      "negativeControlsReturningSource": 0,
+      "medianMs": 32.91,
+      "medianOutputBytes": 790,
+      "semanticFileHits": 0
+    },
+    {
+      "vectors": "obsolete",
+      "preset": "keyword_only",
+      "connected": true,
+      "observations": 5,
+      "meanCoverage": 1,
+      "followupsNeeded": 0,
+      "irrelevantFileOccurrences": 5,
+      "negativeControlsReturningSource": 0,
+      "medianMs": 76.6,
+      "medianOutputBytes": 1142,
+      "semanticFileHits": 0
+    },
+    {
+      "vectors": "obsolete",
+      "preset": "semantic_only",
+      "connected": false,
+      "observations": 5,
+      "meanCoverage": 0,
+      "followupsNeeded": 3,
+      "irrelevantFileOccurrences": 0,
+      "negativeControlsReturningSource": 0,
+      "medianMs": 28.2,
+      "medianOutputBytes": 256,
+      "semanticFileHits": 0
+    },
+    {
+      "vectors": "obsolete",
+      "preset": "semantic_only",
+      "connected": true,
+      "observations": 5,
+      "meanCoverage": 0,
+      "followupsNeeded": 3,
+      "irrelevantFileOccurrences": 0,
+      "negativeControlsReturningSource": 0,
+      "medianMs": 54.09,
+      "medianOutputBytes": 256,
+      "semanticFileHits": 0
+    },
+    {
+      "vectors": "obsolete",
+      "preset": "balanced",
+      "connected": false,
+      "observations": 5,
+      "meanCoverage": 1,
+      "followupsNeeded": 0,
+      "irrelevantFileOccurrences": 5,
+      "negativeControlsReturningSource": 0,
+      "medianMs": 38.01,
+      "medianOutputBytes": 790,
+      "semanticFileHits": 0
+    },
+    {
+      "vectors": "obsolete",
+      "preset": "balanced",
+      "connected": true,
+      "observations": 5,
+      "meanCoverage": 1,
+      "followupsNeeded": 0,
+      "irrelevantFileOccurrences": 5,
+      "negativeControlsReturningSource": 0,
+      "medianMs": 64.75,
+      "medianOutputBytes": 1079,
+      "semanticFileHits": 0
+    }
+  ],
+  "observations": [
+    {
+      "id": "connected-reservation",
+      "state": "absent",
+      "preset": "keyword_only",
+      "connected": false,
+      "durationMs": 136.54004099999997,
+      "outputBytes": 1015,
+      "usage": [],
+      "vectorsStored": {
+        "vectorTablesReady": false,
+        "dimension": null,
+        "total": 0,
+        "fileSearch": 0,
+        "identifiers": 0,
+        "memory": 0
+      },
+      "semanticResults": 0,
+      "evidenceCoverage": 1,
+      "missingEvidence": [],
+      "followupNeeded": false,
+      "irrelevantFiles": [
+        "view.tsx"
+      ],
+      "negativeReturnedSource": null,
+      "lexicalFallbackReported": true,
+      "exactNameFastPath": false
+    },
+    {
+      "id": "connected-reservation",
+      "state": "absent",
+      "preset": "keyword_only",
+      "connected": true,
+      "durationMs": 99.66874999999982,
+      "outputBytes": 1160,
+      "usage": [],
+      "vectorsStored": {
+        "vectorTablesReady": false,
+        "dimension": null,
+        "total": 0,
+        "fileSearch": 0,
+        "identifiers": 0,
+        "memory": 0
+      },
+      "semanticResults": 0,
+      "evidenceCoverage": 1,
+      "missingEvidence": [],
+      "followupNeeded": false,
+      "irrelevantFiles": [
+        "view.tsx"
+      ],
+      "negativeReturnedSource": null,
+      "lexicalFallbackReported": true,
+      "exactNameFastPath": false
+    },
+    {
+      "id": "connected-reservation",
+      "state": "absent",
+      "preset": "semantic_only",
+      "connected": false,
+      "durationMs": 49.33575000000019,
+      "outputBytes": 256,
+      "usage": [],
+      "vectorsStored": {
+        "vectorTablesReady": false,
+        "dimension": null,
+        "total": 0,
+        "fileSearch": 0,
+        "identifiers": 0,
+        "memory": 0
+      },
+      "semanticResults": 0,
+      "evidenceCoverage": 0,
+      "missingEvidence": [
+        "used + reserved >= limit",
+        "!guest.active",
+        "reserveUpload"
+      ],
+      "followupNeeded": true,
+      "irrelevantFiles": [],
+      "negativeReturnedSource": null,
+      "lexicalFallbackReported": false,
+      "exactNameFastPath": false
+    },
+    {
+      "id": "connected-reservation",
+      "state": "absent",
+      "preset": "semantic_only",
+      "connected": true,
+      "durationMs": 115.84620800000016,
+      "outputBytes": 256,
+      "usage": [],
+      "vectorsStored": {
+        "vectorTablesReady": false,
+        "dimension": null,
+        "total": 0,
+        "fileSearch": 0,
+        "identifiers": 0,
+        "memory": 0
+      },
+      "semanticResults": 0,
+      "evidenceCoverage": 0,
+      "missingEvidence": [
+        "used + reserved >= limit",
+        "!guest.active",
+        "reserveUpload"
+      ],
+      "followupNeeded": true,
+      "irrelevantFiles": [],
+      "negativeReturnedSource": null,
+      "lexicalFallbackReported": false,
+      "exactNameFastPath": false
+    },
+    {
+      "id": "connected-reservation",
+      "state": "absent",
+      "preset": "balanced",
+      "connected": false,
+      "durationMs": 92.24862499999972,
+      "outputBytes": 1015,
+      "usage": [],
+      "vectorsStored": {
+        "vectorTablesReady": false,
+        "dimension": null,
+        "total": 0,
+        "fileSearch": 0,
+        "identifiers": 0,
+        "memory": 0
+      },
+      "semanticResults": 0,
+      "evidenceCoverage": 1,
+      "missingEvidence": [],
+      "followupNeeded": false,
+      "irrelevantFiles": [
+        "view.tsx"
+      ],
+      "negativeReturnedSource": null,
+      "lexicalFallbackReported": true,
+      "exactNameFastPath": false
+    },
+    {
+      "id": "connected-reservation",
+      "state": "absent",
+      "preset": "balanced",
+      "connected": true,
+      "durationMs": 100.86675000000014,
+      "outputBytes": 1150,
+      "usage": [],
+      "vectorsStored": {
+        "vectorTablesReady": false,
+        "dimension": null,
+        "total": 0,
+        "fileSearch": 0,
+        "identifiers": 0,
+        "memory": 0
+      },
+      "semanticResults": 0,
+      "evidenceCoverage": 1,
+      "missingEvidence": [],
+      "followupNeeded": false,
+      "irrelevantFiles": [
+        "view.tsx"
+      ],
+      "negativeReturnedSource": null,
+      "lexicalFallbackReported": true,
+      "exactNameFastPath": false
+    },
+    {
+      "id": "named-definition",
+      "state": "absent",
+      "preset": "keyword_only",
+      "connected": false,
+      "durationMs": 97.11812499999996,
+      "outputBytes": 1032,
+      "usage": [],
+      "vectorsStored": {
+        "vectorTablesReady": false,
+        "dimension": null,
+        "total": 0,
+        "fileSearch": 0,
+        "identifiers": 0,
+        "memory": 0
+      },
+      "semanticResults": 0,
+      "evidenceCoverage": 1,
+      "missingEvidence": [],
+      "followupNeeded": false,
+      "irrelevantFiles": [
+        "tests/upload.test.ts",
+        "view.tsx",
+        "quota.ts"
+      ],
+      "negativeReturnedSource": null,
+      "lexicalFallbackReported": true,
+      "exactNameFastPath": false
+    },
+    {
+      "id": "named-definition",
+      "state": "absent",
+      "preset": "keyword_only",
+      "connected": true,
+      "durationMs": 128.56337500000018,
+      "outputBytes": 1142,
+      "usage": [],
+      "vectorsStored": {
+        "vectorTablesReady": false,
+        "dimension": null,
+        "total": 0,
+        "fileSearch": 0,
+        "identifiers": 0,
+        "memory": 0
+      },
+      "semanticResults": 0,
+      "evidenceCoverage": 1,
+      "missingEvidence": [],
+      "followupNeeded": false,
+      "irrelevantFiles": [
+        "tests/upload.test.ts",
+        "quota.ts",
+        "view.tsx"
+      ],
+      "negativeReturnedSource": null,
+      "lexicalFallbackReported": true,
+      "exactNameFastPath": false
+    },
+    {
+      "id": "named-definition",
+      "state": "absent",
+      "preset": "semantic_only",
+      "connected": false,
+      "durationMs": 74.09712500000023,
+      "outputBytes": 256,
+      "usage": [],
+      "vectorsStored": {
+        "vectorTablesReady": false,
+        "dimension": null,
+        "total": 0,
+        "fileSearch": 0,
+        "identifiers": 0,
+        "memory": 0
+      },
+      "semanticResults": 0,
+      "evidenceCoverage": 0,
+      "missingEvidence": [
+        "export function reserveUpload"
+      ],
+      "followupNeeded": true,
+      "irrelevantFiles": [],
+      "negativeReturnedSource": null,
+      "lexicalFallbackReported": false,
+      "exactNameFastPath": false
+    },
+    {
+      "id": "named-definition",
+      "state": "absent",
+      "preset": "semantic_only",
+      "connected": true,
+      "durationMs": 63.679999999999836,
+      "outputBytes": 256,
+      "usage": [],
+      "vectorsStored": {
+        "vectorTablesReady": false,
+        "dimension": null,
+        "total": 0,
+        "fileSearch": 0,
+        "identifiers": 0,
+        "memory": 0
+      },
+      "semanticResults": 0,
+      "evidenceCoverage": 0,
+      "missingEvidence": [
+        "export function reserveUpload"
+      ],
+      "followupNeeded": true,
+      "irrelevantFiles": [],
+      "negativeReturnedSource": null,
+      "lexicalFallbackReported": false,
+      "exactNameFastPath": false
+    },
+    {
+      "id": "named-definition",
+      "state": "absent",
+      "preset": "balanced",
+      "connected": false,
+      "durationMs": 90.86725000000024,
+      "outputBytes": 1032,
+      "usage": [],
+      "vectorsStored": {
+        "vectorTablesReady": false,
+        "dimension": null,
+        "total": 0,
+        "fileSearch": 0,
+        "identifiers": 0,
+        "memory": 0
+      },
+      "semanticResults": 0,
+      "evidenceCoverage": 1,
+      "missingEvidence": [],
+      "followupNeeded": false,
+      "irrelevantFiles": [
+        "tests/upload.test.ts",
+        "view.tsx",
+        "quota.ts"
+      ],
+      "negativeReturnedSource": null,
+      "lexicalFallbackReported": true,
+      "exactNameFastPath": false
+    },
+    {
+      "id": "named-definition",
+      "state": "absent",
+      "preset": "balanced",
+      "connected": true,
+      "durationMs": 125.47137500000008,
+      "outputBytes": 1079,
+      "usage": [],
+      "vectorsStored": {
+        "vectorTablesReady": false,
+        "dimension": null,
+        "total": 0,
+        "fileSearch": 0,
+        "identifiers": 0,
+        "memory": 0
+      },
+      "semanticResults": 0,
+      "evidenceCoverage": 1,
+      "missingEvidence": [],
+      "followupNeeded": false,
+      "irrelevantFiles": [
+        "tests/upload.test.ts",
+        "quota.ts",
+        "view.tsx"
+      ],
+      "negativeReturnedSource": null,
+      "lexicalFallbackReported": true,
+      "exactNameFastPath": false
+    },
+    {
+      "id": "semantic-paraphrase",
+      "state": "absent",
+      "preset": "keyword_only",
+      "connected": false,
+      "durationMs": 149.37525000000005,
+      "outputBytes": 790,
+      "usage": [],
+      "vectorsStored": {
+        "vectorTablesReady": false,
+        "dimension": null,
+        "total": 0,
+        "fileSearch": 0,
+        "identifiers": 0,
+        "memory": 0
+      },
+      "semanticResults": 0,
+      "evidenceCoverage": 1,
+      "missingEvidence": [],
+      "followupNeeded": false,
+      "irrelevantFiles": [
+        "view.tsx"
+      ],
+      "negativeReturnedSource": null,
+      "lexicalFallbackReported": true,
+      "exactNameFastPath": false
+    },
+    {
+      "id": "semantic-paraphrase",
+      "state": "absent",
+      "preset": "keyword_only",
+      "connected": true,
+      "durationMs": 120.35487499999999,
+      "outputBytes": 1230,
+      "usage": [],
+      "vectorsStored": {
+        "vectorTablesReady": false,
+        "dimension": null,
+        "total": 0,
+        "fileSearch": 0,
+        "identifiers": 0,
+        "memory": 0
+      },
+      "semanticResults": 0,
+      "evidenceCoverage": 1,
+      "missingEvidence": [],
+      "followupNeeded": false,
+      "irrelevantFiles": [
+        "view.tsx"
+      ],
+      "negativeReturnedSource": null,
+      "lexicalFallbackReported": true,
+      "exactNameFastPath": false
+    },
+    {
+      "id": "semantic-paraphrase",
+      "state": "absent",
+      "preset": "semantic_only",
+      "connected": false,
+      "durationMs": 109.57237500000019,
+      "outputBytes": 256,
+      "usage": [],
+      "vectorsStored": {
+        "vectorTablesReady": false,
+        "dimension": null,
+        "total": 0,
+        "fileSearch": 0,
+        "identifiers": 0,
+        "memory": 0
+      },
+      "semanticResults": 0,
+      "evidenceCoverage": 0,
+      "missingEvidence": [
+        "used + reserved >= limit"
+      ],
+      "followupNeeded": true,
+      "irrelevantFiles": [],
+      "negativeReturnedSource": null,
+      "lexicalFallbackReported": false,
+      "exactNameFastPath": false
+    },
+    {
+      "id": "semantic-paraphrase",
+      "state": "absent",
+      "preset": "semantic_only",
+      "connected": true,
+      "durationMs": 104.22687500000029,
+      "outputBytes": 256,
+      "usage": [],
+      "vectorsStored": {
+        "vectorTablesReady": false,
+        "dimension": null,
+        "total": 0,
+        "fileSearch": 0,
+        "identifiers": 0,
+        "memory": 0
+      },
+      "semanticResults": 0,
+      "evidenceCoverage": 0,
+      "missingEvidence": [
+        "used + reserved >= limit"
+      ],
+      "followupNeeded": true,
+      "irrelevantFiles": [],
+      "negativeReturnedSource": null,
+      "lexicalFallbackReported": false,
+      "exactNameFastPath": false
+    },
+    {
+      "id": "semantic-paraphrase",
+      "state": "absent",
+      "preset": "balanced",
+      "connected": false,
+      "durationMs": 132.73608299999978,
+      "outputBytes": 790,
+      "usage": [],
+      "vectorsStored": {
+        "vectorTablesReady": false,
+        "dimension": null,
+        "total": 0,
+        "fileSearch": 0,
+        "identifiers": 0,
+        "memory": 0
+      },
+      "semanticResults": 0,
+      "evidenceCoverage": 1,
+      "missingEvidence": [],
+      "followupNeeded": false,
+      "irrelevantFiles": [
+        "view.tsx"
+      ],
+      "negativeReturnedSource": null,
+      "lexicalFallbackReported": true,
+      "exactNameFastPath": false
+    },
+    {
+      "id": "semantic-paraphrase",
+      "state": "absent",
+      "preset": "balanced",
+      "connected": true,
+      "durationMs": 285.80712500000027,
+      "outputBytes": 1220,
+      "usage": [],
+      "vectorsStored": {
+        "vectorTablesReady": false,
+        "dimension": null,
+        "total": 0,
+        "fileSearch": 0,
+        "identifiers": 0,
+        "memory": 0
+      },
+      "semanticResults": 0,
+      "evidenceCoverage": 1,
+      "missingEvidence": [],
+      "followupNeeded": false,
+      "irrelevantFiles": [
+        "view.tsx"
+      ],
+      "negativeReturnedSource": null,
+      "lexicalFallbackReported": true,
+      "exactNameFastPath": false
+    },
+    {
+      "id": "unknown-symbol",
+      "state": "absent",
+      "preset": "keyword_only",
+      "connected": false,
+      "durationMs": 163.14191700000038,
+      "outputBytes": 256,
+      "usage": [],
+      "vectorsStored": {
+        "vectorTablesReady": false,
+        "dimension": null,
+        "total": 0,
+        "fileSearch": 0,
+        "identifiers": 0,
+        "memory": 0
+      },
+      "semanticResults": 0,
+      "evidenceCoverage": null,
+      "missingEvidence": [],
+      "followupNeeded": false,
+      "irrelevantFiles": [],
+      "negativeReturnedSource": false,
+      "lexicalFallbackReported": false,
+      "exactNameFastPath": true
+    },
+    {
+      "id": "unknown-symbol",
+      "state": "absent",
+      "preset": "keyword_only",
+      "connected": true,
+      "durationMs": 177.74133299999994,
+      "outputBytes": 256,
+      "usage": [],
+      "vectorsStored": {
+        "vectorTablesReady": false,
+        "dimension": null,
+        "total": 0,
+        "fileSearch": 0,
+        "identifiers": 0,
+        "memory": 0
+      },
+      "semanticResults": 0,
+      "evidenceCoverage": null,
+      "missingEvidence": [],
+      "followupNeeded": false,
+      "irrelevantFiles": [],
+      "negativeReturnedSource": false,
+      "lexicalFallbackReported": false,
+      "exactNameFastPath": true
+    },
+    {
+      "id": "unknown-symbol",
+      "state": "absent",
+      "preset": "semantic_only",
+      "connected": false,
+      "durationMs": 78.38858300000084,
+      "outputBytes": 256,
+      "usage": [],
+      "vectorsStored": {
+        "vectorTablesReady": false,
+        "dimension": null,
+        "total": 0,
+        "fileSearch": 0,
+        "identifiers": 0,
+        "memory": 0
+      },
+      "semanticResults": 0,
+      "evidenceCoverage": null,
+      "missingEvidence": [],
+      "followupNeeded": false,
+      "irrelevantFiles": [],
+      "negativeReturnedSource": false,
+      "lexicalFallbackReported": false,
+      "exactNameFastPath": true
+    },
+    {
+      "id": "unknown-symbol",
+      "state": "absent",
+      "preset": "semantic_only",
+      "connected": true,
+      "durationMs": 65.49812500000007,
+      "outputBytes": 256,
+      "usage": [],
+      "vectorsStored": {
+        "vectorTablesReady": false,
+        "dimension": null,
+        "total": 0,
+        "fileSearch": 0,
+        "identifiers": 0,
+        "memory": 0
+      },
+      "semanticResults": 0,
+      "evidenceCoverage": null,
+      "missingEvidence": [],
+      "followupNeeded": false,
+      "irrelevantFiles": [],
+      "negativeReturnedSource": false,
+      "lexicalFallbackReported": false,
+      "exactNameFastPath": true
+    },
+    {
+      "id": "unknown-symbol",
+      "state": "absent",
+      "preset": "balanced",
+      "connected": false,
+      "durationMs": 105.51870800000052,
+      "outputBytes": 256,
+      "usage": [],
+      "vectorsStored": {
+        "vectorTablesReady": false,
+        "dimension": null,
+        "total": 0,
+        "fileSearch": 0,
+        "identifiers": 0,
+        "memory": 0
+      },
+      "semanticResults": 0,
+      "evidenceCoverage": null,
+      "missingEvidence": [],
+      "followupNeeded": false,
+      "irrelevantFiles": [],
+      "negativeReturnedSource": false,
+      "lexicalFallbackReported": false,
+      "exactNameFastPath": true
+    },
+    {
+      "id": "unknown-symbol",
+      "state": "absent",
+      "preset": "balanced",
+      "connected": true,
+      "durationMs": 102.79204200000004,
+      "outputBytes": 256,
+      "usage": [],
+      "vectorsStored": {
+        "vectorTablesReady": false,
+        "dimension": null,
+        "total": 0,
+        "fileSearch": 0,
+        "identifiers": 0,
+        "memory": 0
+      },
+      "semanticResults": 0,
+      "evidenceCoverage": null,
+      "missingEvidence": [],
+      "followupNeeded": false,
+      "irrelevantFiles": [],
+      "negativeReturnedSource": false,
+      "lexicalFallbackReported": false,
+      "exactNameFastPath": true
+    },
+    {
+      "id": "unrelated-question",
+      "state": "absent",
+      "preset": "keyword_only",
+      "connected": false,
+      "durationMs": 111.42266700000073,
+      "outputBytes": 256,
+      "usage": [],
+      "vectorsStored": {
+        "vectorTablesReady": false,
+        "dimension": null,
+        "total": 0,
+        "fileSearch": 0,
+        "identifiers": 0,
+        "memory": 0
+      },
+      "semanticResults": 0,
+      "evidenceCoverage": null,
+      "missingEvidence": [],
+      "followupNeeded": false,
+      "irrelevantFiles": [],
+      "negativeReturnedSource": false,
+      "lexicalFallbackReported": false,
+      "exactNameFastPath": false
+    },
+    {
+      "id": "unrelated-question",
+      "state": "absent",
+      "preset": "keyword_only",
+      "connected": true,
+      "durationMs": 172.1155829999998,
+      "outputBytes": 256,
+      "usage": [],
+      "vectorsStored": {
+        "vectorTablesReady": false,
+        "dimension": null,
+        "total": 0,
+        "fileSearch": 0,
+        "identifiers": 0,
+        "memory": 0
+      },
+      "semanticResults": 0,
+      "evidenceCoverage": null,
+      "missingEvidence": [],
+      "followupNeeded": false,
+      "irrelevantFiles": [],
+      "negativeReturnedSource": false,
+      "lexicalFallbackReported": false,
+      "exactNameFastPath": false
+    },
+    {
+      "id": "unrelated-question",
+      "state": "absent",
+      "preset": "semantic_only",
+      "connected": false,
+      "durationMs": 212.81374999999935,
+      "outputBytes": 256,
+      "usage": [],
+      "vectorsStored": {
+        "vectorTablesReady": false,
+        "dimension": null,
+        "total": 0,
+        "fileSearch": 0,
+        "identifiers": 0,
+        "memory": 0
+      },
+      "semanticResults": 0,
+      "evidenceCoverage": null,
+      "missingEvidence": [],
+      "followupNeeded": false,
+      "irrelevantFiles": [],
+      "negativeReturnedSource": false,
+      "lexicalFallbackReported": false,
+      "exactNameFastPath": false
+    },
+    {
+      "id": "unrelated-question",
+      "state": "absent",
+      "preset": "semantic_only",
+      "connected": true,
+      "durationMs": 121.34254099999998,
+      "outputBytes": 256,
+      "usage": [],
+      "vectorsStored": {
+        "vectorTablesReady": false,
+        "dimension": null,
+        "total": 0,
+        "fileSearch": 0,
+        "identifiers": 0,
+        "memory": 0
+      },
+      "semanticResults": 0,
+      "evidenceCoverage": null,
+      "missingEvidence": [],
+      "followupNeeded": false,
+      "irrelevantFiles": [],
+      "negativeReturnedSource": false,
+      "lexicalFallbackReported": false,
+      "exactNameFastPath": false
+    },
+    {
+      "id": "unrelated-question",
+      "state": "absent",
+      "preset": "balanced",
+      "connected": false,
+      "durationMs": 134.66033400000015,
+      "outputBytes": 256,
+      "usage": [],
+      "vectorsStored": {
+        "vectorTablesReady": false,
+        "dimension": null,
+        "total": 0,
+        "fileSearch": 0,
+        "identifiers": 0,
+        "memory": 0
+      },
+      "semanticResults": 0,
+      "evidenceCoverage": null,
+      "missingEvidence": [],
+      "followupNeeded": false,
+      "irrelevantFiles": [],
+      "negativeReturnedSource": false,
+      "lexicalFallbackReported": false,
+      "exactNameFastPath": false
+    },
+    {
+      "id": "unrelated-question",
+      "state": "absent",
+      "preset": "balanced",
+      "connected": true,
+      "durationMs": 169.47870799999964,
+      "outputBytes": 578,
+      "usage": [],
+      "vectorsStored": {
+        "vectorTablesReady": false,
+        "dimension": null,
+        "total": 0,
+        "fileSearch": 0,
+        "identifiers": 0,
+        "memory": 0
+      },
+      "semanticResults": 0,
+      "evidenceCoverage": null,
+      "missingEvidence": [],
+      "followupNeeded": false,
+      "irrelevantFiles": [],
+      "negativeReturnedSource": false,
+      "lexicalFallbackReported": true,
+      "exactNameFastPath": false
+    },
+    {
+      "id": "connected-reservation",
+      "state": "valid",
+      "preset": "keyword_only",
+      "connected": false,
+      "durationMs": 143.94845799999894,
+      "outputBytes": 1015,
+      "usage": [],
+      "vectorsStored": {
+        "vectorTablesReady": true,
+        "dimension": 1024,
+        "total": 31,
+        "fileSearch": 16,
+        "identifiers": 15,
+        "memory": 1
+      },
+      "semanticResults": 0,
+      "evidenceCoverage": 1,
+      "missingEvidence": [],
+      "followupNeeded": false,
+      "irrelevantFiles": [
+        "view.tsx"
+      ],
+      "negativeReturnedSource": null,
+      "lexicalFallbackReported": true,
+      "exactNameFastPath": false
+    },
+    {
+      "id": "connected-reservation",
+      "state": "valid",
+      "preset": "keyword_only",
+      "connected": true,
+      "durationMs": 55.726958000001105,
+      "outputBytes": 1160,
+      "usage": [],
+      "vectorsStored": {
+        "vectorTablesReady": true,
+        "dimension": 1024,
+        "total": 31,
+        "fileSearch": 16,
+        "identifiers": 15,
+        "memory": 1
+      },
+      "semanticResults": 0,
+      "evidenceCoverage": 1,
+      "missingEvidence": [],
+      "followupNeeded": false,
+      "irrelevantFiles": [
+        "view.tsx"
+      ],
+      "negativeReturnedSource": null,
+      "lexicalFallbackReported": true,
+      "exactNameFastPath": false
+    },
+    {
+      "id": "connected-reservation",
+      "state": "valid",
+      "preset": "semantic_only",
+      "connected": false,
+      "durationMs": 168.7027079999989,
+      "outputBytes": 753,
+      "usage": [
+        {
+          "kind": "embedding",
+          "provider": "ollama",
+          "model": "bge-m3:latest",
+          "inputTokens": 15,
+          "outputTokens": null,
+          "cachedInputTokens": null,
+          "startedAt": 1790437354656,
+          "durationMs": 46.92125000000124,
+          "status": "ok"
+        }
+      ],
+      "vectorsStored": {
+        "vectorTablesReady": true,
+        "dimension": 1024,
+        "total": 31,
+        "fileSearch": 16,
+        "identifiers": 15,
+        "memory": 1
+      },
+      "semanticResults": 4,
+      "evidenceCoverage": 1,
+      "missingEvidence": [],
+      "followupNeeded": false,
+      "irrelevantFiles": [
+        "view.tsx"
+      ],
+      "negativeReturnedSource": null,
+      "lexicalFallbackReported": false,
+      "exactNameFastPath": false
+    },
+    {
+      "id": "connected-reservation",
+      "state": "valid",
+      "preset": "semantic_only",
+      "connected": true,
+      "durationMs": 289.3187080000007,
+      "outputBytes": 967,
+      "usage": [
+        {
+          "kind": "embedding",
+          "provider": "ollama",
+          "model": "bge-m3:latest",
+          "inputTokens": 15,
+          "outputTokens": null,
+          "cachedInputTokens": null,
+          "startedAt": 1790437354867,
+          "durationMs": 31.53229199999987,
+          "status": "ok"
+        }
+      ],
+      "vectorsStored": {
+        "vectorTablesReady": true,
+        "dimension": 1024,
+        "total": 31,
+        "fileSearch": 16,
+        "identifiers": 15,
+        "memory": 1
+      },
+      "semanticResults": 4,
+      "evidenceCoverage": 1,
+      "missingEvidence": [],
+      "followupNeeded": false,
+      "irrelevantFiles": [
+        "view.tsx"
+      ],
+      "negativeReturnedSource": null,
+      "lexicalFallbackReported": false,
+      "exactNameFastPath": false
+    },
+    {
+      "id": "connected-reservation",
+      "state": "valid",
+      "preset": "balanced",
+      "connected": false,
+      "durationMs": 144.7856670000001,
+      "outputBytes": 753,
+      "usage": [
+        {
+          "kind": "embedding",
+          "provider": "ollama",
+          "model": "bge-m3:latest",
+          "inputTokens": 15,
+          "outputTokens": null,
+          "cachedInputTokens": null,
+          "startedAt": 1790437355206,
+          "durationMs": 29.520708000000013,
+          "status": "ok"
+        }
+      ],
+      "vectorsStored": {
+        "vectorTablesReady": true,
+        "dimension": 1024,
+        "total": 31,
+        "fileSearch": 16,
+        "identifiers": 15,
+        "memory": 1
+      },
+      "semanticResults": 4,
+      "evidenceCoverage": 1,
+      "missingEvidence": [],
+      "followupNeeded": false,
+      "irrelevantFiles": [
+        "view.tsx"
+      ],
+      "negativeReturnedSource": null,
+      "lexicalFallbackReported": false,
+      "exactNameFastPath": false
+    },
+    {
+      "id": "connected-reservation",
+      "state": "valid",
+      "preset": "balanced",
+      "connected": true,
+      "durationMs": 148.18662500000028,
+      "outputBytes": 1038,
+      "usage": [
+        {
+          "kind": "embedding",
+          "provider": "ollama",
+          "model": "bge-m3:latest",
+          "inputTokens": 15,
+          "outputTokens": null,
+          "cachedInputTokens": null,
+          "startedAt": 1790437355399,
+          "durationMs": 31.76429199999984,
+          "status": "ok"
+        }
+      ],
+      "vectorsStored": {
+        "vectorTablesReady": true,
+        "dimension": 1024,
+        "total": 31,
+        "fileSearch": 16,
+        "identifiers": 15,
+        "memory": 1
+      },
+      "semanticResults": 4,
+      "evidenceCoverage": 1,
+      "missingEvidence": [],
+      "followupNeeded": false,
+      "irrelevantFiles": [
+        "view.tsx"
+      ],
+      "negativeReturnedSource": null,
+      "lexicalFallbackReported": false,
+      "exactNameFastPath": false
+    },
+    {
+      "id": "named-definition",
+      "state": "valid",
+      "preset": "keyword_only",
+      "connected": false,
+      "durationMs": 203.4454999999998,
+      "outputBytes": 1032,
+      "usage": [],
+      "vectorsStored": {
+        "vectorTablesReady": true,
+        "dimension": 1024,
+        "total": 31,
+        "fileSearch": 16,
+        "identifiers": 15,
+        "memory": 1
+      },
+      "semanticResults": 0,
+      "evidenceCoverage": 1,
+      "missingEvidence": [],
+      "followupNeeded": false,
+      "irrelevantFiles": [
+        "tests/upload.test.ts",
+        "view.tsx",
+        "quota.ts"
+      ],
+      "negativeReturnedSource": null,
+      "lexicalFallbackReported": true,
+      "exactNameFastPath": false
+    },
+    {
+      "id": "named-definition",
+      "state": "valid",
+      "preset": "keyword_only",
+      "connected": true,
+      "durationMs": 133.9233750000003,
+      "outputBytes": 1142,
+      "usage": [],
+      "vectorsStored": {
+        "vectorTablesReady": true,
+        "dimension": 1024,
+        "total": 31,
+        "fileSearch": 16,
+        "identifiers": 15,
+        "memory": 1
+      },
+      "semanticResults": 0,
+      "evidenceCoverage": 1,
+      "missingEvidence": [],
+      "followupNeeded": false,
+      "irrelevantFiles": [
+        "tests/upload.test.ts",
+        "quota.ts",
+        "view.tsx"
+      ],
+      "negativeReturnedSource": null,
+      "lexicalFallbackReported": true,
+      "exactNameFastPath": false
+    },
+    {
+      "id": "named-definition",
+      "state": "valid",
+      "preset": "semantic_only",
+      "connected": false,
+      "durationMs": 132.58308399999987,
+      "outputBytes": 621,
+      "usage": [
+        {
+          "kind": "embedding",
+          "provider": "ollama",
+          "model": "bge-m3:latest",
+          "inputTokens": 8,
+          "outputTokens": null,
+          "cachedInputTokens": null,
+          "startedAt": 1790437355965,
+          "durationMs": 24.679707999999664,
+          "status": "ok"
+        }
+      ],
+      "vectorsStored": {
+        "vectorTablesReady": true,
+        "dimension": 1024,
+        "total": 31,
+        "fileSearch": 16,
+        "identifiers": 15,
+        "memory": 1
+      },
+      "semanticResults": 4,
+      "evidenceCoverage": 1,
+      "missingEvidence": [],
+      "followupNeeded": false,
+      "irrelevantFiles": [
+        "view.tsx"
+      ],
+      "negativeReturnedSource": null,
+      "lexicalFallbackReported": false,
+      "exactNameFastPath": false
+    },
+    {
+      "id": "named-definition",
+      "state": "valid",
+      "preset": "semantic_only",
+      "connected": true,
+      "durationMs": 573.2150409999995,
+      "outputBytes": 967,
+      "usage": [
+        {
+          "kind": "embedding",
+          "provider": "ollama",
+          "model": "bge-m3:latest",
+          "inputTokens": 8,
+          "outputTokens": null,
+          "cachedInputTokens": null,
+          "startedAt": 1790437356194,
+          "durationMs": 32.00575000000026,
+          "status": "ok"
+        }
+      ],
+      "vectorsStored": {
+        "vectorTablesReady": true,
+        "dimension": 1024,
+        "total": 31,
+        "fileSearch": 16,
+        "identifiers": 15,
+        "memory": 1
+      },
+      "semanticResults": 4,
+      "evidenceCoverage": 1,
+      "missingEvidence": [],
+      "followupNeeded": false,
+      "irrelevantFiles": [
+        "quota.ts",
+        "tests/upload.test.ts",
+        "view.tsx"
+      ],
+      "negativeReturnedSource": null,
+      "lexicalFallbackReported": false,
+      "exactNameFastPath": false
+    },
+    {
+      "id": "named-definition",
+      "state": "valid",
+      "preset": "balanced",
+      "connected": false,
+      "durationMs": 226.9617500000004,
+      "outputBytes": 638,
+      "usage": [
+        {
+          "kind": "embedding",
+          "provider": "ollama",
+          "model": "bge-m3:latest",
+          "inputTokens": 8,
+          "outputTokens": null,
+          "cachedInputTokens": null,
+          "startedAt": 1790437356815,
+          "durationMs": 29.72612499999923,
+          "status": "ok"
+        }
+      ],
+      "vectorsStored": {
+        "vectorTablesReady": true,
+        "dimension": 1024,
+        "total": 31,
+        "fileSearch": 16,
+        "identifiers": 15,
+        "memory": 1
+      },
+      "semanticResults": 4,
+      "evidenceCoverage": 1,
+      "missingEvidence": [],
+      "followupNeeded": false,
+      "irrelevantFiles": [
+        "view.tsx"
+      ],
+      "negativeReturnedSource": null,
+      "lexicalFallbackReported": false,
+      "exactNameFastPath": false
+    },
+    {
+      "id": "named-definition",
+      "state": "valid",
+      "preset": "balanced",
+      "connected": true,
+      "durationMs": 420.01316600000064,
+      "outputBytes": 967,
+      "usage": [
+        {
+          "kind": "embedding",
+          "provider": "ollama",
+          "model": "bge-m3:latest",
+          "inputTokens": 8,
+          "outputTokens": null,
+          "cachedInputTokens": null,
+          "startedAt": 1790437357067,
+          "durationMs": 25.26300000000083,
+          "status": "ok"
+        }
+      ],
+      "vectorsStored": {
+        "vectorTablesReady": true,
+        "dimension": 1024,
+        "total": 31,
+        "fileSearch": 16,
+        "identifiers": 15,
+        "memory": 1
+      },
+      "semanticResults": 4,
+      "evidenceCoverage": 1,
+      "missingEvidence": [],
+      "followupNeeded": false,
+      "irrelevantFiles": [
+        "quota.ts",
+        "tests/upload.test.ts",
+        "view.tsx"
+      ],
+      "negativeReturnedSource": null,
+      "lexicalFallbackReported": false,
+      "exactNameFastPath": false
+    },
+    {
+      "id": "semantic-paraphrase",
+      "state": "valid",
+      "preset": "keyword_only",
+      "connected": false,
+      "durationMs": 86.62045799999942,
+      "outputBytes": 790,
+      "usage": [],
+      "vectorsStored": {
+        "vectorTablesReady": true,
+        "dimension": 1024,
+        "total": 31,
+        "fileSearch": 16,
+        "identifiers": 15,
+        "memory": 1
+      },
+      "semanticResults": 0,
+      "evidenceCoverage": 1,
+      "missingEvidence": [],
+      "followupNeeded": false,
+      "irrelevantFiles": [
+        "view.tsx"
+      ],
+      "negativeReturnedSource": null,
+      "lexicalFallbackReported": true,
+      "exactNameFastPath": false
+    },
+    {
+      "id": "semantic-paraphrase",
+      "state": "valid",
+      "preset": "keyword_only",
+      "connected": true,
+      "durationMs": 59.95141599999988,
+      "outputBytes": 1230,
+      "usage": [],
+      "vectorsStored": {
+        "vectorTablesReady": true,
+        "dimension": 1024,
+        "total": 31,
+        "fileSearch": 16,
+        "identifiers": 15,
+        "memory": 1
+      },
+      "semanticResults": 0,
+      "evidenceCoverage": 1,
+      "missingEvidence": [],
+      "followupNeeded": false,
+      "irrelevantFiles": [
+        "view.tsx"
+      ],
+      "negativeReturnedSource": null,
+      "lexicalFallbackReported": true,
+      "exactNameFastPath": false
+    },
+    {
+      "id": "semantic-paraphrase",
+      "state": "valid",
+      "preset": "semantic_only",
+      "connected": false,
+      "durationMs": 131.59045800000058,
+      "outputBytes": 582,
+      "usage": [
+        {
+          "kind": "embedding",
+          "provider": "ollama",
+          "model": "bge-m3:latest",
+          "inputTokens": 16,
+          "outputTokens": null,
+          "cachedInputTokens": null,
+          "startedAt": 1790437357733,
+          "durationMs": 24.151082999998835,
+          "status": "ok"
+        }
+      ],
+      "vectorsStored": {
+        "vectorTablesReady": true,
+        "dimension": 1024,
+        "total": 31,
+        "fileSearch": 16,
+        "identifiers": 15,
+        "memory": 1
+      },
+      "semanticResults": 4,
+      "evidenceCoverage": 1,
+      "missingEvidence": [],
+      "followupNeeded": false,
+      "irrelevantFiles": [
+        "view.tsx"
+      ],
+      "negativeReturnedSource": null,
+      "lexicalFallbackReported": false,
+      "exactNameFastPath": false
+    },
+    {
+      "id": "semantic-paraphrase",
+      "state": "valid",
+      "preset": "semantic_only",
+      "connected": true,
+      "durationMs": 227.92691599999853,
+      "outputBytes": 1038,
+      "usage": [
+        {
+          "kind": "embedding",
+          "provider": "ollama",
+          "model": "bge-m3:latest",
+          "inputTokens": 16,
+          "outputTokens": null,
+          "cachedInputTokens": null,
+          "startedAt": 1790437357939,
+          "durationMs": 41.24983400000019,
+          "status": "ok"
+        }
+      ],
+      "vectorsStored": {
+        "vectorTablesReady": true,
+        "dimension": 1024,
+        "total": 31,
+        "fileSearch": 16,
+        "identifiers": 15,
+        "memory": 1
+      },
+      "semanticResults": 4,
+      "evidenceCoverage": 1,
+      "missingEvidence": [],
+      "followupNeeded": false,
+      "irrelevantFiles": [
+        "view.tsx"
+      ],
+      "negativeReturnedSource": null,
+      "lexicalFallbackReported": false,
+      "exactNameFastPath": false
+    },
+    {
+      "id": "semantic-paraphrase",
+      "state": "valid",
+      "preset": "balanced",
+      "connected": false,
+      "durationMs": 339.8663750000014,
+      "outputBytes": 582,
+      "usage": [
+        {
+          "kind": "embedding",
+          "provider": "ollama",
+          "model": "bge-m3:latest",
+          "inputTokens": 16,
+          "outputTokens": null,
+          "cachedInputTokens": null,
+          "startedAt": 1790437358346,
+          "durationMs": 43.26916700000038,
+          "status": "ok"
+        }
+      ],
+      "vectorsStored": {
+        "vectorTablesReady": true,
+        "dimension": 1024,
+        "total": 31,
+        "fileSearch": 16,
+        "identifiers": 15,
+        "memory": 1
+      },
+      "semanticResults": 4,
+      "evidenceCoverage": 1,
+      "missingEvidence": [],
+      "followupNeeded": false,
+      "irrelevantFiles": [
+        "view.tsx"
+      ],
+      "negativeReturnedSource": null,
+      "lexicalFallbackReported": false,
+      "exactNameFastPath": false
+    },
+    {
+      "id": "semantic-paraphrase",
+      "state": "valid",
+      "preset": "balanced",
+      "connected": true,
+      "durationMs": 570.002708,
+      "outputBytes": 1038,
+      "usage": [
+        {
+          "kind": "embedding",
+          "provider": "ollama",
+          "model": "bge-m3:latest",
+          "inputTokens": 16,
+          "outputTokens": null,
+          "cachedInputTokens": null,
+          "startedAt": 1790437358731,
+          "durationMs": 31.61487500000112,
+          "status": "ok"
+        }
+      ],
+      "vectorsStored": {
+        "vectorTablesReady": true,
+        "dimension": 1024,
+        "total": 31,
+        "fileSearch": 16,
+        "identifiers": 15,
+        "memory": 1
+      },
+      "semanticResults": 4,
+      "evidenceCoverage": 1,
+      "missingEvidence": [],
+      "followupNeeded": false,
+      "irrelevantFiles": [
+        "view.tsx"
+      ],
+      "negativeReturnedSource": null,
+      "lexicalFallbackReported": false,
+      "exactNameFastPath": false
+    },
+    {
+      "id": "unknown-symbol",
+      "state": "valid",
+      "preset": "keyword_only",
+      "connected": false,
+      "durationMs": 49.17475000000013,
+      "outputBytes": 256,
+      "usage": [],
+      "vectorsStored": {
+        "vectorTablesReady": true,
+        "dimension": 1024,
+        "total": 31,
+        "fileSearch": 16,
+        "identifiers": 15,
+        "memory": 1
+      },
+      "semanticResults": 0,
+      "evidenceCoverage": null,
+      "missingEvidence": [],
+      "followupNeeded": false,
+      "irrelevantFiles": [],
+      "negativeReturnedSource": false,
+      "lexicalFallbackReported": false,
+      "exactNameFastPath": true
+    },
+    {
+      "id": "unknown-symbol",
+      "state": "valid",
+      "preset": "keyword_only",
+      "connected": true,
+      "durationMs": 26.414749999999913,
+      "outputBytes": 256,
+      "usage": [],
+      "vectorsStored": {
+        "vectorTablesReady": true,
+        "dimension": 1024,
+        "total": 31,
+        "fileSearch": 16,
+        "identifiers": 15,
+        "memory": 1
+      },
+      "semanticResults": 0,
+      "evidenceCoverage": null,
+      "missingEvidence": [],
+      "followupNeeded": false,
+      "irrelevantFiles": [],
+      "negativeReturnedSource": false,
+      "lexicalFallbackReported": false,
+      "exactNameFastPath": true
+    },
+    {
+      "id": "unknown-symbol",
+      "state": "valid",
+      "preset": "semantic_only",
+      "connected": false,
+      "durationMs": 24.31883299999936,
+      "outputBytes": 256,
+      "usage": [],
+      "vectorsStored": {
+        "vectorTablesReady": true,
+        "dimension": 1024,
+        "total": 31,
+        "fileSearch": 16,
+        "identifiers": 15,
+        "memory": 1
+      },
+      "semanticResults": 4,
+      "evidenceCoverage": null,
+      "missingEvidence": [],
+      "followupNeeded": false,
+      "irrelevantFiles": [],
+      "negativeReturnedSource": false,
+      "lexicalFallbackReported": false,
+      "exactNameFastPath": true
+    },
+    {
+      "id": "unknown-symbol",
+      "state": "valid",
+      "preset": "semantic_only",
+      "connected": true,
+      "durationMs": 30.53704199999993,
+      "outputBytes": 256,
+      "usage": [],
+      "vectorsStored": {
+        "vectorTablesReady": true,
+        "dimension": 1024,
+        "total": 31,
+        "fileSearch": 16,
+        "identifiers": 15,
+        "memory": 1
+      },
+      "semanticResults": 4,
+      "evidenceCoverage": null,
+      "missingEvidence": [],
+      "followupNeeded": false,
+      "irrelevantFiles": [],
+      "negativeReturnedSource": false,
+      "lexicalFallbackReported": false,
+      "exactNameFastPath": true
+    },
+    {
+      "id": "unknown-symbol",
+      "state": "valid",
+      "preset": "balanced",
+      "connected": false,
+      "durationMs": 56.72095799999988,
+      "outputBytes": 256,
+      "usage": [],
+      "vectorsStored": {
+        "vectorTablesReady": true,
+        "dimension": 1024,
+        "total": 31,
+        "fileSearch": 16,
+        "identifiers": 15,
+        "memory": 1
+      },
+      "semanticResults": 4,
+      "evidenceCoverage": null,
+      "missingEvidence": [],
+      "followupNeeded": false,
+      "irrelevantFiles": [],
+      "negativeReturnedSource": false,
+      "lexicalFallbackReported": false,
+      "exactNameFastPath": true
+    },
+    {
+      "id": "unknown-symbol",
+      "state": "valid",
+      "preset": "balanced",
+      "connected": true,
+      "durationMs": 58.74491699999999,
+      "outputBytes": 256,
+      "usage": [],
+      "vectorsStored": {
+        "vectorTablesReady": true,
+        "dimension": 1024,
+        "total": 31,
+        "fileSearch": 16,
+        "identifiers": 15,
+        "memory": 1
+      },
+      "semanticResults": 4,
+      "evidenceCoverage": null,
+      "missingEvidence": [],
+      "followupNeeded": false,
+      "irrelevantFiles": [],
+      "negativeReturnedSource": false,
+      "lexicalFallbackReported": false,
+      "exactNameFastPath": true
+    },
+    {
+      "id": "unrelated-question",
+      "state": "valid",
+      "preset": "keyword_only",
+      "connected": false,
+      "durationMs": 39.970792000000074,
+      "outputBytes": 256,
+      "usage": [],
+      "vectorsStored": {
+        "vectorTablesReady": true,
+        "dimension": 1024,
+        "total": 31,
+        "fileSearch": 16,
+        "identifiers": 15,
+        "memory": 1
+      },
+      "semanticResults": 0,
+      "evidenceCoverage": null,
+      "missingEvidence": [],
+      "followupNeeded": false,
+      "irrelevantFiles": [],
+      "negativeReturnedSource": false,
+      "lexicalFallbackReported": false,
+      "exactNameFastPath": false
+    },
+    {
+      "id": "unrelated-question",
+      "state": "valid",
+      "preset": "keyword_only",
+      "connected": true,
+      "durationMs": 71.48016699999971,
+      "outputBytes": 256,
+      "usage": [],
+      "vectorsStored": {
+        "vectorTablesReady": true,
+        "dimension": 1024,
+        "total": 31,
+        "fileSearch": 16,
+        "identifiers": 15,
+        "memory": 1
+      },
+      "semanticResults": 0,
+      "evidenceCoverage": null,
+      "missingEvidence": [],
+      "followupNeeded": false,
+      "irrelevantFiles": [],
+      "negativeReturnedSource": false,
+      "lexicalFallbackReported": false,
+      "exactNameFastPath": false
+    },
+    {
+      "id": "unrelated-question",
+      "state": "valid",
+      "preset": "semantic_only",
+      "connected": false,
+      "durationMs": 135.50533299999915,
+      "outputBytes": 474,
+      "usage": [
+        {
+          "kind": "embedding",
+          "provider": "ollama",
+          "model": "bge-m3:latest",
+          "inputTokens": 17,
+          "outputTokens": null,
+          "cachedInputTokens": null,
+          "startedAt": 1790437360081,
+          "durationMs": 40.33404200000041,
+          "status": "ok"
+        }
+      ],
+      "vectorsStored": {
+        "vectorTablesReady": true,
+        "dimension": 1024,
+        "total": 31,
+        "fileSearch": 16,
+        "identifiers": 15,
+        "memory": 1
+      },
+      "semanticResults": 4,
+      "evidenceCoverage": null,
+      "missingEvidence": [],
+      "followupNeeded": false,
+      "irrelevantFiles": [],
+      "negativeReturnedSource": false,
+      "lexicalFallbackReported": false,
+      "exactNameFastPath": false
+    },
+    {
+      "id": "unrelated-question",
+      "state": "valid",
+      "preset": "semantic_only",
+      "connected": true,
+      "durationMs": 181.7787499999995,
+      "outputBytes": 863,
+      "usage": [
+        {
+          "kind": "embedding",
+          "provider": "ollama",
+          "model": "bge-m3:latest",
+          "inputTokens": 17,
+          "outputTokens": null,
+          "cachedInputTokens": null,
+          "startedAt": 1790437360256,
+          "durationMs": 31.221874999999272,
+          "status": "ok"
+        }
+      ],
+      "vectorsStored": {
+        "vectorTablesReady": true,
+        "dimension": 1024,
+        "total": 31,
+        "fileSearch": 16,
+        "identifiers": 15,
+        "memory": 1
+      },
+      "semanticResults": 4,
+      "evidenceCoverage": null,
+      "missingEvidence": [],
+      "followupNeeded": false,
+      "irrelevantFiles": [
+        "quota.ts",
+        "tests/upload.test.ts",
+        "router.ts"
+      ],
+      "negativeReturnedSource": true,
+      "lexicalFallbackReported": false,
+      "exactNameFastPath": false
+    },
+    {
+      "id": "unrelated-question",
+      "state": "valid",
+      "preset": "balanced",
+      "connected": false,
+      "durationMs": 192.7777499999993,
+      "outputBytes": 474,
+      "usage": [
+        {
+          "kind": "embedding",
+          "provider": "ollama",
+          "model": "bge-m3:latest",
+          "inputTokens": 17,
+          "outputTokens": null,
+          "cachedInputTokens": null,
+          "startedAt": 1790437360480,
+          "durationMs": 28.374292000000423,
+          "status": "ok"
+        }
+      ],
+      "vectorsStored": {
+        "vectorTablesReady": true,
+        "dimension": 1024,
+        "total": 31,
+        "fileSearch": 16,
+        "identifiers": 15,
+        "memory": 1
+      },
+      "semanticResults": 4,
+      "evidenceCoverage": null,
+      "missingEvidence": [],
+      "followupNeeded": false,
+      "irrelevantFiles": [],
+      "negativeReturnedSource": false,
+      "lexicalFallbackReported": false,
+      "exactNameFastPath": false
+    },
+    {
+      "id": "unrelated-question",
+      "state": "valid",
+      "preset": "balanced",
+      "connected": true,
+      "durationMs": 123.45216600000094,
+      "outputBytes": 863,
+      "usage": [
+        {
+          "kind": "embedding",
+          "provider": "ollama",
+          "model": "bge-m3:latest",
+          "inputTokens": 17,
+          "outputTokens": null,
+          "cachedInputTokens": null,
+          "startedAt": 1790437360737,
+          "durationMs": 28.822000000000116,
+          "status": "ok"
+        }
+      ],
+      "vectorsStored": {
+        "vectorTablesReady": true,
+        "dimension": 1024,
+        "total": 31,
+        "fileSearch": 16,
+        "identifiers": 15,
+        "memory": 1
+      },
+      "semanticResults": 4,
+      "evidenceCoverage": null,
+      "missingEvidence": [],
+      "followupNeeded": false,
+      "irrelevantFiles": [
+        "quota.ts",
+        "tests/upload.test.ts",
+        "router.ts"
+      ],
+      "negativeReturnedSource": true,
+      "lexicalFallbackReported": false,
+      "exactNameFastPath": false
+    },
+    {
+      "id": "connected-reservation",
+      "state": "obsolete",
+      "preset": "keyword_only",
+      "connected": false,
+      "durationMs": 103.7179159999996,
+      "outputBytes": 1015,
+      "usage": [],
+      "vectorsStored": {
+        "vectorTablesReady": true,
+        "dimension": 1024,
+        "total": 31,
+        "fileSearch": 16,
+        "identifiers": 15,
+        "memory": 1
+      },
+      "semanticResults": 0,
+      "evidenceCoverage": 1,
+      "missingEvidence": [],
+      "followupNeeded": false,
+      "irrelevantFiles": [
+        "view.tsx"
+      ],
+      "negativeReturnedSource": null,
+      "lexicalFallbackReported": true,
+      "exactNameFastPath": false
+    },
+    {
+      "id": "connected-reservation",
+      "state": "obsolete",
+      "preset": "keyword_only",
+      "connected": true,
+      "durationMs": 116.93237500000032,
+      "outputBytes": 1160,
+      "usage": [],
+      "vectorsStored": {
+        "vectorTablesReady": true,
+        "dimension": 1024,
+        "total": 31,
+        "fileSearch": 16,
+        "identifiers": 15,
+        "memory": 1
+      },
+      "semanticResults": 0,
+      "evidenceCoverage": 1,
+      "missingEvidence": [],
+      "followupNeeded": false,
+      "irrelevantFiles": [
+        "view.tsx"
+      ],
+      "negativeReturnedSource": null,
+      "lexicalFallbackReported": true,
+      "exactNameFastPath": false
+    },
+    {
+      "id": "connected-reservation",
+      "state": "obsolete",
+      "preset": "semantic_only",
+      "connected": false,
+      "durationMs": 42.81958300000042,
+      "outputBytes": 256,
+      "usage": [],
+      "vectorsStored": {
+        "vectorTablesReady": true,
+        "dimension": 1024,
+        "total": 31,
+        "fileSearch": 16,
+        "identifiers": 15,
+        "memory": 1
+      },
+      "semanticResults": 0,
+      "evidenceCoverage": 0,
+      "missingEvidence": [
+        "used + reserved >= limit",
+        "!guest.active",
+        "reserveUpload"
+      ],
+      "followupNeeded": true,
+      "irrelevantFiles": [],
+      "negativeReturnedSource": null,
+      "lexicalFallbackReported": false,
+      "exactNameFastPath": false
+    },
+    {
+      "id": "connected-reservation",
+      "state": "obsolete",
+      "preset": "semantic_only",
+      "connected": true,
+      "durationMs": 93.29020799999853,
+      "outputBytes": 256,
+      "usage": [],
+      "vectorsStored": {
+        "vectorTablesReady": true,
+        "dimension": 1024,
+        "total": 31,
+        "fileSearch": 16,
+        "identifiers": 15,
+        "memory": 1
+      },
+      "semanticResults": 0,
+      "evidenceCoverage": 0,
+      "missingEvidence": [
+        "used + reserved >= limit",
+        "!guest.active",
+        "reserveUpload"
+      ],
+      "followupNeeded": true,
+      "irrelevantFiles": [],
+      "negativeReturnedSource": null,
+      "lexicalFallbackReported": false,
+      "exactNameFastPath": false
+    },
+    {
+      "id": "connected-reservation",
+      "state": "obsolete",
+      "preset": "balanced",
+      "connected": false,
+      "durationMs": 70.42820800000118,
+      "outputBytes": 1015,
+      "usage": [],
+      "vectorsStored": {
+        "vectorTablesReady": true,
+        "dimension": 1024,
+        "total": 31,
+        "fileSearch": 16,
+        "identifiers": 15,
+        "memory": 1
+      },
+      "semanticResults": 0,
+      "evidenceCoverage": 1,
+      "missingEvidence": [],
+      "followupNeeded": false,
+      "irrelevantFiles": [
+        "view.tsx"
+      ],
+      "negativeReturnedSource": null,
+      "lexicalFallbackReported": true,
+      "exactNameFastPath": false
+    },
+    {
+      "id": "connected-reservation",
+      "state": "obsolete",
+      "preset": "balanced",
+      "connected": true,
+      "durationMs": 65.03816700000061,
+      "outputBytes": 1150,
+      "usage": [],
+      "vectorsStored": {
+        "vectorTablesReady": true,
+        "dimension": 1024,
+        "total": 31,
+        "fileSearch": 16,
+        "identifiers": 15,
+        "memory": 1
+      },
+      "semanticResults": 0,
+      "evidenceCoverage": 1,
+      "missingEvidence": [],
+      "followupNeeded": false,
+      "irrelevantFiles": [
+        "view.tsx"
+      ],
+      "negativeReturnedSource": null,
+      "lexicalFallbackReported": true,
+      "exactNameFastPath": false
+    },
+    {
+      "id": "named-definition",
+      "state": "obsolete",
+      "preset": "keyword_only",
+      "connected": false,
+      "durationMs": 35.95787500000006,
+      "outputBytes": 1032,
+      "usage": [],
+      "vectorsStored": {
+        "vectorTablesReady": true,
+        "dimension": 1024,
+        "total": 31,
+        "fileSearch": 16,
+        "identifiers": 15,
+        "memory": 1
+      },
+      "semanticResults": 0,
+      "evidenceCoverage": 1,
+      "missingEvidence": [],
+      "followupNeeded": false,
+      "irrelevantFiles": [
+        "tests/upload.test.ts",
+        "view.tsx",
+        "quota.ts"
+      ],
+      "negativeReturnedSource": null,
+      "lexicalFallbackReported": true,
+      "exactNameFastPath": false
+    },
+    {
+      "id": "named-definition",
+      "state": "obsolete",
+      "preset": "keyword_only",
+      "connected": true,
+      "durationMs": 76.60079200000109,
+      "outputBytes": 1142,
+      "usage": [],
+      "vectorsStored": {
+        "vectorTablesReady": true,
+        "dimension": 1024,
+        "total": 31,
+        "fileSearch": 16,
+        "identifiers": 15,
+        "memory": 1
+      },
+      "semanticResults": 0,
+      "evidenceCoverage": 1,
+      "missingEvidence": [],
+      "followupNeeded": false,
+      "irrelevantFiles": [
+        "tests/upload.test.ts",
+        "quota.ts",
+        "view.tsx"
+      ],
+      "negativeReturnedSource": null,
+      "lexicalFallbackReported": true,
+      "exactNameFastPath": false
+    },
+    {
+      "id": "named-definition",
+      "state": "obsolete",
+      "preset": "semantic_only",
+      "connected": false,
+      "durationMs": 28.19929200000115,
+      "outputBytes": 256,
+      "usage": [],
+      "vectorsStored": {
+        "vectorTablesReady": true,
+        "dimension": 1024,
+        "total": 31,
+        "fileSearch": 16,
+        "identifiers": 15,
+        "memory": 1
+      },
+      "semanticResults": 0,
+      "evidenceCoverage": 0,
+      "missingEvidence": [
+        "export function reserveUpload"
+      ],
+      "followupNeeded": true,
+      "irrelevantFiles": [],
+      "negativeReturnedSource": null,
+      "lexicalFallbackReported": false,
+      "exactNameFastPath": false
+    },
+    {
+      "id": "named-definition",
+      "state": "obsolete",
+      "preset": "semantic_only",
+      "connected": true,
+      "durationMs": 54.08770899999945,
+      "outputBytes": 256,
+      "usage": [],
+      "vectorsStored": {
+        "vectorTablesReady": true,
+        "dimension": 1024,
+        "total": 31,
+        "fileSearch": 16,
+        "identifiers": 15,
+        "memory": 1
+      },
+      "semanticResults": 0,
+      "evidenceCoverage": 0,
+      "missingEvidence": [
+        "export function reserveUpload"
+      ],
+      "followupNeeded": true,
+      "irrelevantFiles": [],
+      "negativeReturnedSource": null,
+      "lexicalFallbackReported": false,
+      "exactNameFastPath": false
+    },
+    {
+      "id": "named-definition",
+      "state": "obsolete",
+      "preset": "balanced",
+      "connected": false,
+      "durationMs": 29.21470799999952,
+      "outputBytes": 1032,
+      "usage": [],
+      "vectorsStored": {
+        "vectorTablesReady": true,
+        "dimension": 1024,
+        "total": 31,
+        "fileSearch": 16,
+        "identifiers": 15,
+        "memory": 1
+      },
+      "semanticResults": 0,
+      "evidenceCoverage": 1,
+      "missingEvidence": [],
+      "followupNeeded": false,
+      "irrelevantFiles": [
+        "tests/upload.test.ts",
+        "view.tsx",
+        "quota.ts"
+      ],
+      "negativeReturnedSource": null,
+      "lexicalFallbackReported": true,
+      "exactNameFastPath": false
+    },
+    {
+      "id": "named-definition",
+      "state": "obsolete",
+      "preset": "balanced",
+      "connected": true,
+      "durationMs": 68.6775830000006,
+      "outputBytes": 1079,
+      "usage": [],
+      "vectorsStored": {
+        "vectorTablesReady": true,
+        "dimension": 1024,
+        "total": 31,
+        "fileSearch": 16,
+        "identifiers": 15,
+        "memory": 1
+      },
+      "semanticResults": 0,
+      "evidenceCoverage": 1,
+      "missingEvidence": [],
+      "followupNeeded": false,
+      "irrelevantFiles": [
+        "tests/upload.test.ts",
+        "quota.ts",
+        "view.tsx"
+      ],
+      "negativeReturnedSource": null,
+      "lexicalFallbackReported": true,
+      "exactNameFastPath": false
+    },
+    {
+      "id": "semantic-paraphrase",
+      "state": "obsolete",
+      "preset": "keyword_only",
+      "connected": false,
+      "durationMs": 32.90608300000167,
+      "outputBytes": 790,
+      "usage": [],
+      "vectorsStored": {
+        "vectorTablesReady": true,
+        "dimension": 1024,
+        "total": 31,
+        "fileSearch": 16,
+        "identifiers": 15,
+        "memory": 1
+      },
+      "semanticResults": 0,
+      "evidenceCoverage": 1,
+      "missingEvidence": [],
+      "followupNeeded": false,
+      "irrelevantFiles": [
+        "view.tsx"
+      ],
+      "negativeReturnedSource": null,
+      "lexicalFallbackReported": true,
+      "exactNameFastPath": false
+    },
+    {
+      "id": "semantic-paraphrase",
+      "state": "obsolete",
+      "preset": "keyword_only",
+      "connected": true,
+      "durationMs": 49.95883299999696,
+      "outputBytes": 1230,
+      "usage": [],
+      "vectorsStored": {
+        "vectorTablesReady": true,
+        "dimension": 1024,
+        "total": 31,
+        "fileSearch": 16,
+        "identifiers": 15,
+        "memory": 1
+      },
+      "semanticResults": 0,
+      "evidenceCoverage": 1,
+      "missingEvidence": [],
+      "followupNeeded": false,
+      "irrelevantFiles": [
+        "view.tsx"
+      ],
+      "negativeReturnedSource": null,
+      "lexicalFallbackReported": true,
+      "exactNameFastPath": false
+    },
+    {
+      "id": "semantic-paraphrase",
+      "state": "obsolete",
+      "preset": "semantic_only",
+      "connected": false,
+      "durationMs": 20.974459000000934,
+      "outputBytes": 256,
+      "usage": [],
+      "vectorsStored": {
+        "vectorTablesReady": true,
+        "dimension": 1024,
+        "total": 31,
+        "fileSearch": 16,
+        "identifiers": 15,
+        "memory": 1
+      },
+      "semanticResults": 0,
+      "evidenceCoverage": 0,
+      "missingEvidence": [
+        "used + reserved >= limit"
+      ],
+      "followupNeeded": true,
+      "irrelevantFiles": [],
+      "negativeReturnedSource": null,
+      "lexicalFallbackReported": false,
+      "exactNameFastPath": false
+    },
+    {
+      "id": "semantic-paraphrase",
+      "state": "obsolete",
+      "preset": "semantic_only",
+      "connected": true,
+      "durationMs": 51.345625000001746,
+      "outputBytes": 256,
+      "usage": [],
+      "vectorsStored": {
+        "vectorTablesReady": true,
+        "dimension": 1024,
+        "total": 31,
+        "fileSearch": 16,
+        "identifiers": 15,
+        "memory": 1
+      },
+      "semanticResults": 0,
+      "evidenceCoverage": 0,
+      "missingEvidence": [
+        "used + reserved >= limit"
+      ],
+      "followupNeeded": true,
+      "irrelevantFiles": [],
+      "negativeReturnedSource": null,
+      "lexicalFallbackReported": false,
+      "exactNameFastPath": false
+    },
+    {
+      "id": "semantic-paraphrase",
+      "state": "obsolete",
+      "preset": "balanced",
+      "connected": false,
+      "durationMs": 38.007916999999,
+      "outputBytes": 790,
+      "usage": [],
+      "vectorsStored": {
+        "vectorTablesReady": true,
+        "dimension": 1024,
+        "total": 31,
+        "fileSearch": 16,
+        "identifiers": 15,
+        "memory": 1
+      },
+      "semanticResults": 0,
+      "evidenceCoverage": 1,
+      "missingEvidence": [],
+      "followupNeeded": false,
+      "irrelevantFiles": [
+        "view.tsx"
+      ],
+      "negativeReturnedSource": null,
+      "lexicalFallbackReported": true,
+      "exactNameFastPath": false
+    },
+    {
+      "id": "semantic-paraphrase",
+      "state": "obsolete",
+      "preset": "balanced",
+      "connected": true,
+      "durationMs": 61.749166999998124,
+      "outputBytes": 1220,
+      "usage": [],
+      "vectorsStored": {
+        "vectorTablesReady": true,
+        "dimension": 1024,
+        "total": 31,
+        "fileSearch": 16,
+        "identifiers": 15,
+        "memory": 1
+      },
+      "semanticResults": 0,
+      "evidenceCoverage": 1,
+      "missingEvidence": [],
+      "followupNeeded": false,
+      "irrelevantFiles": [
+        "view.tsx"
+      ],
+      "negativeReturnedSource": null,
+      "lexicalFallbackReported": true,
+      "exactNameFastPath": false
+    },
+    {
+      "id": "unknown-symbol",
+      "state": "obsolete",
+      "preset": "keyword_only",
+      "connected": false,
+      "durationMs": 27.510207999999693,
+      "outputBytes": 256,
+      "usage": [],
+      "vectorsStored": {
+        "vectorTablesReady": true,
+        "dimension": 1024,
+        "total": 31,
+        "fileSearch": 16,
+        "identifiers": 15,
+        "memory": 1
+      },
+      "semanticResults": 0,
+      "evidenceCoverage": null,
+      "missingEvidence": [],
+      "followupNeeded": false,
+      "irrelevantFiles": [],
+      "negativeReturnedSource": false,
+      "lexicalFallbackReported": false,
+      "exactNameFastPath": true
+    },
+    {
+      "id": "unknown-symbol",
+      "state": "obsolete",
+      "preset": "keyword_only",
+      "connected": true,
+      "durationMs": 33.34779100000014,
+      "outputBytes": 256,
+      "usage": [],
+      "vectorsStored": {
+        "vectorTablesReady": true,
+        "dimension": 1024,
+        "total": 31,
+        "fileSearch": 16,
+        "identifiers": 15,
+        "memory": 1
+      },
+      "semanticResults": 0,
+      "evidenceCoverage": null,
+      "missingEvidence": [],
+      "followupNeeded": false,
+      "irrelevantFiles": [],
+      "negativeReturnedSource": false,
+      "lexicalFallbackReported": false,
+      "exactNameFastPath": true
+    },
+    {
+      "id": "unknown-symbol",
+      "state": "obsolete",
+      "preset": "semantic_only",
+      "connected": false,
+      "durationMs": 24.999250000000757,
+      "outputBytes": 256,
+      "usage": [],
+      "vectorsStored": {
+        "vectorTablesReady": true,
+        "dimension": 1024,
+        "total": 31,
+        "fileSearch": 16,
+        "identifiers": 15,
+        "memory": 1
+      },
+      "semanticResults": 0,
+      "evidenceCoverage": null,
+      "missingEvidence": [],
+      "followupNeeded": false,
+      "irrelevantFiles": [],
+      "negativeReturnedSource": false,
+      "lexicalFallbackReported": false,
+      "exactNameFastPath": true
+    },
+    {
+      "id": "unknown-symbol",
+      "state": "obsolete",
+      "preset": "semantic_only",
+      "connected": true,
+      "durationMs": 22.95445800000016,
+      "outputBytes": 256,
+      "usage": [],
+      "vectorsStored": {
+        "vectorTablesReady": true,
+        "dimension": 1024,
+        "total": 31,
+        "fileSearch": 16,
+        "identifiers": 15,
+        "memory": 1
+      },
+      "semanticResults": 0,
+      "evidenceCoverage": null,
+      "missingEvidence": [],
+      "followupNeeded": false,
+      "irrelevantFiles": [],
+      "negativeReturnedSource": false,
+      "lexicalFallbackReported": false,
+      "exactNameFastPath": true
+    },
+    {
+      "id": "unknown-symbol",
+      "state": "obsolete",
+      "preset": "balanced",
+      "connected": false,
+      "durationMs": 22.31720800000039,
+      "outputBytes": 256,
+      "usage": [],
+      "vectorsStored": {
+        "vectorTablesReady": true,
+        "dimension": 1024,
+        "total": 31,
+        "fileSearch": 16,
+        "identifiers": 15,
+        "memory": 1
+      },
+      "semanticResults": 0,
+      "evidenceCoverage": null,
+      "missingEvidence": [],
+      "followupNeeded": false,
+      "irrelevantFiles": [],
+      "negativeReturnedSource": false,
+      "lexicalFallbackReported": false,
+      "exactNameFastPath": true
+    },
+    {
+      "id": "unknown-symbol",
+      "state": "obsolete",
+      "preset": "balanced",
+      "connected": true,
+      "durationMs": 16.007125000000087,
+      "outputBytes": 256,
+      "usage": [],
+      "vectorsStored": {
+        "vectorTablesReady": true,
+        "dimension": 1024,
+        "total": 31,
+        "fileSearch": 16,
+        "identifiers": 15,
+        "memory": 1
+      },
+      "semanticResults": 0,
+      "evidenceCoverage": null,
+      "missingEvidence": [],
+      "followupNeeded": false,
+      "irrelevantFiles": [],
+      "negativeReturnedSource": false,
+      "lexicalFallbackReported": false,
+      "exactNameFastPath": true
+    },
+    {
+      "id": "unrelated-question",
+      "state": "obsolete",
+      "preset": "keyword_only",
+      "connected": false,
+      "durationMs": 20.102208000000246,
+      "outputBytes": 256,
+      "usage": [],
+      "vectorsStored": {
+        "vectorTablesReady": true,
+        "dimension": 1024,
+        "total": 31,
+        "fileSearch": 16,
+        "identifiers": 15,
+        "memory": 1
+      },
+      "semanticResults": 0,
+      "evidenceCoverage": null,
+      "missingEvidence": [],
+      "followupNeeded": false,
+      "irrelevantFiles": [],
+      "negativeReturnedSource": false,
+      "lexicalFallbackReported": false,
+      "exactNameFastPath": false
+    },
+    {
+      "id": "unrelated-question",
+      "state": "obsolete",
+      "preset": "keyword_only",
+      "connected": true,
+      "durationMs": 100.61229200000162,
+      "outputBytes": 256,
+      "usage": [],
+      "vectorsStored": {
+        "vectorTablesReady": true,
+        "dimension": 1024,
+        "total": 31,
+        "fileSearch": 16,
+        "identifiers": 15,
+        "memory": 1
+      },
+      "semanticResults": 0,
+      "evidenceCoverage": null,
+      "missingEvidence": [],
+      "followupNeeded": false,
+      "irrelevantFiles": [],
+      "negativeReturnedSource": false,
+      "lexicalFallbackReported": false,
+      "exactNameFastPath": false
+    },
+    {
+      "id": "unrelated-question",
+      "state": "obsolete",
+      "preset": "semantic_only",
+      "connected": false,
+      "durationMs": 45.369666999999026,
+      "outputBytes": 256,
+      "usage": [],
+      "vectorsStored": {
+        "vectorTablesReady": true,
+        "dimension": 1024,
+        "total": 31,
+        "fileSearch": 16,
+        "identifiers": 15,
+        "memory": 1
+      },
+      "semanticResults": 0,
+      "evidenceCoverage": null,
+      "missingEvidence": [],
+      "followupNeeded": false,
+      "irrelevantFiles": [],
+      "negativeReturnedSource": false,
+      "lexicalFallbackReported": false,
+      "exactNameFastPath": false
+    },
+    {
+      "id": "unrelated-question",
+      "state": "obsolete",
+      "preset": "semantic_only",
+      "connected": true,
+      "durationMs": 73.54770799999824,
+      "outputBytes": 256,
+      "usage": [],
+      "vectorsStored": {
+        "vectorTablesReady": true,
+        "dimension": 1024,
+        "total": 31,
+        "fileSearch": 16,
+        "identifiers": 15,
+        "memory": 1
+      },
+      "semanticResults": 0,
+      "evidenceCoverage": null,
+      "missingEvidence": [],
+      "followupNeeded": false,
+      "irrelevantFiles": [],
+      "negativeReturnedSource": false,
+      "lexicalFallbackReported": false,
+      "exactNameFastPath": false
+    },
+    {
+      "id": "unrelated-question",
+      "state": "obsolete",
+      "preset": "balanced",
+      "connected": false,
+      "durationMs": 45.84966599999825,
+      "outputBytes": 256,
+      "usage": [],
+      "vectorsStored": {
+        "vectorTablesReady": true,
+        "dimension": 1024,
+        "total": 31,
+        "fileSearch": 16,
+        "identifiers": 15,
+        "memory": 1
+      },
+      "semanticResults": 0,
+      "evidenceCoverage": null,
+      "missingEvidence": [],
+      "followupNeeded": false,
+      "irrelevantFiles": [],
+      "negativeReturnedSource": false,
+      "lexicalFallbackReported": false,
+      "exactNameFastPath": false
+    },
+    {
+      "id": "unrelated-question",
+      "state": "obsolete",
+      "preset": "balanced",
+      "connected": true,
+      "durationMs": 64.75004099999933,
+      "outputBytes": 578,
+      "usage": [],
+      "vectorsStored": {
+        "vectorTablesReady": true,
+        "dimension": 1024,
+        "total": 31,
+        "fileSearch": 16,
+        "identifiers": 15,
+        "memory": 1
+      },
+      "semanticResults": 0,
+      "evidenceCoverage": null,
+      "missingEvidence": [],
+      "followupNeeded": false,
+      "irrelevantFiles": [],
+      "negativeReturnedSource": false,
+      "lexicalFallbackReported": true,
+      "exactNameFastPath": false
+    }
+  ],
+  "embeddingPreparation": [
+    {
+      "state": "valid",
+      "result": "Reindex complete in 3316ms\n  Files: 16 total, 0 indexed, 16 skipped, 0 removed\n  Symbols: 0 extracted\n  Imports: 2 resolved\n  Auto hubs: 0\n  Embeddings: 16 files, 15 identifiers, 1 memories\n  Index generation: unchanged (no structural changes)",
+      "usage": [
+        {
+          "kind": "embedding",
+          "provider": "ollama",
+          "model": "bge-m3:latest",
+          "inputTokens": 854,
+          "outputTokens": null,
+          "cachedInputTokens": null,
+          "startedAt": 1790437351111,
+          "durationMs": 2839.561708,
+          "status": "ok"
+        },
+        {
+          "kind": "embedding",
+          "provider": "ollama",
+          "model": "bge-m3:latest",
+          "inputTokens": 498,
+          "outputTokens": null,
+          "cachedInputTokens": null,
+          "startedAt": 1790437351151,
+          "durationMs": 3057.2749590000003,
+          "status": "ok"
+        },
+        {
+          "kind": "embedding",
+          "provider": "ollama",
+          "model": "bge-m3:latest",
+          "inputTokens": 51,
+          "outputTokens": null,
+          "cachedInputTokens": null,
+          "startedAt": 1790437354213,
+          "durationMs": 24.69012499999917,
+          "status": "ok"
+        },
+        {
+          "kind": "embedding",
+          "provider": "ollama",
+          "model": "bge-m3:latest",
+          "inputTokens": 53,
+          "outputTokens": null,
+          "cachedInputTokens": null,
+          "startedAt": 1790437354382,
+          "durationMs": 27.530749999999898,
+          "status": "ok"
+        }
+      ]
+    }
+  ]
+}
