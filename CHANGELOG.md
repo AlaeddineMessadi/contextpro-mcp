@@ -4,6 +4,8 @@ All notable changes to this project are recorded here. The project follows [Sema
 
 ## [Unreleased]
 
+- Connected retrieval now rejects weak semantic-only graph seeds, counts each file once per ranking lane, and preserves visual/topic implementations with their local dependencies. Source-packet, task-pack and feature-brief cache identities invalidate the old selector's output. The pipeline remains opt-in.
+- New coding-pilot campaigns use a versioned behavioral plain-text validator with rendered whitespace and text-range scroll checks. Historical validator v1 and its results remain frozen; incompatible campaigns cannot be overwritten or resumed with the new contract.
 - Added opt-in connected source retrieval shared by `context` and `task_pack`, snippet-aware optional reranking, source-cited `feature_brief` artifacts and worktree-bound source deltas. Exact target reads remain stateless; the lean catalog remains three tools. Added provider usage observations and frozen retrieval/coding-pilot harnesses; these changes do not establish token or time savings.
 - Feature briefs derive fact text from validated citation coordinates and bounded retrieval roles. Corrupted facts and older generator artifacts are rejected instead of being rendered as extracted evidence.
 - Graph expansion spends its file limit only on unseen paths, and optional provider traces reject named pipes before opening so diagnostics cannot block provider calls waiting for a reader.

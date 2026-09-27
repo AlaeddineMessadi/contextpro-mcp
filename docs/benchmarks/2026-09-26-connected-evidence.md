@@ -57,6 +57,11 @@ CONTEXTPRO_PILOT_OUTPUT=/absolute/output node scripts/benchmark-coding-pilot.mjs
 CONTEXTPRO_PILOT_OUTPUT=/absolute/output node scripts/benchmark-coding-pilot.mjs --run
 ```
 
+New campaigns now default to validator v2 (see the repair follow-up below).
+Set `CONTEXTPRO_PILOT_VALIDATOR_VERSION=1` to reproduce this document's original
+frozen campaign. Version 2 requires a fresh output directory and new qualification;
+the runner rejects changes to an existing campaign's contract.
+
 `CONTEXTPRO_PILOT_CODEX` selects a specific CLI executable; its path and version
 are recorded with the campaign. `--recheck` requalifies validators. Do not prepare/recheck concurrently in one
 output directory. `--run` refuses an existing `runs.json`. After stopping a failed
@@ -233,3 +238,60 @@ A fresh real `bge-m3` fixture had a positive semantic hit; explicitly selecting
 without calling a provider during the lexical reads. It no longer misdiagnoses
 available vectors as unavailable. This is a diagnostic regression check, not
 a new retrieval-performance comparison.
+
+## Post-merge repair follow-up
+
+The original pilot above remains frozen. Development replays against merged
+baseline `b08e282` found that the connected selector promoted weak semantic
+neighbors into graph seeds and counted repeated identifiers as independent file
+ranking votes. Both are repaired. The selector now shares bounded graph expansion
+across query facets, preserves multi-topic filenames and a selected implementation's
+local helpers, and downweights incidental generated reports for source requests.
+PR #27 review narrowed that last heuristic to known report directories: ordinary
+JSON configuration, Markdown content and CSV data retain full source weight.
+The regression failed before the repair and passes afterward, including bounded
+default/connected source packets. All 738 main tests pass, and the frozen visual
+replay retains all three expected files. Task/source cache versions and the brief
+generator version were advanced so older rankings are not reused as current.
+A subsequent review found that a large facet-owner union could evict associated
+tests or graph evidence at the 32-file cap. Slots are now reserved for the four
+seeds, up to sixteen graph files and four tests before adding other facet/topic
+owners. A 24-topic fixture reproduced the missing test before the fix and passes
+with graph budgets of eight and sixteen afterward. All 739 main tests pass;
+both frozen visual and cleanup replays retain all three expected files per pair.
+The absolute semantic floor follows the existing caller-expansion heuristic
+(greater than 40/100 similarity); it is not a probability or a guarantee across
+embedding models. Strong semantic paraphrases remain eligible without literal overlap.
+Source packets, task packs and briefs invalidate the previous selector's caches.
+
+Frozen zero-vector development replays used the original queries and budgets:
+
+| Reproduction | Merged baseline | Repaired selector |
+| --- | --- | --- |
+| app-a `private-rev`, visual query, 5,000 units | WelcomeBanner only | WelcomeBanner, HeroFigure, heroArtwork |
+| app-b `private-rev`, cleanup query, 3,200 units | Migration and operator script | Migration, operator script and security test |
+
+Each result repeated twice with alternating handler order on a fresh structural
+index. These checks assert source-file coverage, not complete task correctness.
+The broader app-b write-path query still misses requested paths at its 3,000-unit
+budget and remains open in the canonical issue log. General broad lexical recall
+and the default selector have not been declared fixed. Connected retrieval remains
+opt-in; the coding-pilot rollout gate and original outcomes have not changed.
+
+The real local `bge-m3:latest` development evaluation again completed 90 observations.
+The connected selector returned no source for either negative control in all vector
+states/presets, while retaining all expected positive evidence with fresh vectors
+and in lexical/combined fallback. Semantic-only queries with absent or obsolete
+vectors correctly had no semantic evidence. `gemma4:latest` remains unavailable.
+No new coding-agent campaign or billing comparison was run.
+
+For future campaigns, `pilot-text-preview-v2.mjs` checks rendered newline/tab
+geometry and uses DOM text ranges for scroll anchors. It accepts both whole-text
+and per-line structures, including `break-spaces`. Fourteen isolated browser
+checks cover preserving/collapsing CSS modes, multiple tab sizes, truncation and
+scroll anchors. The historical before/fix pair still fails/passes respectively,
+and the fixed component also passes using `break-spaces`. The frozen v1 script
+and all 16 pilot outcomes remain unchanged. Reproduce the independent browser
+checks with `node scripts/test-preview-contract.mjs /absolute/app-c-root`;
+that root supplies Playwright and an installed Chrome is required. The v2 script
+and its browser helper are included in the new contract hash.

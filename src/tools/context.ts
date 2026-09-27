@@ -98,6 +98,7 @@ export async function collectSourceEvidence(options: ContextOptions): Promise<So
       inlineCode: "off", includeDependencies: true, persistArtifact: false });
     connectedCandidates = packet?.candidates ?? [];
     if (packet?.relationNotice) notices.push(packet.relationNotice);
+    if (packet?.relevanceNotice) notices.push(packet.relevanceNotice);
     if (packet?.limited) notices.push("Candidate pool capped at 32 files; additional paths omitted.");
     if (packet) {
       const brief = await lookupFeatureBrief(options.rootDir, query);
@@ -290,7 +291,7 @@ export async function collectSourceEvidence(options: ContextOptions): Promise<So
     // as the implementation. Other windows still compete on query coverage.
     const connectedCandidate = connectedCandidates.find(item => item.path === file);
     for (const line of connectedCandidate?.anchors ?? []) add(Math.max(1, line - 2), Math.min(lines.length, line + 16));
-    if (connectedCandidate && connectedCandidate.roles.some(role => role !== "implementation")) {
+    if (connectedCandidate && (connectedCandidate.roles.some(role => role !== "implementation") || (connectedCandidate.semanticScore ?? 0) > 40)) {
       for (const span of spans.slice(0, 4)) add(span.line, Math.min(span.endLine, span.line + 20));
     }
     if (lines.length <= 40 && bytes(render(excerpt)) <= available) {
@@ -338,10 +339,20 @@ export async function collectSourceEvidence(options: ContextOptions): Promise<So
       const parts = uncoveredRanges(part, candidates);
       const size = parts.reduce((sum, item) => sum + bytes(render(item)) + 2, 0);
       if (!parts.length || size > available) continue;
-      const words = new Set(parts.flatMap(item => searchTerms(item.text)));
+      const unchanged = parts.length === 1 && parts[0].start === part.start && parts[0].end === part.end;
+      const words = unchanged ? remaining[i].words : new Set(parts.flatMap(item => searchTerms(item.text)));
       let gain = [...terms].reduce((n, term) => n + (words.has(term) ? weights.get(term)! * (covered.has(term) ? .25 : 1) : 0), 0);
       const linkedRoles = roles(part).filter(role => role !== "implementation");
       if (linkedRoles.some(role => !coveredRoles.has(role))) gain += 5;
+      // Reserve an opportunity for a facet's implementation even when another
+      // file has already spent the query-term novelty bonus on incidental prose.
+      const candidate = connectedCandidates.find(item => item.path === part.file);
+      if (!selectedBytes.has(part.file) && candidate?.reason.split("; ").some(reason => reason.startsWith("facet:") && words.has(reason.slice(6)))) gain += 3;
+      if (!selectedBytes.has(part.file) && gain > 0 && candidate?.reason.split("; ").includes("path topics")) gain += 3;
+      if (!selectedBytes.has(part.file) && candidate?.reason.split("; ").some(reason => reason.startsWith("graph: imported by ") && selectedBytes.has(reason.slice("graph: imported by ".length)))) gain += 3;
+      // Strong semantic-only implementations need a first excerpt even when
+      // the user's paraphrase has no literal overlap with the source.
+      if (!selectedBytes.has(part.file) && (candidate?.semanticScore ?? 0) > 40) gain += 2;
       // Retain control-flow predicates with their surrounding source; this is a
       // packing hint, not a claim that a particular predicate is a constraint.
       if (connectedCandidates.length && gain > 0 && parts.some(item => /\b(?:if|throw|assert|reject)\b/.test(item.text))) gain *= 1.15;
@@ -395,6 +406,6 @@ export async function collectSourceEvidence(options: ContextOptions): Promise<So
     !merged.length ? "No source fit or matched. Try exact file/line targets or native search." : ""].filter(Boolean).join("\n\n");
   return { text, ranges: merged, hashes: Object.fromEntries([...snapshots].map(([file, source]) => [file, createHash("sha256").update(source).digest("hex")])),
     notices: [footer, summary].filter((value): value is string => !!value), complete: true,
-    settings: JSON.stringify({ version: 1, connected, preset: options.retrievalPreset ?? "balanced", rerank: process.env.CONTEXTPRO_CHAT_RERANK === "true",
+    settings: JSON.stringify({ version: 4, connected, preset: options.retrievalPreset ?? "balanced", rerank: process.env.CONTEXTPRO_CHAT_RERANK === "true",
       embedding: `${getProvider()}:${getEmbedModelName()}`, chat: options.targets?.length ? "unused" : await chatModelIdentity(options.rootDir) }) };
 }

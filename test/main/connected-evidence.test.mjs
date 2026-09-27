@@ -16,6 +16,7 @@ import { closeDB } from '../../build/core/db.js';
 import { readArtifact, persistArtifact } from '../../build/core/artifacts.js';
 import { finishSourceContext } from '../../build/core/source-context.js';
 import { unifiedSearchData } from '../../build/tools/search.js';
+import { Ollama } from 'ollama';
 
 async function fixture() {
   const root = await mkdtemp(join(tmpdir(), 'contextpro-connected-'));
@@ -30,6 +31,78 @@ async function fixture() {
 }
 const cleanup = async root => { closeDB(root); await rm(root, { recursive: true, force: true }); };
 const id = text => text.match(/Context ID: (source_context-[a-f0-9]{14})/)?.[1];
+
+it('abstains before graph expansion on weak semantic-only neighbors but retains strong paraphrases', async () => {
+  const root = await fixture(), originalEmbed = Ollama.prototype.embed;
+  const negative = 'How does this code calculate planetary orbital eccentricity?';
+  const positive = 'Enforce the permissible capacity.';
+  Ollama.prototype.embed = async ({ input }) => ({ embeddings: (Array.isArray(input) ? input : [input]).map(text => text === negative ? [.35, Math.sqrt(1 - .35 ** 2)] : [1, 0]) });
+  try {
+    await reindex({rootDir:root, noEmbed:false, autoHubs:false});
+    for (const preset of ['balanced', 'semantic_only']) {
+      const rejected = await retrieveEvidence({rootDir:root, query:negative, preset});
+      assert.equal(rejected.candidates.length, 0);
+      assert.equal(rejected.tests.length, 0);
+      assert.match(rejected.relevanceNotice, /Weak semantic-only/);
+      const empty = await getContext({rootDir:root, query:negative, retrievalPreset:preset, connected:true, maxTokens:1200});
+      assert.doesNotMatch(empty, /^.+\.ts:\d+-\d+$/m);
+      assert.match(empty, /No source fit or matched/);
+    }
+    const retrieved = await retrieveEvidence({rootDir:root, query:positive, preset:'semantic_only', graphHops:0, includeTests:false});
+    const supported = await getContext({rootDir:root, query:positive, retrieved, retrievalPreset:'semantic_only', connected:true, maxTokens:2200});
+    assert.match(supported, /used \+ reserved >= limit/);
+    assert.ok(Buffer.byteLength(supported) <= 8800);
+  } finally { Ollama.prototype.embed = originalEmbed; await cleanup(root); }
+});
+
+it('broad visual facets retain a renderer and its local artwork dependency', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'contextpro-visual-facets-'));
+  try {
+    await mkdir(join(root, 'components'));
+    await mkdir(join(root, 'services'));
+    for (let i = 0; i < 12; i++) await writeFile(join(root, `services/exercise${i}.ts`), '// exercise exercise exercise\nexport const count = 1;');
+    await writeFile(join(root, 'components/Person.tsx'), 'import { shape } from "./drawing.js";\n// exercise renderer\nexport function Person() { return <svg>{shape}</svg>; }\n');
+    await writeFile(join(root, 'components/drawing.ts'), 'export const shape = "M0 0 L10 20";\n');
+    await writeFile(join(root, 'components/Entry.tsx'), '// onboarding animation accent\nexport const Entry = () => <div>Welcome</div>;\n');
+    await reindex({rootDir:root, noEmbed:true, autoHubs:false});
+    const query = 'onboarding animation exercise illustration theme accent';
+    const packet = await retrieveEvidence({rootDir:root, query, preset:'keyword_only'});
+    assert.ok(packet.candidates.some(item => item.path === 'components/Person.tsx'));
+    assert.ok(packet.candidates.some(item => item.path === 'components/drawing.ts'));
+    const text = await getContext({rootDir:root, query, connected:true, retrievalPreset:'keyword_only', maxTokens:1200});
+    assert.match(text, /function Person/); assert.match(text, /M0 0 L10 20/);
+  } finally { await cleanup(root); }
+});
+
+it('multiple identifiers contribute only one reciprocal-rank vote per file', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'contextpro-lane-votes-'));
+  try {
+    await writeFile(join(root, 'many.ts'), Array.from({length:20}, (_, i) => `export function storageOperation${i}() { return ${i}; }`).join('\n'));
+    await writeFile(join(root, 'one.ts'), 'export function storageOperation() { return "authoritative"; }');
+    await reindex({rootDir:root, noEmbed:true, autoHubs:false});
+    const found = await retrieveEvidence({rootDir:root, query:'find storage operations', preset:'keyword_only', graphHops:0, includeTests:false});
+    const many = found.candidates.find(item => item.path === 'many.ts');
+    assert.ok(many.symbols.length > 1);
+    const lanes = many.reason.split('; ').length;
+    assert.ok(many.score <= lanes / 61 + Number.EPSILON, JSON.stringify(many));
+  } finally { await cleanup(root); }
+});
+
+it('keeps connected cleanup implementation and tests for later topics in a long query', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'contextpro-cleanup-topics-'));
+  try {
+    for (const dir of ['migrations', 'scripts', 'tests']) await mkdir(join(root, dir));
+    await writeFile(join(root, 'migrations/0125_media_storage_cleanup.sql'), '-- media storage cleanup candidate safeguards\ncreate function cleanup_candidates() returns void language sql as $$ select 1; $$;');
+    await writeFile(join(root, 'scripts/process-media-cleanup.ts'), '// service-only media cleanup operator\nexport function processCleanup(candidate) { if (!candidate.expired) throw Error("not eligible"); return candidate.path; }');
+    await writeFile(join(root, 'tests/media_storage_cleanup.test.ts'), 'import {processCleanup} from "../scripts/process-media-cleanup.js";\ntest("storage cleanup safeguards", () => expect(() => processCleanup({expired:false})).toThrow());');
+    for (let i = 0; i < 20; i++) await writeFile(join(root, `event-storage-${i}.ts`), 'export const source = "background cover event image";');
+    await reindex({rootDir:root, noEmbed:true, autoHubs:false});
+    const query = 'Find existing service-only Storage cleanup RPC, operator script, and tests relevant to backgrounds cover files, event image path, and media cleanup migration 0125. Include source for candidate selection and safeguards.';
+    const text = await getContext({rootDir:root, query, connected:true, retrievalPreset:'keyword_only', maxTokens:1800});
+    for (const evidence of ['cleanup_candidates()', '!candidate.expired', 'toThrow()']) assert.ok(text.includes(evidence), text);
+    assert.ok(Buffer.byteLength(text) <= 7200);
+  } finally { await cleanup(root); }
+});
 
 it('spends a small graph budget on unseen files, not connected seeds', async () => {
   const root = await mkdtemp(join(tmpdir(), 'contextpro-graph-limit-'));
@@ -46,6 +119,29 @@ it('spends a small graph budget on unseen files, not connected seeds', async () 
       const connected = await retrieveEvidence({...options, graphHops, graphMaxFiles:1});
       assert.ok(connected.candidates.some(item => item.path === 'z.ts'), JSON.stringify(connected.candidates));
       assert.ok(!connected.candidates.some(item => item.path === 'deep.ts'));
+    }
+  } finally { await cleanup(root); }
+});
+
+it('reserves connected and associated-test slots when many facet owners exceed the candidate cap', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'contextpro-facet-cap-'));
+  const topics = 'amber birch cedar delta ember fern granite hazel indigo jade kelp lilac maple nectar olive pearl quartz ruby spruce topaz umber violet willow zircon'.split(' ');
+  try {
+    for (const dir of ['src', 'tests']) await mkdir(join(root, dir));
+    for (const [i, topic] of topics.entries()) {
+      await writeFile(join(root, `src/owner-${i}.ts`), `import { value } from "./leaf-${i}.js";\nexport const owner = () => value;\n// ${topic}\n`);
+      await writeFile(join(root, `src/leaf-${i}.ts`), 'export const value = 1;\n');
+      await writeFile(join(root, `tests/owner-${i}.test.ts`), `import { owner } from "../src/owner-${i}.js";\nowner();\n`);
+    }
+    await reindex({ rootDir: root, noEmbed: true, autoHubs: false });
+    for (const graphMaxFiles of [8, 16]) {
+      const found = await retrieveEvidence({ rootDir: root, query: topics.join(' '), preset: 'keyword_only', graphMaxFiles });
+      assert.equal(found.candidates.length, 32);
+      assert.equal(new Set(found.candidates.map(item => item.path)).size, 32);
+      assert.equal(found.limited, true);
+      assert.equal(found.candidates.filter(item => /^src\/leaf-/.test(item.path)).length, graphMaxFiles, 'graph allocations must survive the global cap');
+      assert.equal(found.tests.length, 4);
+      for (const test of found.tests) assert.ok(found.candidates.some(item => item.path === test.path), test.path);
     }
   } finally { await cleanup(root); }
 });
@@ -181,7 +277,7 @@ it('feature briefs invalidate on source, dependency membership and model changes
       ['altered-fact-text', brief => { brief.facts[0] = `[${brief.citations[0].id}] Arbitrary claim presented as extracted evidence`; }],
       ['missing-facts', brief => { brief.facts = []; }],
       ['invalid-fact-role', brief => { brief.citations[0].roles = ['Arbitrary extracted claim']; }],
-      ['old-generator', brief => { brief.version = 1; }],
+      ['old-generator', brief => { brief.version = 2; }],
     ]) {
       const malformed = structuredClone(cached.brief); malformed.query = name; change(malformed);
       await persistArtifact({ rootDir: root, kind: 'feature_brief', key: name, payload: malformed });

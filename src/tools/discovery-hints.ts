@@ -17,7 +17,24 @@ export function discoveryPathWeight(query: string, path: string): number {
     && !/\b(?:tests?|testing|specs?|fixtures?|mocks?|regressions?|coverage|assert)\b/i.test(query)) return .2;
   const locale = /(?:^|\/)(?:locales?|translations?|messages)(?:\/|\.)/i.test(path) && /\.(?:json|ya?ml|[cm]?[jt]sx?)$/i.test(path);
   if (locale && !/\b(?:locales?|translations?|translate|i18n|l10n|locali[sz](?:ation|e)|wording|copy|strings?|messages?)\b/i.test(query)) return .2;
+  // Known report locations can repeat implementation terms without containing
+  // the implementation. An extension alone says nothing about that role: JSON
+  // configuration, Markdown content and CSV data can be primary source evidence.
+  const reportPath = /(?:^|\/)(?:reports|benchmark-results|test-results|coverage)\/|(?:^|\/)docs\/benchmarks\//i.test(path);
+  if (/\b(?:implementation|code|pipeline|source)\b/i.test(query)
+    && !/\b(?:report|reports|documentation|docs|results|dataset)\b/i.test(query)
+    && reportPath
+    && /\.(?:json|jsonl|md|csv)$/i.test(path)) return .35;
   return 1;
+}
+
+/** A broad visual task should find renderers before incidental service prose. */
+export function facetPathWeight(query: string, term: string, path: string): number {
+  const prior = discoveryPathWeight(query, path);
+  const visualTerms = new Set(query.toLowerCase().match(/\b(?:visual|illustration|animation|layout|theme|accent|onboarding|ui)\b/g) ?? []);
+  // Preserve direct path/topic matches, including non-UI theme/config modules.
+  if (visualTerms.size >= 2 && !path.toLowerCase().includes(term) && /\.[jt]sx$/i.test(path)) return prior * 1.5;
+  return prior;
 }
 
 /** Hints select only known indexed paths; query text never becomes an unchecked read. */

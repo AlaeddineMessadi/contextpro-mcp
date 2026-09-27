@@ -7,7 +7,8 @@ import { listArtifacts, readArtifact, type ArtifactReference } from "./artifacts
 import { resolveProjectPath } from "./path-guard.js";
 import { chatModelIdentity } from "./chat-model.js";
 
-export const FEATURE_BRIEF_VERSION = 2;
+// v5 reserves connected evidence before filling the bounded candidate set.
+export const FEATURE_BRIEF_VERSION = 5;
 const BRIEF_ROLES = ["implementation", "dependency", "caller", "test"] as const;
 export interface BriefCitation {
   id: string; file: string; start: number; end: number; hash: string;

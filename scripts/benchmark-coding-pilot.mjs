@@ -15,7 +15,11 @@ const exec = promisify(execFile), here = dirname(fileURLToPath(import.meta.url))
 const flags = new Set(process.argv.slice(2));
 const output = resolve(process.env.CONTEXTPRO_PILOT_OUTPUT ?? '.contextpro/productivity-pilot');
 const manifestText = await readFile(join(here, 'fixtures/coding-pilot.json'), 'utf8');
-const validatorText = await readFile(join(here, 'pilot-text-preview.mjs'), 'utf8');
+const validatorVersion = process.env.CONTEXTPRO_PILOT_VALIDATOR_VERSION ?? '2';
+if (!['1', '2'].includes(validatorVersion)) throw Error('Validator version must be 1 or 2');
+const validatorScript = validatorVersion === '1' ? 'pilot-text-preview.mjs' : 'pilot-text-preview-v2.mjs';
+const validatorText = await readFile(join(here, validatorScript), 'utf8')
+  + (validatorVersion === '2' ? await readFile(join(here, 'preview-rendering-contract.mjs'), 'utf8') : '');
 const manifest = JSON.parse(manifestText);
 const contractHash = createHash('sha256').update(manifestText).update(validatorText).digest('hex');
 const repos = JSON.parse(await readFile(join(output, 'repos.json'), 'utf8'));
@@ -28,6 +32,14 @@ const plan = Array.from({ length: repeats }, (_, repeat) => tasks.flatMap((task,
 const existing = async path => access(path).then(() => true, () => false);
 const save = (path, value) => writeFile(path, JSON.stringify(value, null, 2), { mode: 0o600 });
 await mkdir(output, { recursive: true });
+// Never replace qualification for a frozen campaign with a different contract.
+if (flags.has('--prepare') || flags.has('--recheck') || flags.has('--run') || flags.has('--resume')) {
+  for (const name of ['preflight.json', 'plan.json', 'runs.json']) if (await existing(join(output, name))) {
+    const saved = JSON.parse(await readFile(join(output, name), 'utf8'));
+    const records = Array.isArray(saved) ? saved : [saved];
+    if (records.some(record => record.contractHash !== contractHash)) throw Error('Frozen campaign uses a different validator contract; select its explicit version or choose a fresh output directory.');
+  }
+}
 
 async function run(command, args, cwd, logPath, timeout = 300000, env = {}) {
   const started = performance.now();
@@ -93,7 +105,7 @@ async function validate(task, root, label) {
       result = await run(process.execPath, ['node_modules/@playwright/test/cli.js', 'test', '--config=pilot.playwright.config.ts', ...task.tests, '--project=desktop-chromium', '--workers=1', '--retries=0', ...(task.testPattern ? ['--grep', task.testPattern] : [])], root, log, 300000,
         { APP_D_E2E_PORT: '3219', NEXT_TELEMETRY_DISABLED: '1' });
     } else if (task.validator === 'text-preview') {
-      result = await run(process.execPath, [join(here, 'pilot-text-preview.mjs'), root], root, log, 120000);
+      result = await run(process.execPath, [join(here, validatorScript), root], root, log, 120000);
     } else throw Error('Unknown validator');
     return { passed: result.code === 0 && !result.timedOut, ...result, durationMs: performance.now() - started };
   } catch (error) { await writeFile(log, error.stack ?? error.message); return { passed: false, error: error.message, durationMs: performance.now() - started }; }

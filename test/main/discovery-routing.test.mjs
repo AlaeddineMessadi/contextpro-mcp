@@ -8,6 +8,7 @@ import { reindex } from '../../build/tools/reindex.js';
 import { unifiedSearchData } from '../../build/tools/search.js';
 import { getStatusData } from '../../build/tools/status.js';
 import { closeDB, getDB } from '../../build/core/db.js';
+import { discoveryPathWeight } from '../../build/tools/discovery-hints.js';
 
 async function fixture(files, run) {
   const root = await mkdtemp(join(tmpdir(), 'contextpro-discovery-routing-'));
@@ -20,6 +21,32 @@ async function fixture(files, run) {
     await run(root);
   } finally { closeDB(root); await rm(root, { recursive: true, force: true }); }
 }
+
+it('limits source-query report penalties to report paths, preserving data-backed implementations', async () => {
+  const query = 'theme route implementation';
+  for (const path of ['config.json', 'content/theme.md', 'data/routes.csv', 'data/events.jsonl', 'src/report-config.json', 'docs/architecture.md']) {
+    assert.equal(discoveryPathWeight(query, path), 1, path);
+  }
+  for (const path of ['reports/run.json', 'docs/benchmarks/run.md', 'benchmark-results/run.csv', 'coverage/summary.json']) {
+    assert.ok(discoveryPathWeight(query, path) < 1, path);
+    assert.equal(discoveryPathWeight(`${query} reports`, path), 1, path);
+    assert.equal(discoveryPathWeight(`${query} ${path}`, path), 1, path);
+  }
+  await fixture({
+    'config.json': '{"theme":"dark","route":"/home","implementation":"declarative"}',
+    'src/logger.ts': 'export const message = "theme route";\n',
+    'reports/run.json': '{"summary":"theme route implementation"}',
+  }, async root => {
+    const result = await unifiedSearchData({ rootDir: root, query, mode: 'file', preset: 'keyword_only', topK: 1 });
+    assert.equal(result.files.results[0].path, 'config.json', JSON.stringify(result.files));
+    for (const connected of [false, true]) {
+      const text = await getContext({ rootDir: root, query, maxTokens: 512, connected });
+      assert.match(text, /config.json:/);
+      assert.match(text, /"implementation":"declarative"/);
+      assert.ok(Buffer.byteLength(text) <= 2048);
+    }
+  });
+});
 
 it('keeps locale copies and test variables from crowding out implementation evidence', async () => {
   const terms = 'subscription Pro feature limits pricing paywall home progress insights';
