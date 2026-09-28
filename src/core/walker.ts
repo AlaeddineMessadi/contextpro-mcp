@@ -25,6 +25,10 @@ interface IgnoreLayer {
   dir: string;
 }
 
+// These dot-directories contain authored workflows/test source, not runtime
+// state. Keep other hidden entries excluded and honor ordinary ignore layers.
+const SOURCE_DOT_DIRECTORIES = new Set([".github", ".maestro"]);
+
 // The comprehensive, framework-aware ignore set lives in ./ignore-dirs.ts so it can
 // be reused and tested independently. The walker also honors `.gitignore` layers.
 
@@ -74,9 +78,10 @@ async function walkRecursive(
   const entries = await readdir(dir, { withFileTypes: true }).catch(() => []);
 
   for (const entry of entries) {
-    // Skip the framework-aware ignore set (deps/build/cache across languages) and
-    // hidden entries. `.gitignore` layers are applied below and compose with this.
-    if (isAlwaysIgnoredDir(entry.name) || entry.name.startsWith(".")) continue;
+    // Only recognized source directories bypass the hidden-entry exclusion;
+    // dotfiles such as .env and ignored workflow artifacts remain excluded.
+    if (isAlwaysIgnoredDir(entry.name)
+      || (entry.name.startsWith(".") && !(entry.isDirectory() && SOURCE_DOT_DIRECTORIES.has(entry.name)))) continue;
 
     const fullPath = join(dir, entry.name);
 

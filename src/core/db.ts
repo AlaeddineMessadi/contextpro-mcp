@@ -970,16 +970,18 @@ export class ContextPlusDB {
     }
   }
 
-  searchFileText(query: string, topK: number = 10, phraseOnly = false): FileTextSearchMatch[] {
+  searchFileText(query: string, topK: number = 10, phraseOnly = false, requireAllTerms = false): FileTextSearchMatch[] {
     const stopwords = new Set([
       "a", "an", "and", "are", "as", "at", "be", "by", "can", "do", "does", "for", "from",
       "how", "i", "if", "in", "is", "it", "of", "on", "or", "the", "to", "what", "where",
       "which", "who", "why", "with",
     ]);
-    const terms = (query.normalize("NFC").match(/[\p{L}\p{M}\p{N}_]+/gu) ?? [])
+    const queryWords = (query.normalize("NFC").match(/[\p{L}\p{M}\p{N}_]+/gu) ?? [])
       .map((term) => term.toLowerCase())
-      .filter((term) => (term.length > 1 || /[^\x00-\x7F]/u.test(term)) && !stopwords.has(term))
-      .slice(0, 12);
+      .filter((term) => (term.length > 1 || /[^\x00-\x7F]/u.test(term)) && !stopwords.has(term));
+    // Strict topic lookups must not silently discard their final constraints.
+    if (requireAllTerms && queryWords.length > 64) return [];
+    const terms = queryWords.slice(0, requireAllTerms ? 64 : 12);
     if (terms.length === 0 && !phraseOnly) return [];
     const limit = Math.max(1, topK);
     const literal = query.normalize("NFC").trim().replace(/^(["'`])([\s\S]*)\1$/, "$2");
@@ -992,7 +994,7 @@ export class ContextPlusDB {
       if (phraseOnly || phraseRows.length > 0) return phraseRows;
       if (terms.length > 1) {
         const andRows = runQuery(terms.map((term) => `"${term}"*`).join(" "));
-        if (andRows.length > 0) return andRows;
+        if (andRows.length > 0 || requireAllTerms) return andRows;
       }
       return runQuery(terms.map((term) => `"${term}"*`).join(" OR "));
     } catch {

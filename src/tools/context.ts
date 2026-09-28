@@ -12,7 +12,7 @@ import { searchTerms } from "../core/embeddings.js";
 import { getDB } from "../core/db.js";
 import { walkDirectory } from "../core/walker.js";
 import { extractIdentifierHints, unifiedSearchData } from "./search.js";
-import { mentionedFiles, isOrientationQuery, orientationFiles, isLockfile, wantsLockfile, queryLiterals, discoveryPathWeight } from "./discovery-hints.js";
+import { mentionedFiles, documentTopicFiles, isUiOrientationQuery, isOrientationQuery, orientationFiles, isLockfile, wantsLockfile, queryLiterals, discoveryPathWeight } from "./discovery-hints.js";
 import { discoverDocuments, wantsDocuments } from "./discovery-documents.js";
 import { connectedRetrievalEnabled, retrieveEvidence, type EvidenceCandidate } from "./evidence-retrieval.js";
 import { finishSourceContext } from "../core/source-context.js";
@@ -80,12 +80,17 @@ export async function collectSourceEvidence(options: ContextOptions): Promise<So
   const filePriors = new Map<string, number>();
   const namedSymbols = new Set<string>();
   const requestedFiles = new Set<string>();
-  const orientation = isOrientationQuery(query);
+  // Subjects such as authentication/frontend and output wording such as "source
+  // ranges" do not request code. Only explicit code/implementation intent
+  // authorizes a restricted document allowance.
+  const mixedDocuments = !options.targets?.length && /\b(?:code|implementation)\b/i.test(query);
+  const orientation = options.retrievalPreset !== "semantic_only" && isOrientationQuery(query);
   // File mentions within an overview supplement the requested architecture;
   // they must not switch discovery into a restricted whole-file read.
   const readRequestedFiles = !orientation && /\b(?:read|show|open|whole|entire|full)\b/i.test(query);
   const overviewFiles = new Set<string>();
   const documentFiles = new Set<string>();
+  const topicTerms = new Map<string, string[]>();
   let connectedCandidates: EvidenceCandidate[] = [];
   const connected = options.connected ?? connectedRetrievalEnabled();
   if (!targets.length) {
@@ -148,20 +153,27 @@ export async function collectSourceEvidence(options: ContextOptions): Promise<So
     const definitions = [...definingFiles].sort((a, b) => Number(query.includes(b)) - Number(query.includes(a)) || a.localeCompare(b));
     if (definitions.length > 6 || hints.length > 16) notices.push("Some named definitions omitted; narrow the query or use exact file/symbol targets.");
     targets = [...definitions.slice(0, 6).map(file => ({ file })), ...targets.filter(target => !definitions.slice(0, 6).includes(target.file))];
-    const documents = wantsDocuments(query) ? await discoverDocuments(options.rootDir, query) : undefined;
+    const documents = options.retrievalPreset !== "semantic_only" && wantsDocuments(query) ? await discoverDocuments(options.rootDir, query) : undefined;
+    // Strict multi-topic candidates can include controls without saying "code";
+    // discovering them does not itself authorize capping documentation.
+    if (documents && !orientation && options.retrievalPreset !== "semantic_only") {
+      const topics = documentTopicFiles(db, query);
+      for (const {file, terms} of topics) { topicTerms.set(file, terms); filePriors.set(file, Math.max(filePriors.get(file) ?? 0, 1)); }
+      targets = topics.map(({file}) => ({file})).concat(targets.filter(target => !topicTerms.has(target.file)));
+    }
     const mentioned = [...new Set([...mentionedFiles(options.rootDir, query, indexed), ...documents?.mentioned ?? []])];
     for (const file of documents?.files ?? []) { documentFiles.add(file); filePriors.set(file, 2); }
     if (documentFiles.size) notices.push(`Document discovery uses filenames and bounded heading/intro previews${documents?.limited ? "; additional documents omitted" : ""}; verify scope with exact reads.`);
     if (mentioned.length > 6) notices.push("More than six files named; additional files omitted. Use batches of at most six exact targets.");
     for (const file of mentioned.slice(0, 6)) { requestedFiles.add(file); filePriors.set(file, 2); }
     if (orientation) {
-      for (const file of orientationFiles(db, indexed, query)) overviewFiles.add(file);
+      for (const file of orientationFiles(db, indexed, query)) { overviewFiles.add(file); filePriors.set(file, 2); }
       // Documentation is not necessarily part of the structural source index.
       // Use the ignore-aware walker so ignored files and symlinks stay excluded.
       const readme = (await walkDirectory({ rootDir: options.rootDir, depthLimit: 1 }))
         .filter(entry => !entry.isDirectory && entry.depth === 0 && /^readme\.(?:md|txt|rst)$/i.test(entry.relativePath))
         .sort((a, b) => a.relativePath.localeCompare(b.relativePath))[0];
-      if (readme) overviewFiles.add(readme.relativePath);
+      if (readme && (!isUiOrientationQuery(query) || documents)) overviewFiles.add(readme.relativePath);
       notices.push("Orientation includes structural entry points and import hubs; excerpts are not exhaustive.");
     }
     const priority = new Set([...requestedFiles, ...documentFiles, ...overviewFiles]);
@@ -250,7 +262,47 @@ export async function collectSourceEvidence(options: ContextOptions): Promise<So
     if (readRequestedFiles && requestedFiles.has(file) && bytes(render(excerpt)) + 2 <= available) {
       priorityParts.push(excerpt);
     } else if (overviewFiles.has(file) || documentFiles.has(file)) {
-      priorityParts.push({ file, start: 1, end: Math.min(25, lines.length), text: lines.slice(0, 25).join("\n") });
+      // Bound each preview in bytes, not lines: one Markdown table row can be
+      // larger than an entire packet. Leave room for the other requested roles.
+      const share = Math.max(128, Math.min(1200, Math.floor(available * .4 / Math.max(1, overviewFiles.size + documentFiles.size))));
+      // A long path or localized first line can exceed a small divided share.
+      // Admit one line up to 512 bytes including its citation; global packing
+      // still enforces the response budget and oversized rows remain bounded.
+      const firstLineCost = bytes(render({file,start:1,end:1,text:lines[0]})) + 2;
+      const cap = Math.max(share, Math.min(512, available, firstLineCost));
+      const preview: Excerpt = {file, start:1, end:0, text:""};
+      for (let line = 0; line < Math.min(25, lines.length); line++) {
+        const next = {...preview, end:line+1, text:lines.slice(0,line+1).join("\n")};
+        if (bytes(render(next)) + 2 > cap) break;
+        Object.assign(preview,next);
+      }
+      if (preview.end) priorityParts.push(preview);
+    }
+    const topic = topicTerms.get(file);
+    if (topic) {
+      const cap = Math.min(800, Math.max(128, Math.floor(limit * .25 / topicTerms.size)));
+      const windows = lines.flatMap((line, index) => {
+        // Anchor to an actual hit so a tied window cannot put the matching
+        // declaration at its tail and discard the following checks.
+        if (!searchTerms(line).some(term => topic.includes(term))) return [];
+        const from = Math.max(0, index - 2);
+        let to = from, text = "";
+        while (to < Math.min(lines.length, index + 9)) {
+          const next = lines.slice(from, to + 1).join("\n");
+          if (bytes(`${file}:${from+1}-${to+1}\n${next}`) + 2 > cap) break;
+          text = next; to++;
+        }
+        const words = searchTerms(text);
+        // Break coverage ties using bounded term frequency: a body using a
+        // topic repeatedly is stronger evidence than its first setup mention.
+        const score = topic.reduce((score, term) => {
+          const count = words.filter(word => word === term).length;
+          return score + (count ? 1 + Math.min(2, count - 1) * .1 : 0);
+        }, 0);
+        return [{part:{file,start:from+1,end:to,text},score}];
+      }).filter(item=>item.part.end >= item.part.start && item.score > 0);
+      windows.sort((a,b)=>b.score-a.score || a.part.start-b.part.start);
+      if (windows[0]) priorityParts.push(windows[0].part);
     }
     // File ranking can now find literal text anywhere in full-source FTS.
     // Keep the actual matching lines, not just other terms from the same file.
@@ -315,10 +367,18 @@ export async function collectSourceEvidence(options: ContextOptions): Promise<So
     }
     omitted.push(`${file}: partial; unreturned lines omitted`);
   }
+  const documentLimit = mixedDocuments ? Math.floor(limit * .3) : limit;
+  let documentBytes = 0;
+  // Topic/search/graph candidates need the same allowance as heading previews.
+  const isDocument = (part: Excerpt) => (documentFiles.has(part.file) || /\.(?:md|mdx|rst|txt)$/i.test(part.file))
+    && !requestedFiles.has(part.file);
   for (const definition of [...priorityParts, ...literalParts, ...definitions]) {
     for (const part of uncoveredRanges(definition, candidates)) {
       const size = bytes(render(part)) + 2;
-      if (size <= available) { candidates.push(part); available -= size; }
+      if (size <= available && (!isDocument(part) || documentBytes + size <= documentLimit)) {
+        candidates.push(part); available -= size;
+        if (isDocument(part)) documentBytes += size;
+      }
     }
   }
   // IDF across windows downweights ubiquitous identifiers; marginal coverage
@@ -338,7 +398,7 @@ export async function collectSourceEvidence(options: ContextOptions): Promise<So
       const { part } = remaining[i];
       const parts = uncoveredRanges(part, candidates);
       const size = parts.reduce((sum, item) => sum + bytes(render(item)) + 2, 0);
-      if (!parts.length || size > available) continue;
+      if (!parts.length || size > available || (isDocument(part) && documentBytes + size > documentLimit)) continue;
       const unchanged = parts.length === 1 && parts[0].start === part.start && parts[0].end === part.end;
       const words = unchanged ? remaining[i].words : new Set(parts.flatMap(item => searchTerms(item.text)));
       let gain = [...terms].reduce((n, term) => n + (words.has(term) ? weights.get(term)! * (covered.has(term) ? .25 : 1) : 0), 0);
@@ -367,14 +427,17 @@ export async function collectSourceEvidence(options: ContextOptions): Promise<So
     if (best < 0) break;
     const next = remaining.splice(best, 1)[0];
     candidates.push(...bestParts); available -= bestSize;
+    if (isDocument(next.part)) documentBytes += bestSize;
     selectedBytes.set(next.part.file, (selectedBytes.get(next.part.file) ?? 0) + bestSize);
     for (const part of bestParts) for (const term of searchTerms(part.text)) covered.add(term);
     for (const role of roles(next.part)) coveredRoles.add(role);
   }
   for (const part of smallDependencies) {
     const cost = bytes(render(part)) + 2;
-    if (cost <= available && !candidates.some(item => item.file === part.file)) {
+    if (cost <= available && (!isDocument(part) || documentBytes + cost <= documentLimit)
+      && !candidates.some(item => item.file === part.file)) {
       candidates.push(part); available -= cost;
+      if (isDocument(part)) documentBytes += cost;
     }
   }
   // Coalesce overlapping/adjacent ranges using the original snapshot. This also
@@ -394,7 +457,10 @@ export async function collectSourceEvidence(options: ContextOptions): Promise<So
     && part.start === 1 && part.end === snapshots.get(part.file)!.split("\n").length));
   const info = [...notices, ...partialOmissions.map(value => `Omitted: ${value}`)].join("\n");
   const footer = bytes(info) <= 650 ? info : [
-    bytes(noticeText) <= 400 ? noticeText : "Discovery index has freshness warnings; verify scope with native search.",
+    bytes(noticeText) <= 400 ? noticeText : [
+      ...notices.filter(notice => notice.startsWith("Discovery used") || notice.startsWith("Discovery index:") || /stale|empty|refresh/i.test(notice)).slice(0, 2),
+      "Additional discovery diagnostics omitted; narrow query/targets for detail.",
+    ].join("\n"),
     "Some targets or lines omitted. Narrow query/targets or increase max_tokens; verify scope with native search.",
   ].filter(Boolean).join("\n");
   if (connectedCandidates.length) {
@@ -406,6 +472,6 @@ export async function collectSourceEvidence(options: ContextOptions): Promise<So
     !merged.length ? "No source fit or matched. Try exact file/line targets or native search." : ""].filter(Boolean).join("\n\n");
   return { text, ranges: merged, hashes: Object.fromEntries([...snapshots].map(([file, source]) => [file, createHash("sha256").update(source).digest("hex")])),
     notices: [footer, summary].filter((value): value is string => !!value), complete: true,
-    settings: JSON.stringify({ version: 4, connected, preset: options.retrievalPreset ?? "balanced", rerank: process.env.CONTEXTPRO_CHAT_RERANK === "true",
+    settings: JSON.stringify({ version: 13, connected, preset: options.retrievalPreset ?? "balanced", rerank: process.env.CONTEXTPRO_CHAT_RERANK === "true",
       embedding: `${getProvider()}:${getEmbedModelName()}`, chat: options.targets?.length ? "unused" : await chatModelIdentity(options.rootDir) }) };
 }

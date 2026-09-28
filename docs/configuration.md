@@ -102,6 +102,11 @@ in source-text search and freshness checks; SQL binding references and structura
 symbol extraction are not provided by this text fallback. Source budgets still
 allow omissions, especially for broad questions spanning many modules.
 
+Discovery includes source under `.github/` and `.maestro/`, including nested app
+directories. Project and nested `.gitignore`/`.contextproignore` rules still
+apply. Other hidden entries, dependency/build directories and symlinks remain
+excluded from discovery; use exact targets for a known source outside that scope.
+
 See [installation](../INSTALL.md) for launch examples and [maintenance](maintenance.md) for test/runtime and disk-cleanup guidance.
 
 ## Optional benchmark tracing

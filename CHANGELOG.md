@@ -4,6 +4,8 @@ All notable changes to this project are recorded here. The project follows [Sema
 
 ## [Unreleased]
 
+- UI orientation now includes structural routes, navigation, feature components and requested styles/documents in both context selectors. Mixed document/source discovery bounds previews and reserves source evidence for later query topics; strict topic lookup avoids unrelated partial matches. Cached packets and briefs invalidate older output. See the [September 28 replay](docs/benchmarks/2026-09-28-discovery-orientation.md) for verified scope and remaining limitations.
+
 - Connected retrieval now rejects weak semantic-only graph seeds, counts each file once per ranking lane, and preserves visual/topic implementations with their local dependencies. Source-packet, task-pack and feature-brief cache identities invalidate the old selector's output. The pipeline remains opt-in.
 - New coding-pilot campaigns use a versioned behavioral plain-text validator with rendered whitespace and text-range scroll checks. Historical validator v1 and its results remain frozen; incompatible campaigns cannot be overwritten or resumed with the new contract.
 - Added opt-in connected source retrieval shared by `context` and `task_pack`, snippet-aware optional reranking, source-cited `feature_brief` artifacts and worktree-bound source deltas. Exact target reads remain stateless; the lean catalog remains three tools. Added provider usage observations and frozen retrieval/coding-pilot harnesses; these changes do not establish token or time savings.
