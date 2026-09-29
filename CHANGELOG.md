@@ -4,6 +4,9 @@ All notable changes to this project are recorded here. The project follows [Sema
 
 ## [Unreleased]
 
+- Explicit bounded line targets read large text bundles with a 64 MiB scan cap, byte budgets and snapshot-change checks; whole-file and symbol reads retain the 2 MB cap.
+- Discovery excludes recognized generated Graft wiring-card directories while preserving authored graft modules and explicit cache reads.
+
 - Query discovery retains named component usages across requested routes, topic-matched SQL guards and implementations under known directory prefixes. Both selectors add bounded filename/text candidates without model enrichment; exact reads and semantic-only isolation remain intact. Source/task/brief cache versions invalidate prior packets.
 - Directory hints recognize exclusion clauses such as "outside of", "except for" and "exclude everything under", including arbitrary modifiers, quoted paths and path lists, without suppressing a separate positive scope.
 - Excluded subtrees cannot re-enter scoped candidates through a positive parent or identifier match; similarly named sibling directories remain eligible.

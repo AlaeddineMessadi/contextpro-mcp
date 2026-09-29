@@ -73,10 +73,17 @@ Unknown top-level arguments and unknown `context.targets` keys are rejected;
 use `root` and `max_tokens`, not `projectPath` or `maxTokens`.
 `context` accepts 1–6 exact targets and an integer `max_tokens` from 512 to 12000
 (default 4000, estimated UTF-8 bytes/4). Split larger batches or narrow the ranges.
+Explicit line targets with `end` can read text files larger than 2 MB without
+parsing or indexing the bundle. They scan at most 64 MiB per file and retain only
+bounded requested ranges; whole-file and symbol reads keep the 2 MB limit.
+Binary, changing, oversized and scan-limited inputs have explicit omissions.
 Discovery checks structural freshness and falls back to a structural reindex when
 the quick-refresh threshold is exceeded, without generating embeddings or hubs.
 `CONTEXTPRO_AUTO_REFRESH=false` disables that maintenance; freshness warnings remain
 visible. Exact targets read current source without initializing the index.
+Generated Graft wiring cards are excluded from discovery when `graft/INDEX.md`
+contains the Graft repo-map header. Authored directories named `graft` remain
+eligible, and explicit exact targets can still read the generated cards.
 Project verification leaves unchanged configuration files untouched. Actual config
 updates use a temporary file and atomic replacement so failed writes preserve the
 previous settings. Initialization, indexing and other persistent operations still

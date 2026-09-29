@@ -1,8 +1,9 @@
 // Gitignore-aware recursive directory walker with nested ignore support
 // Returns filtered file paths respecting project and per-directory ignore patterns
 
-import { readdir, readFile, lstat } from "fs/promises";
-import { basename, join, relative, resolve } from "path";
+import { readdir, readFile, lstat, open } from "fs/promises";
+import { constants } from "node:fs";
+import { basename, dirname, join, relative, resolve } from "path";
 import ignore, { type Ignore } from "ignore";
 import { resolveProjectPath } from "./path-guard.js";
 import { isAlwaysIgnoredDir } from "./ignore-dirs.js";
@@ -28,6 +29,24 @@ interface IgnoreLayer {
 // These dot-directories contain authored workflows/test source, not runtime
 // state. Keep other hidden entries excluded and honor ordinary ignore layers.
 const SOURCE_DOT_DIRECTORIES = new Set([".github", ".maestro"]);
+
+/** Recognize Graft's generated wiring cards, rather than excluding every
+ * authored package/directory named graft. Never follow a marker symlink. */
+async function isGeneratedGraftDirectory(dir: string): Promise<boolean> {
+  if (basename(dir) !== "graft") return false;
+  const marker = join(dir,"INDEX.md");
+  const stats = await lstat(marker).catch(() => null);
+  if (!stats?.isFile() || stats.isSymbolicLink()) return false;
+  let handle;
+  try {
+    handle = await open(marker,constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    if (!(await handle.stat()).isFile()) return false;
+    const prefix = Buffer.alloc(1024);
+    const {bytesRead} = await handle.read(prefix,0,prefix.length,0);
+    return /^# graft [—-] repo map\r?\n/.test(prefix.subarray(0,bytesRead).toString("utf8"));
+  } catch { return false; }
+  finally { await handle?.close(); }
+}
 
 // The comprehensive, framework-aware ignore set lives in ./ignore-dirs.ts so it can
 // be reused and tested independently. The walker also honors `.gitignore` layers.
@@ -89,6 +108,7 @@ async function walkRecursive(
     if (!stats || stats.isSymbolicLink()) continue;
 
     const isDir = entry.isDirectory();
+    if (isDir && await isGeneratedGraftDirectory(fullPath)) continue;
     if (isIgnoredByLayers(fullPath, isDir, layers)) continue;
 
     const relPath = relative(rootDir, fullPath).replace(/\\/g, "/");
@@ -105,6 +125,15 @@ export async function walkDirectory(options: WalkOptions): Promise<FileEntry[]> 
 
   const stats = await lstat(startDir).catch(() => null);
   if (!stats) return results;
+
+  // A scoped walk must apply the same cache policy to its ancestors, even when
+  // it starts at a cache file or a directory below graft/.
+  for (let dir = stats.isDirectory() ? startDir : dirname(startDir); dir !== rootDir;) {
+    if (await isGeneratedGraftDirectory(dir)) return results;
+    const parent = dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
 
   if (stats.isFile()) {
     const relPath = relative(rootDir, startDir).replace(/\\/g, "/");

@@ -11,6 +11,7 @@ import { resolveProjectPath } from "../core/path-guard.js";
 import { searchTerms } from "../core/embeddings.js";
 import { getDB } from "../core/db.js";
 import { walkDirectory } from "../core/walker.js";
+import { readBoundedRanges, type BoundedRange } from "../core/bounded-source.js";
 import { extractIdentifierHints, unifiedSearchData } from "./search.js";
 import { mentionedFiles, documentTopicFiles, isUiOrientationQuery, isOrientationQuery, orientationFiles, isLockfile, wantsLockfile, queryLiterals, discoveryPathWeight } from "./discovery-hints.js";
 import { scopedSourceCandidates } from "./scoped-discovery.js";
@@ -203,6 +204,7 @@ export async function collectSourceEvidence(options: ContextOptions): Promise<So
   const candidates: Excerpt[] = [];
   const omitted: string[] = [];
   const snapshots = new Map<string, string>();
+  const boundedSnapshots = new Map<string, Map<string, BoundedRange>>();
   const analyses = new Map<string, FileAnalysis>();
   const discoveryParts: Excerpt[] = [];
   const definitions: Excerpt[] = [];
@@ -225,7 +227,29 @@ export async function collectSourceEvidence(options: ContextOptions): Promise<So
     let source = snapshots.get(file);
     try {
       if (source === undefined) {
-        if ((await stat(fullPath)).size > 2_000_000) { omitted.push(`${file}: exceeds 2 MB read limit`); continue; }
+        const stats = await stat(fullPath);
+        if (!stats.isFile()) { omitted.push(`${file}: not a regular file`); continue; }
+        if (stats.size > 2_000_000) {
+          if (!options.targets?.length || target.symbol || target.end === undefined) {
+            omitted.push(`${file}: exceeds 2 MB read limit; use explicit start/end targets`); continue;
+          }
+          let ranges = boundedSnapshots.get(file);
+          if (!ranges) {
+            const requested = options.targets.filter(item => !item.symbol && item.end !== undefined
+              && Number.isInteger(item.start ?? 1) && (item.start ?? 1) > 0
+              && Number.isInteger(item.end) && item.end >= (item.start ?? 1)
+              && resolveProjectPath(options.rootDir, item.file, "context target") === fullPath);
+            ranges = await readBoundedRanges(fullPath, requested.map(item => ({start:item.start ?? 1,end:item.end!})), limit);
+            boundedSnapshots.set(file, ranges);
+          }
+          const result = ranges.get(`${target.start ?? 1}:${target.end}`)!;
+          if ("omitted" in result) { omitted.push(`${file}:${/^\d/.test(result.omitted) ? "" : " "}${result.omitted}`); continue; }
+          const excerpt: Excerpt = {file,...result};
+          if (candidates.some(item => item.file === file && item.start <= excerpt.start && item.end >= excerpt.end)) continue;
+          const cost = bytes(render(excerpt)) + 2;
+          if (cost > available) { omitted.push(`${file}:${excerpt.start}-${excerpt.end}: over budget; request narrower targets or raise max_tokens`); continue; }
+          candidates.push(excerpt); available -= cost; continue;
+        }
         source = await readFile(fullPath, "utf8");
         if (bytes(source) > 2_000_000) { omitted.push(`${file}: exceeds 2 MB read limit`); continue; }
         if (source.includes("\0")) { omitted.push(`${file}: binary file`); continue; }
@@ -461,8 +485,9 @@ export async function collectSourceEvidence(options: ContextOptions): Promise<So
     for (const part of candidates.filter(item => item.file === file).sort((a, b) => a.start - b.start)) {
       const last = merged.at(-1);
       if (last?.file === file && part.start <= last.end + 1) {
+        const uncovered = part.text.split("\n").slice(Math.max(0,last.end - part.start + 1));
+        if (uncovered.length) last.text += "\n" + uncovered.join("\n");
         last.end = Math.max(last.end, part.end);
-        last.text = snapshots.get(file)!.split("\n").slice(last.start - 1, last.end).join("\n");
       } else merged.push({ ...part });
     }
   }
@@ -486,6 +511,6 @@ export async function collectSourceEvidence(options: ContextOptions): Promise<So
     !merged.length ? "No source fit or matched. Try exact file/line targets or native search." : ""].filter(Boolean).join("\n\n");
   return { text, ranges: merged, hashes: Object.fromEntries([...snapshots].map(([file, source]) => [file, createHash("sha256").update(source).digest("hex")])),
     notices: [footer, summary].filter((value): value is string => !!value), complete: true,
-    settings: JSON.stringify({ version: 23, connected, preset: options.retrievalPreset ?? "balanced", rerank: process.env.CONTEXTPRO_CHAT_RERANK === "true",
+    settings: JSON.stringify({ version: 24, connected, preset: options.retrievalPreset ?? "balanced", rerank: process.env.CONTEXTPRO_CHAT_RERANK === "true",
       embedding: `${getProvider()}:${getEmbedModelName()}`, chat: options.targets?.length ? "unused" : await chatModelIdentity(options.rootDir) }) };
 }

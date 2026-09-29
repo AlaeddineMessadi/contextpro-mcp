@@ -8,7 +8,7 @@ import { resolveProjectPath } from "./path-guard.js";
 import { chatModelIdentity } from "./chat-model.js";
 
 // v22 invalidates briefs predating explicit location precedence repairs.
-export const FEATURE_BRIEF_VERSION = 24;
+export const FEATURE_BRIEF_VERSION = 25;
 const BRIEF_ROLES = ["implementation", "dependency", "caller", "test"] as const;
 export interface BriefCitation {
   id: string; file: string; start: number; end: number; hash: string;
