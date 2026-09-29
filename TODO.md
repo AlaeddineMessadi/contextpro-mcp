@@ -5,6 +5,9 @@ This is the current implementation backlog. Earlier upstream proposals are prese
 ## Implemented foundation
 
 - [x] Lean context workflow and batched source reads.
+- [x] Optional connected evidence, snippet reranking, cited feature briefs and source-packet deltas.
+- [x] UI/document orientation, named-usage/path-topic discovery and authored workflow indexing.
+- [x] Run the initial 16-attempt coding pilot; retain failed outcomes and keep connected retrieval opt-in.
 - [x] Parser crash isolation and bounded optional retrieval-model work.
 - [x] TS/JS project-aware references, occurrence categories and explicit truncation.
 - [x] Reusable isolated compiler services.

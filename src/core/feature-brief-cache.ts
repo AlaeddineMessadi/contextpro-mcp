@@ -7,8 +7,8 @@ import { listArtifacts, readArtifact, type ArtifactReference } from "./artifacts
 import { resolveProjectPath } from "./path-guard.js";
 import { chatModelIdentity } from "./chat-model.js";
 
-// v14 counts every document candidate and requires explicit UI inventory phrases.
-export const FEATURE_BRIEF_VERSION = 14;
+// v22 invalidates briefs predating explicit location precedence repairs.
+export const FEATURE_BRIEF_VERSION = 24;
 const BRIEF_ROLES = ["implementation", "dependency", "caller", "test"] as const;
 export interface BriefCitation {
   id: string; file: string; start: number; end: number; hash: string;

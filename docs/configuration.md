@@ -96,6 +96,15 @@ request deadline and 20,000 input files. Heap exhaustion returns a specific erro
 with the configured limit. Parser requests have a 15-second deadline and separate
 queue/source limits. These are not whole-machine resource guarantees.
 
+Query-based `context` in both default and connected modes adds at most eight
+source candidates corroborated by a named identifier and path topics, or an
+existing relative directory prefix plus a topic. Each of up to eight identifier
+hints examines at most 64 local text hits. The shared source collector selects
+bounded interior windows; connected packets remain capped at 32 candidate files.
+These are lexical hints, not binding-resolved references or hard scope filters.
+No additional chat/embedding calls are introduced. Exact target reads remain
+stateless, and semantic-only evaluation bypasses these lexical candidates.
+
 Lexical discovery retains quoted phrases and compound keys, and treats tests and
 translation catalogs as secondary evidence unless requested. SQL files participate
 in source-text search and freshness checks; SQL binding references and structural

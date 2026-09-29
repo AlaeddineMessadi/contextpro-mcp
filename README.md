@@ -66,9 +66,36 @@ Tool schemas are the argument reference. See the [agent guide](agent-guide.md) f
 | `core` | Common workflows plus editing and graphs |
 | `full` | All registered tools, including compatibility aliases |
 
-Set `CONTEXTPRO_TOOL_PROFILE` in the server environment. Discovery enables tools for the session without executing them.
+Set `CONTEXTPRO_TOOL_PROFILE` in the server environment. `discover_tools(enable:[...])` enables tools without executing them. If the client cannot refresh its catalog, use the supported `discover_tools({root,call:{name,arguments}})` dispatcher with the returned expert schema.
 
 Experimental connected retrieval (`CONTEXTPRO_CONNECTED_CONTEXT=true`) combines ranked source, one-hop imports/callers and relevant tests in `context` and `task_pack`. It remains opt-in while task-level performance is evaluated. Discover `feature_brief` for a cached, source-cited feature map; model-written interpretations require a separate opt-in. Query-based `context` packets accept `previous_context_id` while the agent still holds that packet; omit it after context loss. Exact target reads remain stateless. See [configuration and freshness rules](docs/configuration.md).
+
+## Ask for the source you need
+
+Pass the absolute active repository or worktree as `root` on every call. Query
+budgets use `max_tokens` (512–12000, default 4000; estimated UTF-8 bytes divided by
+four). Exact batches accept up to six targets.
+
+```js
+context({
+  root: "/absolute/path/to/project",
+  query: "apps/mobile/app/host reports publish controls and disabled state",
+  max_tokens: 2500
+})
+context({
+  root: "/absolute/path/to/project",
+  targets: [{file: "src/guest/rules/page.tsx"}, {file: "src/guest/identity/page.tsx"}],
+  max_tokens: 4000
+})
+```
+
+Known directory prefixes and route topics help query discovery retain the requested
+implementation. A named component or compound error code supplies additional local
+text evidence. These are bounded ranking hints, not hard directory filters or
+compiler-resolved references; connected dependencies may still come from elsewhere.
+For a UI inventory, ask explicitly for an overview. For a bug, name the affected
+symbol and source area. Check citations and omissions, then narrow to exact targets
+when needed rather than repeating the same broad query.
 
 ## Evidence you can inspect
 
@@ -83,6 +110,13 @@ Local-first does not mean sandboxed. Tools run with your user permissions. Hoste
 We optimize for useful evidence per call and successful tasks, not just small responses. The [benchmark guide](https://github.com/AlaeddineMessadi/contextpro-mcp/blob/main/docs/benchmarks/README.md) separates direct tool timings, synthetic retrieval tests, agent runs and estimates.
 
 One [24-query offline reference experiment](https://github.com/AlaeddineMessadi/contextpro-mcp/blob/main/docs/benchmarks/2026-09-08-reference-evidence.md) passed every query and reduced the larger text response by approximately **12.5%**. Small responses grew approximately **1.2%**, and server latency was essentially unchanged. This is a scoped serialization result, not measured agent token or billing savings.
+
+The [September 26 coding pilot](docs/benchmarks/2026-09-26-connected-evidence.md)
+did **not** meet the productivity rollout gate: the baseline passed 1/8 frozen
+tasks and the candidate 0/8, with no jointly passing pairs for a valid savings
+comparison. Failures, timeouts and an interrupted run limit attribution. Connected
+retrieval remains opt-in. Later retrieval regressions verify specific source
+coverage; they do not establish faster completed tasks or lower billed tokens.
 
 Comparisons with native tools, Graft, Graphify or Serena should report versions, correctness, cold and warm runs, provider usage and repeated trials. See [how we compare](https://github.com/AlaeddineMessadi/contextpro-mcp/blob/main/docs/comparison.md). We welcome reproducible results, including tasks where another approach wins.
 

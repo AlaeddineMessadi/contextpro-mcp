@@ -83,6 +83,15 @@ previous settings. Initialization, indexing and other persistent operations stil
 need writable storage; this is not a general read-only server mode.
 Literal symbol names in discovery queries prioritize their definitions; large
 bodies can still be partial, so inspect the returned ranges and omissions.
+Query discovery also combines named-identifier text matches with concrete path
+topics, and recognizes existing repository-relative directory prefixes such as
+`apps/mobile/app/host`. Up to eight additional candidates compete through bounded
+interior source windows in both selectors. These hints do not require chat calls
+and are disabled for semantic-only evaluation and exact target reads. Directory
+hints are preferences, not hard filters; linked evidence can come from elsewhere.
+Use `exact_references` to establish TS/JS binding identity. Unknown directory
+prefixes and identifiers do not invent paths or prove absence. For an omitted
+route, guard or implementation, follow up with exact targets or native scope search.
 Literal UI phrases, including Unicode text, use full-source local text search;
 matching lines get priority in the returned source windows. Quotes can delimit
 the phrase. Existing summary-only indexes rebuild automatically on refresh.

@@ -1,24 +1,47 @@
 # ContextPro status
 
-Updated 2026-09-08. This describes the checkout including open-source launch preparation, not a published release. Package metadata remains `1.3.0`; supported Node range is `>=20 <27`.
+Updated 2026-09-29. This describes the current source checkout, including the scoped-discovery repair, not a published release. Package metadata remains `1.3.0`; supported Node range is `>=20 <27`.
 
 | Area | Current behavior | Remaining limit |
 | --- | --- | --- |
-| Tool catalog | Four profiles; workflow defaults to 14 tools, lean to three | Dynamic discovery depends on client support |
+| Tool catalog | Four profiles; workflow defaults to 14 tools, lean to three; supported expert dispatcher | Live catalog refresh still depends on the client |
 | Structural index | SQLite schema v7; size/mtime/ctime probes, hash verification and per-file consistent reads | No atomic whole-repo or unsaved-buffer snapshot |
 | Background updates | Watcher plus periodic reconciliation; polling survives watcher failure | Large backlogs take time; inspect freshness |
 | Parser | Isolated WASM worker with bounded requests and fallback | Fallback reduces precision; syntax validation can fail closed |
 | TS/JS references | Reused compiler projects, aliases/project refs/indexed tests, categorized counts and per-file call totals | Indexed scope only; 500 displayed results; cold initialization cost |
 | Other reference evidence | SCIP import and Python import/call candidates | SCIP revision verification and stronger Python resolution remain open |
-| Retrieval | Bounded context, batched reads, keyword fallback, optional graph pointers | No guarantee every task-relevant dependency is selected |
+| Retrieval | Bounded exact reads, path/identifier-guided source, UI/document orientation; opt-in connected graph retrieval | Broad lexical recall remains incomplete; hints are not hard filters |
 | Embeddings | Independent optional provider; bounded query requests | Reindex needed for changed model/corpus vectors |
+| Context reuse | Source-hash-bound query deltas and cached cited feature briefs; model summaries opt-in | Omit previous context IDs after context loss; caches are regenerable |
 | Memory | Project/session scopes, durable notes and graph traversal | Source/config evidence validation and robust offline retrieval remain work |
 | Source edits | Revision checks, serialized writes, restore points and preview | Multi-file publication is not transactional; rename is textual |
 | Efficiency | Session estimates plus separately recorded provider-usage trials | No automatic billing access or universal savings claim |
 
 ## Verification and measurements
 
-Open-source preparation adds contributor/security guides, gated release workflows, package-content checks and a source-install website path. **656 main tests pass on Node v26.0.0**; both optional apps build with Next.js 16.3.4 / React 19.2.8, and all three production dependency audits report zero known vulnerabilities at this check. Workflow syntax and documentation/package checks pass locally. Public visibility, npm publication and GitHub security settings remain explicit [launch gates](docs/launch/checklist.md).
+The September 29 repair reproduces the three app-b source-location reports
+on frozen revision `private-rev` and adds scoped directory/named-usage candidates to
+both source selectors. The [replay report](docs/benchmarks/2026-09-29-scoped-discovery.md)
+records 12/12 candidate coverage checks in 24 matched calls, 782 passing main tests,
+33 parser demos, fresh stdio verification and build identity. README,
+agent policy, managed project instructions and website instructions describe the
+same current behavior. Restart a running MCP process after rebuilding; files on
+disk do not prove which build another agent has loaded.
+
+The [September 26 coding pilot](docs/benchmarks/2026-09-26-connected-evidence.md)
+accounts for all 16 planned attempts. Baseline acceptance was 1/8 and candidate
+acceptance 0/8, with no jointly passing pairs. The productivity gate was not met;
+connected retrieval remains opt-in. Later source-retrieval fixes are development
+regressions, not a rerun or improvement claim for that frozen pilot.
+
+PR #28 merged at `c43ddc6` with 759 main tests, 33 parser demos and 24 orientation
+replay calls passing locally. Its GitHub jobs did not run because of account
+billing/spending limits. Local checks do not certify the remote OS/Node matrix.
+
+### Earlier dated measurements
+
+
+The September 8 open-source preparation added contributor/security guides, gated release workflows, package-content checks and a source-install website path. **656 main tests pass on Node v26.0.0**; both optional apps build with Next.js 16.3.4 / React 19.2.8, and all three production dependency audits report zero known vulnerabilities at this check. Workflow syntax and documentation/package checks pass locally. Public visibility, npm publication and GitHub security settings remain explicit [launch gates](docs/launch/checklist.md).
 
 The reference-evidence follow-up passes **654 main tests on Node v26.0.0**. All 24 offline reference replay queries pass; compiler latency is essentially unchanged. The larger text fixture is 12.5% smaller, while the initial lean/workflow catalog grows by 1,071 bytes. These are output/schema measurements, not agent token savings. See the [evidence report](docs/benchmarks/2026-09-08-reference-evidence.md).
 

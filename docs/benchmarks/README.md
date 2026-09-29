@@ -4,6 +4,8 @@ Results have different baselines and must not be combined into one savings claim
 
 | Record | What it measures | Main limitation |
 | --- | --- | --- |
+| [Scoped source-discovery replay](2026-09-29-scoped-discovery.md) | Frozen route-usage, SQL-guard and platform-directory queries in both selectors | Development coverage; no agent time or provider-token comparison |
+| [UI and document orientation](2026-09-28-discovery-orientation.md) | Frozen UI/product/security discovery with decisive source markers | Partial evidence coverage, not exhaustive product or compliance analysis |
 | [Connected evidence and coding pilot](2026-09-26-connected-evidence.md) | Frozen retrieval controls and eight paired coding tasks | Experimental retrieval; single-run pairs, local dependency copies |
 | [Refresh and compound-identifier replay](2026-09-26-refresh-and-discovery.md) | SQLite refresh diagnosis, frozen gallery query and new-file refresh | Sequential local timings; no semantic quality or billing comparison |
 | [Workflow follow-up audit](2026-09-08-workflow-rebenchmark.md) | Reported second implementation trial and inspected raw tool incidents | Single run; timings/correctness reported by the workflow; no new billing measurement |

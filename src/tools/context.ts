@@ -13,6 +13,7 @@ import { getDB } from "../core/db.js";
 import { walkDirectory } from "../core/walker.js";
 import { extractIdentifierHints, unifiedSearchData } from "./search.js";
 import { mentionedFiles, documentTopicFiles, isUiOrientationQuery, isOrientationQuery, orientationFiles, isLockfile, wantsLockfile, queryLiterals, discoveryPathWeight } from "./discovery-hints.js";
+import { scopedSourceCandidates } from "./scoped-discovery.js";
 import { discoverDocuments, wantsDocuments } from "./discovery-documents.js";
 import { connectedRetrievalEnabled, retrieveEvidence, type EvidenceCandidate } from "./evidence-retrieval.js";
 import { finishSourceContext } from "../core/source-context.js";
@@ -91,6 +92,7 @@ export async function collectSourceEvidence(options: ContextOptions): Promise<So
   const overviewFiles = new Set<string>();
   const documentFiles = new Set<string>();
   const topicTerms = new Map<string, string[]>();
+  const scopedFiles = new Set<string>();
   let connectedCandidates: EvidenceCandidate[] = [];
   const connected = options.connected ?? connectedRetrievalEnabled();
   if (!targets.length) {
@@ -161,6 +163,16 @@ export async function collectSourceEvidence(options: ContextOptions): Promise<So
       for (const {file, terms} of topics) { topicTerms.set(file, terms); filePriors.set(file, Math.max(filePriors.get(file) ?? 0, 1)); }
       targets = topics.map(({file}) => ({file})).concat(targets.filter(target => !topicTerms.has(target.file)));
     }
+    if (!exact && !orientation && options.retrievalPreset !== "semantic_only") {
+      const scoped = scopedSourceCandidates(db, query, hints);
+      for (const {file, terms} of scoped) {
+        if (!topicTerms.has(file)) scopedFiles.add(file);
+        topicTerms.set(file, [...new Set([...topicTerms.get(file) ?? [], ...terms])]);
+        filePriors.set(file, Math.max(filePriors.get(file) ?? 0, 2));
+      }
+      targets = scoped.map(({file}) => ({file})).concat(targets.filter(target => !scoped.some(item => item.file === target.file)));
+      if (scoped.length) notices.push("Scoped candidates use filename and literal-text hints, not resolved references; verify bindings with exact_references.");
+    }
     const mentioned = [...new Set([...mentionedFiles(options.rootDir, query, indexed), ...documents?.mentioned ?? []])];
     for (const file of documents?.files ?? []) { documentFiles.add(file); filePriors.set(file, 2); }
     if (documentFiles.size) notices.push(`Document discovery uses filenames and bounded heading/intro previews${documents?.limited ? "; additional documents omitted" : ""}; verify scope with exact reads.`);
@@ -196,6 +208,7 @@ export async function collectSourceEvidence(options: ContextOptions): Promise<So
   const definitions: Excerpt[] = [];
   const literalParts: Excerpt[] = [];
   const priorityParts: Excerpt[] = [];
+  const scopedParts: Excerpt[] = [];
   const smallDependencies: Excerpt[] = [];
   const seen = new Set<string>();
   const limit = budget * 4;
@@ -302,7 +315,7 @@ export async function collectSourceEvidence(options: ContextOptions): Promise<So
         return [{part:{file,start:from+1,end:to,text},score}];
       }).filter(item=>item.part.end >= item.part.start && item.score > 0);
       windows.sort((a,b)=>b.score-a.score || a.part.start-b.part.start);
-      if (windows[0]) priorityParts.push(windows[0].part);
+      if (windows[0]) (scopedFiles.has(file) ? scopedParts : priorityParts).push(windows[0].part);
     }
     // File ranking can now find literal text anywhere in full-source FTS.
     // Keep the actual matching lines, not just other terms from the same file.
@@ -372,7 +385,8 @@ export async function collectSourceEvidence(options: ContextOptions): Promise<So
   // Topic/search/graph candidates need the same allowance as heading previews.
   const isDocument = (part: Excerpt) => (documentFiles.has(part.file) || /\.(?:md|mdx|rst|txt)$/i.test(part.file))
     && !requestedFiles.has(part.file);
-  for (const definition of [...priorityParts, ...literalParts, ...definitions]) {
+  // Preserve the existing exact-name priority before adding scoped usage windows.
+  for (const definition of [...priorityParts, ...literalParts, ...definitions, ...scopedParts]) {
     for (const part of uncoveredRanges(definition, candidates)) {
       const size = bytes(render(part)) + 2;
       if (size <= available && (!isDocument(part) || documentBytes + size <= documentLimit)) {
@@ -472,6 +486,6 @@ export async function collectSourceEvidence(options: ContextOptions): Promise<So
     !merged.length ? "No source fit or matched. Try exact file/line targets or native search." : ""].filter(Boolean).join("\n\n");
   return { text, ranges: merged, hashes: Object.fromEntries([...snapshots].map(([file, source]) => [file, createHash("sha256").update(source).digest("hex")])),
     notices: [footer, summary].filter((value): value is string => !!value), complete: true,
-    settings: JSON.stringify({ version: 13, connected, preset: options.retrievalPreset ?? "balanced", rerank: process.env.CONTEXTPRO_CHAT_RERANK === "true",
+    settings: JSON.stringify({ version: 23, connected, preset: options.retrievalPreset ?? "balanced", rerank: process.env.CONTEXTPRO_CHAT_RERANK === "true",
       embedding: `${getProvider()}:${getEmbedModelName()}`, chat: options.targets?.length ? "unused" : await chatModelIdentity(options.rootDir) }) };
 }

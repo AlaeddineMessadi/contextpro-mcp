@@ -4,6 +4,15 @@ All notable changes to this project are recorded here. The project follows [Sema
 
 ## [Unreleased]
 
+- Query discovery retains named component usages across requested routes, topic-matched SQL guards and implementations under known directory prefixes. Both selectors add bounded filename/text candidates without model enrichment; exact reads and semantic-only isolation remain intact. Source/task/brief cache versions invalidate prior packets.
+- Directory hints recognize exclusion clauses such as "outside of", "except for" and "exclude everything under", including arbitrary modifiers, quoted paths and path lists, without suppressing a separate positive scope.
+- Excluded subtrees cannot re-enter scoped candidates through a positive parent or identifier match; similarly named sibling directories remain eligible.
+- Subject phrases such as "click outside handler" preserve a following directory hint; bare "outside" only excludes a directory it introduces.
+- Behavior phrases such as "routes without authentication in src/api" preserve their positive scope. Existing top-level hints such as `src/` and `packages/` are recognized, including exclusion lists.
+- Bare `not <path>` excludes that scope. Negative clauses no longer supply positive path topics or identifier hints, while independently requested words remain searchable; equal-scoring candidates prefer shallower implementations before lexical path order.
+- An explicit source location takes precedence over an earlier behavioral preposition, preserving queries such as "clicks outside of the menu in src/menu" while keeping explicit exclusion commands negative.
+- Refreshed README, status, project/agent instructions and generated website guidance with current scope hints, budgets, dispatcher fallback and the unsuccessful coding-pilot rollout result.
+
 - UI orientation now includes structural routes, navigation, feature components and requested styles/documents in both context selectors. Mixed document/source discovery bounds previews and reserves source evidence for later query topics; strict topic lookup avoids unrelated partial matches. Cached packets and briefs invalidate older output. See the [September 28 replay](docs/benchmarks/2026-09-28-discovery-orientation.md) for verified scope and remaining limitations.
 
 - Connected retrieval now rejects weak semantic-only graph seeds, counts each file once per ranking lane, and preserves visual/topic implementations with their local dependencies. Source-packet, task-pack and feature-brief cache identities invalidate the old selector's output. The pipeline remains opt-in.

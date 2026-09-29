@@ -6,7 +6,7 @@ ContextPro runs an MCP stdio server from `src/index.ts`. Each request resolves a
 
 1. Direct `context` targets read bounded current source without search or embeddings. Discovery queries use the index and ranking paths.
 2. Graph-backed tools pass through freshness checks. The walker respects exclusions; fingerprints identify suspicious files, hashes verify content, and coordinated writers repair structural rows.
-3. Retrieval combines lexical evidence with optional existing vectors. Task packets and source slices select bounded evidence and expose omissions rather than pretending selection is exhaustive.
+3. Retrieval combines lexical evidence with optional existing vectors. Task packets and source slices select bounded evidence and expose omissions rather than pretending selection is exhaustive. Query-based source selection also combines named-identifier text hits with concrete path topics and existing directory prefixes. Bounded interior windows follow exact-name evidence in packing order; no inferred relationship becomes a compiler reference. Exact targets and semantic-only evaluations bypass these lexical hints.
 4. Artifacts and prior packet IDs support reuse. A client must still possess a baseline before requesting a delta.
 
 ## Process boundaries
