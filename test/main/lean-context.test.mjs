@@ -9,6 +9,26 @@ import {reindex} from '../../build/tools/reindex.js';
 import {closeDB,getDB} from '../../build/core/db.js';
 import {unifiedSearchData} from '../../build/tools/search.js';
 
+it('keeps lower-ranked implementation evidence eligible for natural-language discovery',async()=>{
+ const root=await mkdtemp(join(tmpdir(),'contextpro-recall-'));
+ const query='Find command handling record.create and organization authorization';
+ try {
+  for(let i=0;i<4;i++) await writeFile(join(root,`client${i}.ts`),`export const label${i} = '${query}';\n`);
+  await writeFile(join(root,'storage.ts'),`export function commitRecord(org: string) {
+  if (!org) throw new Error('organization authorization required');
+  return { action: 'record.create', saved: true };
+}
+`);
+  await reindex({rootDir:root,noEmbed:true,autoHubs:false});
+  const search=await unifiedSearchData({rootDir:root,query,preset:'keyword_only',topK:12});
+  assert.ok(search.files.results.findIndex(file=>file.path==='storage.ts')>=4,'fixture must exercise evidence outside the old four-file window');
+  const text=await getContext({rootDir:root,query,maxTokens:1500,connected:false,retrievalPreset:'keyword_only'});
+  assert.match(text,/storage.ts:\d+-\d+\nexport function commitRecord/);
+  assert.match(text,/if \(!org\) throw new Error\('organization authorization required'\)/);
+  assert.ok(Buffer.byteLength(text)<=6000);
+ }finally{closeDB(root);await rm(root,{recursive:true,force:true});}
+});
+
 it('batches direct sources without an index; deduplicates overlap and preserves exact source',async()=>{
  const root=await mkdtemp(join(tmpdir(),'contextpro-direct-'));
  try {

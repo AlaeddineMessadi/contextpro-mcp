@@ -101,8 +101,10 @@ export async function collectSourceEvidence(options: ContextOptions): Promise<So
     // hybrid retriever: no unvalidated lexical confidence gate discards recall.
     const exact = /^[A-Za-z_$][\w$]*$/.test(query);
     const packet = options.retrieved ?? (connected && !exact ? await retrieveEvidence({ rootDir: options.rootDir, query, preset: options.retrievalPreset }) : undefined);
+    // Gather beyond the first few hits before packing; incidental callers can
+    // rank ahead of the implementation. The source/output budget stays fixed.
     const found = packet?.search ?? await unifiedSearchData({ rootDir: options.rootDir, query,
-      mode: "file", preset: exact ? "keyword_only" : options.retrievalPreset ?? "balanced", topK: 4,
+      mode: "file", preset: exact ? "keyword_only" : options.retrievalPreset ?? "balanced", topK: exact ? 4 : 12,
       inlineCode: "off", includeDependencies: true, persistArtifact: false });
     connectedCandidates = packet?.candidates ?? [];
     if (packet?.relationNotice) notices.push(packet.relationNotice);
@@ -511,6 +513,6 @@ export async function collectSourceEvidence(options: ContextOptions): Promise<So
     !merged.length ? "No source fit or matched. Try exact file/line targets or native search." : ""].filter(Boolean).join("\n\n");
   return { text, ranges: merged, hashes: Object.fromEntries([...snapshots].map(([file, source]) => [file, createHash("sha256").update(source).digest("hex")])),
     notices: [footer, summary].filter((value): value is string => !!value), complete: true,
-    settings: JSON.stringify({ version: 24, connected, preset: options.retrievalPreset ?? "balanced", rerank: process.env.CONTEXTPRO_CHAT_RERANK === "true",
+    settings: JSON.stringify({ version: 25, connected, preset: options.retrievalPreset ?? "balanced", rerank: process.env.CONTEXTPRO_CHAT_RERANK === "true",
       embedding: `${getProvider()}:${getEmbedModelName()}`, chat: options.targets?.length ? "unused" : await chatModelIdentity(options.rootDir) }) };
 }

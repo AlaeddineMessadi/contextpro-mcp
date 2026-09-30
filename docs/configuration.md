@@ -72,6 +72,9 @@ embedding summary is searchable. This increases the regenerable database size;
 embedding inputs and response budgets remain bounded separately. The extraction
 stamp automatically rebuilds older summary-only indexes on the next structural
 freshness check. Unicode query tokens and phrase matching use that local index.
+Default natural-language `context` discovery considers twelve ranked files before
+packing bounded source ranges; exact identifiers consider four. These candidate
+counts are independent of `max_tokens` and do not imply complete scope coverage.
 
 ## Runtime and reporting
 

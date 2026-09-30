@@ -4,6 +4,7 @@ All notable changes to this project are recorded here. The project follows [Sema
 
 ## [Unreleased]
 
+- Natural-language `context` discovery considers twelve ranked files before source packing, retaining lower-ranked implementations behind incidental callers. Exact identifiers keep the four-file fast path; response budgets are unchanged.
 - Explicit bounded line targets read large text bundles with a 64 MiB scan cap, byte budgets and snapshot-change checks; whole-file and symbol reads retain the 2 MB cap.
 - Discovery excludes recognized generated Graft wiring-card directories while preserving authored graft modules and explicit cache reads.
 
