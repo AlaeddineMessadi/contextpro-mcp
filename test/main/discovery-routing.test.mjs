@@ -8,7 +8,7 @@ import { reindex } from '../../build/tools/reindex.js';
 import { unifiedSearchData } from '../../build/tools/search.js';
 import { getStatusData } from '../../build/tools/status.js';
 import { closeDB, getDB } from '../../build/core/db.js';
-import { isUiOrientationQuery, orientationFiles, documentTopicFiles, discoveryPathWeight } from '../../build/tools/discovery-hints.js';
+import { isUiOrientationQuery, orientationFiles, documentTopicFiles, discoveryPathWeight, mentionedFiles } from '../../build/tools/discovery-hints.js';
 import { wantsDocuments, discoverDocuments } from '../../build/tools/discovery-documents.js';
 
 async function fixture(files, run) {
@@ -22,6 +22,48 @@ async function fixture(files, run) {
     await run(root);
   } finally { closeDB(root); await rm(root, { recursive: true, force: true }); }
 }
+
+it('reads an unambiguous indexed path suffix even when the body has no path terms', async () => {
+  const files = [{path:'apps/web/src/app/api/commands/route.ts'}, {path:'apps/web/src/app/api/other/route.ts'}];
+  assert.deepEqual(mentionedFiles('/repo', 'api/commands/route.ts', files), [files[0].path]);
+  for (const query of ['route.ts', 'commands/route.ts', '../api/commands/route.ts', '/outside/api/commands/route.ts']) {
+    const scope = query === 'commands/route.ts' ? [...files, {path:'apps/native/api/commands/route.ts'}] : files;
+    assert.deepEqual(mentionedFiles('/repo', query, scope), [], query);
+  }
+  await fixture({
+    [files[0].path]: 'export async function POST(request) { return dispatch(request); }\n',
+    [files[1].path]: 'export const GET = () => null;\n',
+  }, async root => {
+    for (const connected of [false, true]) {
+      const text = await getContext({rootDir:root, query:'api/commands/route.ts', maxTokens:512, connected, retrievalPreset:'keyword_only'});
+      assert.match(text, /return dispatch\(request\)/);
+      assert.ok(Buffer.byteLength(text) <= 2048);
+    }
+  });
+});
+
+it('retains object-property values for exact identifiers despite incidental callers', async () => {
+  await fixture({
+    'src/ui.tsx': 'export function Screen() { return messages.uploadFinalizationFailed; }\n',
+    'src/lib/messages.ts': `export const messages = {\n${`  unrelated: "${'x'.repeat(400)}",\n`.repeat(100)}  uploadFinalizationFailed: "Upload finalization failed; please retry.",\n${`  unrelated: "${'x'.repeat(400)}",\n`.repeat(50)}};\n`,
+  }, async root => {
+    const text = await getContext({rootDir:root, query:'uploadFinalizationFailed', maxTokens:1700, connected:false});
+    assert.match(text, /Upload finalization failed; please retry/);
+    assert.ok(Buffer.byteLength(text) <= 6800);
+  });
+});
+
+it('admits command schema evidence beyond the first literal caller', async () => {
+  await fixture({
+    ...Object.fromEntries(Array.from({length:6}, (_,i)=>[`client-${i}.ts`, 'export function upload() { return cmd("upload.begin", {filename:"file"}); }\n'])),
+    ...Object.fromEntries(Array.from({length:14}, (_,i)=>[`noise-${i}.ts`, 'export const label = "z.string filename schema validation";\n'])),
+    'services/application.ts': `export const commands = {\n${'  unrelated: {},\n'.repeat(500)}  "upload.begin": schema({filename: string().max(255)}),\n};\n`,
+  }, async root => {
+    const text = await getContext({rootDir:root, query:'upload.begin filename schema z.string validation', maxTokens:1500, connected:false, retrievalPreset:'keyword_only'});
+    assert.match(text, /"upload.begin": schema\(\{filename: string\(\).max\(255\)\}\)/);
+    assert.ok(Buffer.byteLength(text) <= 6000);
+  });
+});
 
 it('limits source-query report penalties to report paths, preserving data-backed implementations', async () => {
   const query = 'theme route implementation';

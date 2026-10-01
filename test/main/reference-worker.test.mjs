@@ -95,6 +95,21 @@ it("times out blocked compiler work without blocking the parent and recovers on 
   } finally { clearTimeout(timer); pool.close(); await rm(root, { recursive: true, force: true }); }
 });
 
+it("gives queued requests their own worker and deadline after an active timeout", async () => {
+  const root = await mkdtemp(join(tmpdir(), "contextpro-reference-queue-"));
+  const worker = join(root, "worker.mjs");
+  await writeFile(worker, "process.on('message', m => { if (m.input.symbol === 'blocked') { while (true) {} } process.send({id:m.id,result:{references:[],warnings:[]}}); });\n");
+  const pool = new TypeScriptReferenceProcess({worker:pathToFileURL(worker), timeoutMs:2000});
+  const input = {rootDir:root, files:[], file:join(root,'value.ts'), line:1, symbol:'blocked'};
+  try {
+    const results = await Promise.allSettled([pool.query(input), pool.query({...input, symbol:'value'})]);
+    assert.equal(results[0].status, 'rejected');
+    assert.match(results[0].reason.message, /time limit/);
+    assert.equal(results[1].status, 'fulfilled');
+    assert.deepEqual(results[1].value.references, []);
+  } finally {pool.close(); await rm(root,{recursive:true,force:true});}
+});
+
 it("contains a compiler process crash and rejects queued requests", async () => {
   const root = await mkdtemp(join(tmpdir(), "contextpro-reference-crash-"));
   const worker = join(root, "worker.mjs");

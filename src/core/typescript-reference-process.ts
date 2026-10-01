@@ -25,12 +25,13 @@ export class TypeScriptReferenceProcess {
 
   close(): void { this.fail(new Error("Reference worker closed.")); }
 
-  private fail(error: Error): void {
+  private fail(error: Error, rejectQueued = true): void {
     clearTimeout(this.deadline); clearTimeout(this.idle);
     const child = this.child; this.child = undefined;
     child?.kill("SIGKILL");
     this.active?.reject(error); this.active = undefined;
-    for (const pending of this.queue.splice(0)) pending.reject(error);
+    if (rejectQueued) for (const pending of this.queue.splice(0)) pending.reject(error);
+    else this.dispatch();
   }
 
   private dispatch(): void {
@@ -79,7 +80,9 @@ export class TypeScriptReferenceProcess {
       const pending = this.queue.shift()!; this.active = pending;
       const child = this.child;
       child.ref(); child.channel?.ref();
-      this.deadline = setTimeout(() => this.fail(new Error("Reference analysis exceeded its time limit; narrow the workspace or retry.")), this.options.timeoutMs ?? 30_000);
+      // Waiting requests have not used their analysis budget. Restart the worker
+      // for them rather than reporting the active request's timeout as theirs.
+      this.deadline = setTimeout(() => this.fail(new Error("Reference analysis exceeded its time limit; narrow the workspace or retry."), false), this.options.timeoutMs ?? 30_000);
       child.send({ id: pending.id, input: pending.input }, error => { if (error && this.child === child) this.fail(error); });
     } catch (error) { this.fail(error instanceof Error ? error : new Error(String(error))); }
   }

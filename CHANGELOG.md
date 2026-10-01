@@ -4,7 +4,10 @@ All notable changes to this project are recorded here. The project follows [Sema
 
 ## [Unreleased]
 
-- Natural-language `context` discovery considers twelve ranked files before source packing, retaining lower-ranked implementations behind incidental callers. Exact identifiers keep the four-file fast path; response budgets are unchanged.
+- Landing/dashboard pin Next.js 16.3.6 (and matching landing lint config), with refreshed browser-mapping locks, clearing the production dependency advisories surfaced by CI.
+- Literal discovery retains up to eight source candidates per key and matching identifier windows after named definitions, recovering command schemas and object-property values behind incidental callers. Unambiguous indexed path suffixes return bounded whole-file source when it fits. Source/task/brief caches invalidate older packets. See the [October 1 replay](docs/benchmarks/2026-10-01-log-fixes.json) for evidence and remaining limits.
+- Reference timeouts restart the worker for queued requests instead of rejecting unstarted work with the active request's timeout; crash and shutdown rejection remain unchanged.
+- Natural-language `context` discovery considers twelve ranked files before source packing, retaining lower-ranked implementations behind incidental callers. Exact identifiers skip embedding lookup; response budgets are unchanged.
 - Explicit bounded line targets read large text bundles with a 64 MiB scan cap, byte budgets and snapshot-change checks; whole-file and symbol reads retain the 2 MB cap.
 - Discovery excludes recognized generated Graft wiring-card directories while preserving authored graft modules and explicit cache reads.
 

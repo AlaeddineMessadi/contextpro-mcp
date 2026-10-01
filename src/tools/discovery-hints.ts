@@ -52,7 +52,9 @@ export function mentionedFiles(root: string, query: string, files: Array<Pick<Fi
   }
   return [...new Set([...tokens].flatMap(token => {
     const path = token.startsWith("/") ? relative(root, token) : token;
-    const match = paths.has(path) ? path : names.get(token);
+    const suffixes = !token.startsWith("/") && token.includes("/") && !token.split("/").includes("..")
+      ? files.filter(file => file.path.endsWith(`/${token}`)) : [];
+    const match = paths.has(path) ? path : suffixes.length === 1 ? suffixes[0].path : names.get(token);
     return match ? [match] : [];
   }))];
 }
