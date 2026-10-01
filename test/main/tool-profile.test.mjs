@@ -83,6 +83,8 @@ describe('workflow profile budget', () => {
             const discovered = await client.callTool({ name: 'discover_tools', arguments: { root: process.cwd(), query: ` ${name.toUpperCase()} `, limit: 1 } });
             assert.equal(JSON.parse(discovered.content[0].text).matches[0].name, name);
           }
+          const statusQuery = await client.callTool({name:'discover_tools', arguments:{root:process.cwd(), query:'status index freshness runtime identity performance tool stats', limit:2}});
+          assert.equal(JSON.parse(statusQuery.content[0].text).matches[0].name, 'status');
           const enabled = await client.callTool({ name: 'discover_tools', arguments: { enable: ['status'] } });
           assert.equal(enabled.isError, undefined);
           assert.deepEqual((await client.listTools()).tools.map(t => t.name).sort(), ['context', 'discover_tools', 'exact_references', 'status']);

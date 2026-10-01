@@ -23,6 +23,91 @@ async function fixture(files, run) {
   } finally { closeDB(root); await rm(root, { recursive: true, force: true }); }
 }
 
+it('keeps case-distinct schema and value definitions in a multi-name query', async () => {
+  await fixture({
+    'core/index.ts': `export const orderSchema = z.object({\n${'  filler: z.string(),\n'.repeat(80)}  items: z.array(z.object({ regionCodes: z.array(z.string()) })),\n});\nexport type NormalizedOrder = z.infer<typeof orderSchema>;\n`,
+    'services/normalize.ts': 'export function normalizedOrder(input) { return input; }\n',
+  }, async root => {
+    const text = await getContext({rootDir:root, query:'NormalizedOrder normalizedOrder', maxTokens:3600, connected:false, retrievalPreset:'keyword_only'});
+    assert.match(text, /export const orderSchema = z.object/);
+    assert.match(text, /items: z.array/);
+    assert.match(text, /export function normalizedOrder/);
+  });
+});
+
+it('does not read a file mentioned only in an exclusion or use that read as a positive request', async () => {
+  await fixture({
+    'package.json': '{"scripts":{"build":"site-build"}}\n',
+    'LAB-PROJECTS.md': '# Project roadmap\nUnwanted roadmap-marker and package build commands.\n',
+    'docs/AGENTS.md': '# Primary instructions\nprimary-agent-marker\n',
+    'other/AGENTS.md': '# Other instructions\nother-agent-marker\n',
+    'content/blog/post.md': '# Homepage deployment configuration\nblog-post-marker\n',
+  }, async root => {
+    for (const query of ['Read package.json. Do not read LAB-PROJECTS.md.', 'Read package.json; ignore LAB-PROJECTS.md']) {
+      const text = await getContext({rootDir:root, query, maxTokens:512, connected:false});
+      assert.match(text, /site-build/);
+      assert.doesNotMatch(text, /roadmap-marker|LAB-PROJECTS.md:\d/);
+    }
+    assert.match(await getContext({rootDir:root,query:'Read LAB-PROJECTS.md',maxTokens:512}), /roadmap-marker/);
+    const peer = await getContext({rootDir:root,query:'Read docs/AGENTS.md; ignore other/AGENTS.md',maxTokens:512});
+    assert.match(peer,/primary-agent-marker/); assert.doesNotMatch(peer,/other-agent-marker/);
+    const focused = await getContext({rootDir:root,query:'Find package.json and deployment configuration. Do not read blog posts or LAB-PROJECTS.md.',maxTokens:512});
+    assert.match(focused,/site-build/); assert.doesNotMatch(focused,/blog-post-marker|roadmap-marker/);
+  });
+});
+
+it('orients a business website around its homepage rather than only marketing documents', async () => {
+  const query = 'Orient me to this business website: AGENTS.md instructions, homepage and service/blog content, contact and SEO metadata. Identify actual files and include source evidence.';
+  await fixture({
+    'next-app/app/(site)/layout.tsx': 'export default function Layout({children}) { return <main>{children}</main>; }\n',
+    'next-app/app/(site)/page.tsx': 'export default function Home() { return <h1>homepage-offer-marker</h1>; }\n',
+    'AGENTS.md': '# Business website instructions\nInspect homepage services contact SEO metadata.\n',
+    ...Object.fromEntries(Array.from({length:6},(_,i)=>[`blog/post-${i}.md`, `# Business website homepage services contact SEO metadata\n${(query+'\n').repeat(80)}`])),
+  }, async root => {
+    for (const connected of [false,true]) {
+      const text = await getContext({rootDir:root,query,maxTokens:1500,connected,retrievalPreset:'keyword_only'});
+      assert.match(text, /homepage-offer-marker/);
+      const blogBytes = [...text.matchAll(/^blog\/[^\n]+:\d+-\d+\n([^]*?)(?=\n\n|$)/gm)].reduce((sum,match)=>sum+Buffer.byteLength(match[0]),0);
+      assert.ok(blogBytes <= 1800, `unrequested blog source consumed ${blogBytes} bytes`);
+      assert.ok(Buffer.byteLength(text)<=6000);
+    }
+  });
+});
+
+it('finds an explicitly named runbook without requiring its extension', async () => {
+  await fixture({
+    'docs/COMMERCIAL_RELEASE.md': '# Commercial release\n## Client journey\nBrowser recovery runbook-marker.\n',
+    'src/auth.ts': 'export const commercial_release = "client journey browser recovery";\n',
+  }, async root => {
+    const text = await getContext({rootDir:root,query:'COMMERCIAL_RELEASE client journey discovery/browser recovery follow-up',maxTokens:512,connected:false});
+    assert.match(text, /docs\/COMMERCIAL_RELEASE.md:/);
+    assert.match(text, /runbook-marker/);
+  });
+});
+
+it('retains a late loader predicate when a common literal fills the first candidate lane', async () => {
+  await fixture({
+    ...Object.fromEntries(Array.from({length:45},(_,i)=>[`src/history-${i}.ts`,'export const history = "created_at";\n'])),
+    'services/application.ts': `export async function workspace() {\n${'  const timestamp = record.created_at;\n'.repeat(100)}  // load documents for this workspace\n  const documents = sql('select documents from workspace order by created_at desc limit 25');\n  return documents;\n}\n`,
+  }, async root => {
+    const text = await getContext({rootDir:root,query:'workspace documents order by created_at limit loadWorkspace',maxTokens:1500,connected:false,retrievalPreset:'keyword_only'});
+    assert.match(text, /select documents from workspace order by created_at desc limit 25/);
+  });
+});
+
+it('returns browser suite source for a coverage request despite incidental application prose', async () => {
+  const query = 'Browser end to end coverage landing registration conversion settings billing invoices company profile document upload review discovery outcome collaboration export';
+  await fixture({
+    ...Object.fromEntries(Array.from({length:16},(_,i)=>[`src/client-${i}.ts`,`export const label = '${query}';\n`])),
+    'tests/e2e/billing.spec.ts': "import {test,expect} from '@playwright/test';\ntest('billing invoices', async ({page}) => { await page.goto('/billing'); await expect(page.getByText('invoice')).toBeVisible(); });\n",
+    'tests/e2e/upload.spec.ts': "import {test,expect} from '@playwright/test';\ntest('document upload review', async ({page}) => { await page.goto('/documents'); await expect(page.getByText('review')).toBeVisible(); });\n",
+  }, async root => {
+    const text = await getContext({rootDir:root,query,maxTokens:2600,connected:false,retrievalPreset:'keyword_only'});
+    assert.match(text, /tests\/e2e\/(?:billing|upload).spec.ts:/);
+    assert.match(text, /test\('/);
+  });
+});
+
 it('reads an unambiguous indexed path suffix even when the body has no path terms', async () => {
   const files = [{path:'apps/web/src/app/api/commands/route.ts'}, {path:'apps/web/src/app/api/other/route.ts'}];
   assert.deepEqual(mentionedFiles('/repo', 'api/commands/route.ts', files), [files[0].path]);

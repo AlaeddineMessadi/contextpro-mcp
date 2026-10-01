@@ -164,7 +164,7 @@ export function extractIdentifierHints(query: string): string[] {
     if (token.length < 3 && rawTokens.length !== 1 && !marked.has(token)) continue;
     const looksIdentifier = /[A-Z_$]/.test(token) || marked.has(token) || rawTokens.length === 1 || queryTrimmed === token;
     if (!looksIdentifier) continue;
-    unique.set(token.toLowerCase(), token);
+    unique.set(token, token);
   }
   return [...unique.values()];
 }

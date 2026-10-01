@@ -3,7 +3,7 @@ import { basename } from "node:path";
 import { searchTerms } from "../core/embeddings.js";
 import { resolveProjectPath } from "../core/path-guard.js";
 import { walkDirectory } from "../core/walker.js";
-import { isOrientationQuery, isUiOrientationQuery, mentionedFiles } from "./discovery-hints.js";
+import { isOrientationQuery, isUiOrientationQuery, mentionedFiles, discoveryPathWeight, positiveDiscoveryQuery } from "./discovery-hints.js";
 
 /** Markdown is outside the structural index. Only document-oriented requests
  * pay for this bounded filename/heading lookup; ordinary code search is unchanged. */
@@ -11,6 +11,7 @@ export function wantsDocuments(query: string): boolean {
   const docsIntent = /\b(?:product|project|repository|api|setup|developer|user|security|compliance)\s+docs\b(?![/-]|\.[\w])|\b(?:read|find|open|show|locate|search|review|inspect)\s+(?:(?:the|relevant|existing)\s+)*docs\b(?![/-]|\.[\w])|\bdocs\s+(?:about|for|covering|describing)\b/i.test(query);
   return (isOrientationQuery(query) && !isUiOrientationQuery(query))
     || docsIntent
+    || /\b[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+\b/.test(query)
     || /\b(?:readme|roadmap|handoff|readiness|documentation)\b|\.(?:md|mdx|rst|txt)\b|\b(?:project|repository)\s+(?:instructions|status)\b|\b(?:status|qa|audit)\s+(?:documents?|reports?)\b|\bagent\s+brief\b/i.test(query);
 }
 
@@ -18,9 +19,9 @@ export async function discoverDocuments(rootDir: string, query: string): Promise
   files: string[]; mentioned: string[]; limited: boolean;
 }> {
   const documents = (await walkDirectory({ rootDir })).filter(entry =>
-    !entry.isDirectory && /\.(?:md|mdx|rst|txt)$/i.test(entry.relativePath));
+    !entry.isDirectory && /\.(?:md|mdx|rst|txt)$/i.test(entry.relativePath) && discoveryPathWeight(query, entry.relativePath) > 0);
   const mentioned = mentionedFiles(rootDir, query, documents.map(entry => ({ path: entry.relativePath })));
-  const terms = new Set(searchTerms(query));
+  const terms = new Set(searchTerms(positiveDiscoveryQuery(query)));
   const overlap = (text: string): number => [...new Set(searchTerms(text))].filter(term => terms.has(term)).length;
   const statusRequest = /\b(?:status|handoff|next steps|blockers|readiness|roadmap)\b/i.test(query);
   const pathScore = (path: string): number => overlap(path) * 4

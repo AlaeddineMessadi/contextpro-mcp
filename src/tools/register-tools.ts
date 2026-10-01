@@ -179,8 +179,9 @@ export function registerTools(
     }
     refreshCatalogCost();
     const normalizedQuery = (query ?? "").trim().toLowerCase();
+    const names = new Set(normalizedQuery.match(/\w+/g) ?? []);
     const terms = normalizedQuery.split(/[\s_]+/).filter(Boolean);
-    const found = [...catalog.values()].map(tool => ({ tool, score: (tool.name === normalizedQuery ? 100 : 0)
+    const found = [...catalog.values()].map(tool => ({ tool, score: (names.has(tool.name) ? 100 : 0)
       + terms.reduce((n, term) => n + (tool.name.includes(term) ? 3 : 0) + (tool.description.toLowerCase().includes(term) ? 1 : 0), 0) }))
       .filter(({ score }) => !terms.length || score > 0).sort((a, b) => b.score - a.score || a.tool.name.localeCompare(b.tool.name))
       .slice(0, limit ?? 5).map(({ tool }) => ({ name: tool.name, description: tool.description.slice(0, 180), enabled: active.has(tool.name) }));

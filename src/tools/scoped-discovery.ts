@@ -2,13 +2,12 @@
 // These are filename/text hints, never compiler-resolved references.
 import type { ContextPlusDB } from "../core/db.js";
 import { searchTerms } from "../core/embeddings.js";
-import { discoveryPathWeight } from "./discovery-hints.js";
+import { discoveryPathWeight, SCOPE_CLAUSE_BOUNDARY } from "./discovery-hints.js";
 
 const GENERIC = new Set("find show read locate implementation function code source file files path paths usage usages props surrounding semantics pages page src app apps index components component lib packages public private main exact return relevant control controls".split(" "));
 // Exclusions apply to their clause regardless of intervening modifiers, and can
 // cover a list of paths. Explicit positive clauses reset them. Match prose words
 // at whitespace boundaries so directory names like apps/outside are not commands.
-const SCOPE_CLAUSE_BOUNDARY = /;|[.!?](?=\s|$)|(?:^|\s)(?:but|however|instead)(?=\s|$)|(?:,\s*|\s+(?:and|then)\s+)(?=(?:include|including|show|find|read|locate|search|inspect|in|under|inside|within)\b)/i;
 const EXCLUDED_SCOPE_CLAUSE = /(?:^|[\s(])(?:exclude|excluding|ignore|ignoring|not\s+(?:in|under|inside|within))(?=\s|:|$)/i;
 // Bare "outside" and "without" must introduce a directory mention (possibly
 // earlier in a path list), not describe a click-outside handler or routes without
@@ -20,6 +19,7 @@ export interface ScopedSourceCandidate { file: string; terms: string[]; }
 
 export function scopedSourceCandidates(db: ContextPlusDB, query: string, hints: string[]): ScopedSourceCandidate[] {
   const indexedFiles = db.getAllFiles().filter(file => discoveryPathWeight(query, file.path) >= 1);
+  const browserTests = /\b(?:browser|playwright|e2e|end[ -]to[ -]end)\b/i.test(query) && /\b(?:tests?|testing|coverage|suite|journey)\b/i.test(query);
   const excludedScopes: string[] = [];
   const maskedRanges: Array<{start: number; end: number}> = [];
   // Only existing, repository-relative directory prefixes qualify. Never turn
@@ -60,7 +60,7 @@ export function scopedSourceCandidates(db: ContextPlusDB, query: string, hints: 
   // acronym compounds and underscore keys can anchor local text candidates.
   const identifiers = [...new Set(hints.filter(hint => /[a-z][A-Z]|[A-Z]{2}[a-z]|[_$]/.test(hint)
     && positiveText.includes(hint.toLowerCase())))].slice(0, 8);
-  if (!scopes.length && !identifiers.length) return [];
+  if (!scopes.length && !identifiers.length && !browserTests) return [];
   const hits = new Map<string, Set<string>>();
   for (const identifier of identifiers) for (const hit of db.searchFileText(identifier, 64, true)) {
     const names = hits.get(hit.path) ?? new Set<string>();
@@ -73,7 +73,7 @@ export function scopedSourceCandidates(db: ContextPlusDB, query: string, hints: 
   ]));
   return paths.map(path => {
     const matched = [...topics].filter(term => path.words.has(term));
-    const scoped = scopes.some(scope => path.file.startsWith(scope));
+    const scoped = scopes.some(scope => path.file.startsWith(scope)) || (browserTests && /(?:^|\/)(?:e2e|browser|playwright)\/.*\.(?:spec|test)\.[cm]?[jt]sx?$/i.test(path.file));
     const names = hits.get(path.file);
     // Require corroborating path topics for identifier hits. This avoids
     // injecting every unrelated occurrence of a common error or UI component.

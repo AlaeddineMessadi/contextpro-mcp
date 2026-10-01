@@ -4,6 +4,13 @@ import { searchTerms } from "../core/embeddings.js";
 import { isTestFile } from "./retrieval-helpers.js";
 
 const BACKEND_DIRECTORY = /(?:^|\/)(?:api|backend|server|services?|workers?|scripts?)(?:\/|$)/i;
+export const SCOPE_CLAUSE_BOUNDARY = /;|[.!?](?=\s|$)|(?:^|\s)(?:but|however|instead)(?=\s|$)|(?:,\s*|\s+(?:and|then)\s+)(?=(?:include|including|show|find|read|locate|search|inspect|in|under|inside|within)\b)/i;
+const EXCLUDED_FILE_CLAUSE = /(?:^|[\s(])(?:exclude|excluding|ignore|ignoring|do\s+not\s+(?:read|include)|don't\s+(?:read|include))(?=\s|:|$)/i;
+
+/** A negative read is neither a requested file nor an instruction to read whole files. */
+export function positiveDiscoveryQuery(query: string): string {
+  return query.split(SCOPE_CLAUSE_BOUNDARY).map(clause => clause.split(EXCLUDED_FILE_CLAUSE)[0]).join(" ");
+}
 
 /** Keep explicit phrases and compound keys intact alongside prose keywords. */
 export function queryLiterals(query: string): string[] {
@@ -14,6 +21,16 @@ export function queryLiterals(query: string): string[] {
 
 /** Secondary evidence stays available, but must not crowd out implementations. */
 export function discoveryPathWeight(query: string, path: string): number {
+  if (/\.(?:md|mdx|rst|txt)$/i.test(path) && /(?:^|\/)(?:blog|posts)\//i.test(path)
+    && query.split(SCOPE_CLAUSE_BOUNDARY).some(clause => {
+      const negative = EXCLUDED_FILE_CLAUSE.exec(clause);
+      return negative && /\bblog\s+(?:posts?|articles?)\b/i.test(clause.slice(negative.index));
+    })) return 0;
+  const mention = [...query.matchAll(/[\w@./-]+\.[A-Za-z][\w]*(?::\d+(?:-\d+)?)?/g)].filter(match => {
+    const token = match[0].replace(/:\d+(?:-\d+)?$/, "").replace(/^\.\//, "");
+    return !token.startsWith("/") && (token === path || (!token.includes("/") && token === basename(path)) || path.endsWith(`/${token}`));
+  }).at(-1);
+  if (mention && EXCLUDED_FILE_CLAUSE.test(query.slice(0, mention.index).split(SCOPE_CLAUSE_BOUNDARY).at(-1) ?? "")) return 0;
   if (query.toLowerCase().includes(path.toLowerCase())) return 1;
   if (isLockfile(path) && !wantsLockfile(query)) return .15;
   if ((isTestFile(path) || /(?:^|\/)(?:tests?|__tests__|fixtures?)(?:\/|$)/i.test(path))
@@ -42,8 +59,12 @@ export function facetPathWeight(query: string, term: string, path: string): numb
 
 /** Hints select only known indexed paths; query text never becomes an unchecked read. */
 export function mentionedFiles(root: string, query: string, files: Array<Pick<FileRow, "path">>): string[] {
-  const tokens = new Set((query.match(/[\w@./-]+\.[A-Za-z][\w]*(?::\d+(?:-\d+)?)?/g) ?? [])
+  const positive = positiveDiscoveryQuery(query);
+  const tokens = new Set((positive.match(/[\w@./-]+\.[A-Za-z][\w]*(?::\d+(?:-\d+)?)?/g) ?? [])
     .map(token => token.replace(/:\d+(?:-\d+)?$/, "").replace(/^\.\//, "")));
+  // Uppercase runbook stems also name real documents; never invent a read path.
+  const stems = new Set(positive.match(/\b[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+\b/g) ?? []);
+  for (const file of files) if (/\.(?:md|mdx|rst|txt)$/i.test(file.path) && stems.has(basename(file.path).replace(/\.[^.]+$/, ""))) tokens.add(file.path);
   const paths = new Set(files.map(file => file.path));
   const names = new Map<string, string | null>();
   for (const file of files) {
@@ -61,7 +82,7 @@ export function mentionedFiles(root: string, query: string, files: Array<Pick<Fi
 
 /** Require both a UI scope and a broad navigation/orientation request. */
 export function isUiOrientationQuery(query: string): boolean {
-  const uiScope = /\b(?:ui|ux|frontend|front.end|user.facing|web app)\b/i.test(query);
+  const uiScope = /\b(?:ui|ux|frontend|front.end|user.facing|web app|website)\b/i.test(query);
   // Routes/navigation/audit alone also occur in narrow coding requests. Only
   // explicit overview language or a request to inventory product surfaces
   // authorizes structural previews ahead of the ranked implementation.

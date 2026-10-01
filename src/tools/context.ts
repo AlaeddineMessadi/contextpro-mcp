@@ -13,7 +13,7 @@ import { getDB } from "../core/db.js";
 import { walkDirectory } from "../core/walker.js";
 import { readBoundedRanges, type BoundedRange } from "../core/bounded-source.js";
 import { extractIdentifierHints, unifiedSearchData } from "./search.js";
-import { mentionedFiles, documentTopicFiles, isUiOrientationQuery, isOrientationQuery, orientationFiles, isLockfile, wantsLockfile, queryLiterals, discoveryPathWeight } from "./discovery-hints.js";
+import { mentionedFiles, documentTopicFiles, isUiOrientationQuery, isOrientationQuery, orientationFiles, isLockfile, wantsLockfile, queryLiterals, discoveryPathWeight, positiveDiscoveryQuery } from "./discovery-hints.js";
 import { scopedSourceCandidates } from "./scoped-discovery.js";
 import { discoverDocuments, wantsDocuments } from "./discovery-documents.js";
 import { connectedRetrievalEnabled, retrieveEvidence, type EvidenceCandidate } from "./evidence-retrieval.js";
@@ -89,12 +89,13 @@ export async function collectSourceEvidence(options: ContextOptions): Promise<So
   const orientation = options.retrievalPreset !== "semantic_only" && isOrientationQuery(query);
   // File mentions within an overview supplement the requested architecture;
   // they must not switch discovery into a restricted whole-file read.
-  const readRequestedFiles = !orientation && (/\b(?:read|show|open|whole|entire|full)\b/i.test(query)
+  const readRequestedFiles = !orientation && (/\b(?:read|show|open|whole|entire|full)\b/i.test(positiveDiscoveryQuery(query))
     || /^[\w@./-]+\.[A-Za-z][\w]*(?::\d+(?:-\d+)?)?$/.test(query));
   const overviewFiles = new Set<string>();
   const documentFiles = new Set<string>();
   const topicTerms = new Map<string, string[]>();
   const scopedFiles = new Set<string>();
+  const coverageFiles = new Set<string>();
   let connectedCandidates: EvidenceCandidate[] = [];
   const connected = options.connected ?? connectedRetrievalEnabled();
   if (!targets.length) {
@@ -140,10 +141,20 @@ export async function collectSourceEvidence(options: ContextOptions): Promise<So
     // Multi-key questions need evidence for each literal, even when one key's
     // many callers fill the primary result window before another key's source.
     const literalFiles = new Set<string>();
+    const coverageTerms = [...new Set(searchTerms(query))];
     for (const literal of options.retrievalPreset === "semantic_only" ? [] : exact ? [query] : queryLiterals(query)) {
       const matches = db.searchFileText(literal, 40, true)
         .sort((a, b) => discoveryPathWeight(query, b.path) - discoveryPathWeight(query, a.path) || a.score - b.score).slice(0, 8);
       for (const match of matches) { literalFiles.add(match.path); filePriors.set(match.path, 1); }
+    }
+    // Common literals can fill the OR lane with short incidental files. Reserve
+    // bounded candidates containing every normalized term without displacing
+    // explicit quoted literals from the front of the candidate lane.
+    if (options.retrievalPreset !== "semantic_only" && coverageTerms.length > 1 && coverageTerms.length <= 12) {
+      for (const match of db.searchFileText(coverageTerms.join(" "), 8, false, true)) {
+        if (discoveryPathWeight(query, match.path) < 1) continue;
+        literalFiles.add(match.path); coverageFiles.add(match.path); filePriors.set(match.path, 1);
+      }
     }
     targets = [...literalFiles].map(file => ({file})).concat(targets.filter(target => !literalFiles.has(target.file)));
     const files = new Map(indexed.map(file => [file.id, file.path]));
@@ -195,6 +206,7 @@ export async function collectSourceEvidence(options: ContextOptions): Promise<So
     const priority = new Set([...requestedFiles, ...documentFiles, ...overviewFiles]);
     targets = [...priority].map(file => ({ file })).concat(targets.filter(target => !priority.has(target.file)));
     if (readRequestedFiles && requestedFiles.size) targets = targets.filter(target => requestedFiles.has(target.file));
+    targets = targets.filter(target => discoveryPathWeight(query, target.file) > 0);
     if (!wantsLockfile(query) && targets.some(target => !isLockfile(target.file))) {
       targets = targets.filter(target => !isLockfile(target.file) || requestedFiles.has(target.file));
     }
@@ -300,7 +312,7 @@ export async function collectSourceEvidence(options: ContextOptions): Promise<So
     if (target.symbol || target.start !== undefined || target.end !== undefined || !query) {
       omitted.push(`${key}: over budget; request narrower targets or raise max_tokens`); continue;
     }
-    if (readRequestedFiles && requestedFiles.has(file) && bytes(render(excerpt)) + 2 <= available) {
+    if ((readRequestedFiles || lines.length <= 40) && requestedFiles.has(file) && bytes(render(excerpt)) + 2 <= available) {
       priorityParts.push(excerpt);
     } else if (overviewFiles.has(file) || documentFiles.has(file)) {
       // Bound each preview in bytes, not lines: one Markdown table row can be
@@ -348,18 +360,32 @@ export async function collectSourceEvidence(options: ContextOptions): Promise<So
     // File ranking can now find literal text anywhere in full-source FTS.
     // Keep the actual matching lines, not just other terms from the same file.
     for (const literal of literals.filter(Boolean)) {
-      let hits = 0;
+      const matches: Array<{part: Excerpt; score: number}> = [];
       for (let line = 0; line < lines.length; line++) {
         if (!lines[line].normalize("NFC").toLowerCase().includes(literal)) continue;
-        if (++hits > 3) { omitted.push(`${file}: additional literal matches omitted`); break; }
         const from = Math.max(0, line - 2), to = Math.min(lines.length, line + 4);
-        const parts = /^[A-Za-z_$][\w$]*$/.test(literal) ? identifierParts : literalParts;
-        parts.push({ file, start: from + 1, end: to, text: lines.slice(from, to).join("\n") });
+        const part = { file, start: from + 1, end: to, text: lines.slice(from, to).join("\n") };
+        const words = new Set(searchTerms(part.text));
+        matches.push({part, score:[...terms].filter(term=>words.has(term)).length});
       }
+      matches.sort((a,b)=>b.score-a.score || a.part.start-b.part.start);
+      const parts = /^[A-Za-z_$][\w$]*$/.test(literal) ? identifierParts : literalParts;
+      parts.push(...matches.slice(0,3).map(match=>match.part));
+      if (matches.length > 3) omitted.push(`${file}: additional literal matches omitted`);
+    }
+    const syntax = /\.[cm]?[jt]sx?$/i.test(file) ? ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true) : undefined;
+    const localNames = new Set(namedSymbols);
+    // A type inferred from a local runtime schema needs that schema as evidence.
+    for (const statement of syntax?.statements ?? []) if (ts.isTypeAliasDeclaration(statement) && localNames.has(statement.name.text)) {
+      const visit = (node: ts.Node): void => {
+        if (ts.isTypeQueryNode(node) && ts.isIdentifier(node.exprName)) localNames.add(node.exprName.text);
+        ts.forEachChild(node, visit);
+      };
+      visit(statement.type);
     }
     if (namedSymbols.size && discoveryPathWeight(query, file) >= 1) {
       for (const symbol of flattenSymbols((await analyze()).symbols)) {
-        if (!namedSymbols.has(symbol.name)) continue;
+        if (!localNames.has(symbol.name)) continue;
         const definition = { file, start: symbol.line, end: symbol.endLine, text: lines.slice(symbol.line - 1, symbol.endLine).join("\n") };
         // Keep complete bodies when possible. Large bodies retain their entry
         // point and can contribute further query-relevant interior windows.
@@ -374,7 +400,6 @@ export async function collectSourceEvidence(options: ContextOptions): Promise<So
     // consume the budget ahead of a decisive range in another file.
     // Compiler statements keep locals inside anonymous test/router callbacks
     // from masquerading as complete top-level declarations.
-    const syntax = /\.[cm]?[jt]sx?$/i.test(file) ? ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true) : undefined;
     const spans = syntax ? syntax.statements.filter(s => !ts.isImportDeclaration(s)).map(s => ({
       line: syntax.getLineAndCharacterOfPosition(s.getStart(syntax)).line + 1,
       endLine: syntax.getLineAndCharacterOfPosition(s.end).line + 1,
@@ -409,13 +434,19 @@ export async function collectSourceEvidence(options: ContextOptions): Promise<So
     }
     omitted.push(`${file}: partial; unreturned lines omitted`);
   }
-  const documentLimit = mixedDocuments ? Math.floor(limit * .3) : limit;
+  const documentLimit = mixedDocuments || isUiOrientationQuery(query) ? Math.floor(limit * .3) : limit;
+  // Keep quoted/compound keys ahead of generic literals, then prefer windows
+  // covering the rest of the question over the first incidental occurrence.
+  const literalRank = (part: Excerpt) => literals.findIndex(literal => part.text.normalize("NFC").toLowerCase().includes(literal));
+  const coverage = (part: Excerpt) => [...new Set(searchTerms(part.text))].filter(term => terms.has(term)).length;
+  literalParts.sort((a,b)=>literalRank(a)-literalRank(b) || coverage(b)-coverage(a));
+  identifierParts.sort((a,b)=>Number(coverageFiles.has(b.file))-Number(coverageFiles.has(a.file)) || coverage(b)-coverage(a));
   let documentBytes = 0;
   // Topic/search/graph candidates need the same allowance as heading previews.
   const isDocument = (part: Excerpt) => (documentFiles.has(part.file) || /\.(?:md|mdx|rst|txt)$/i.test(part.file))
     && !requestedFiles.has(part.file);
   // Preserve the existing exact-name priority before adding scoped usage windows.
-  for (const definition of [...priorityParts, ...literalParts, ...definitions, ...identifierParts, ...scopedParts]) {
+  for (const definition of [...priorityParts, ...definitions, ...literalParts, ...identifierParts, ...scopedParts]) {
     for (const part of uncoveredRanges(definition, candidates)) {
       const size = bytes(render(part)) + 2;
       if (size <= available && (!isDocument(part) || documentBytes + size <= documentLimit)) {
@@ -516,6 +547,6 @@ export async function collectSourceEvidence(options: ContextOptions): Promise<So
     !merged.length ? "No source fit or matched. Try exact file/line targets or native search." : ""].filter(Boolean).join("\n\n");
   return { text, ranges: merged, hashes: Object.fromEntries([...snapshots].map(([file, source]) => [file, createHash("sha256").update(source).digest("hex")])),
     notices: [footer, summary].filter((value): value is string => !!value), complete: true,
-    settings: JSON.stringify({ version: 26, connected, preset: options.retrievalPreset ?? "balanced", rerank: process.env.CONTEXTPRO_CHAT_RERANK === "true",
+    settings: JSON.stringify({ version: 27, connected, preset: options.retrievalPreset ?? "balanced", rerank: process.env.CONTEXTPRO_CHAT_RERANK === "true",
       embedding: `${getProvider()}:${getEmbedModelName()}`, chat: options.targets?.length ? "unused" : await chatModelIdentity(options.rootDir) }) };
 }
