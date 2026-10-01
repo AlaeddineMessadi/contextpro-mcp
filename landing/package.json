@@ -24,13 +24,14 @@
     "react-dom": "19.3.0"
   },
   "devDependencies": {
+    "@eslint/compat": "^2.1.1",
     "@opennextjs/cloudflare": "^1.20.6",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "babel-plugin-react-compiler": "1.0.0",
-    "eslint": "^9",
+    "eslint": "^10",
     "eslint-config-next": "16.3.6",
     "tailwindcss": "^4",
     "typescript": "^5",
