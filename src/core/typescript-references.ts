@@ -9,7 +9,8 @@ export interface TypedReference {
 }
 interface Snapshot { stamp: string; text: string; snapshot: ts.IScriptSnapshot; version: number }
 interface Project {
-  signature: string; files: string[]; snapshots: Map<string, Snapshot>;
+  files: string[]; options: ts.CompilerOptions; references?: readonly ts.ProjectReference[];
+  snapshots: Map<string, Snapshot>;
   service: ts.LanguageService; touched: number;
 }
 const projects = new Map<string, Project>();
@@ -75,16 +76,14 @@ function snapshotFor(project: Project, file: string): Snapshot | undefined {
 }
 
 function getProject(key: string, root: string, files: string[], options: ts.CompilerOptions, references?: readonly ts.ProjectReference[]): { project: Project; reused: boolean } {
-  const signature = JSON.stringify({ options, references });
   let project = projects.get(key);
-  const reused = project?.signature === signature;
-  if (project && !reused) { project.service.dispose(); projects.delete(key); project = undefined; }
+  const reused = !!project;
   if (!project) {
     while (projects.size >= MAX_PROJECTS) {
       const oldest = [...projects.entries()].sort((a, b) => a[1].touched - b[1].touched)[0];
       oldest[1].service.dispose(); projects.delete(oldest[0]);
     }
-    const state = { signature, files, snapshots: new Map<string, Snapshot>(), touched: Date.now() } as Project;
+    const state = { files, options, references, snapshots: new Map<string, Snapshot>(), touched: Date.now() } as Project;
     // The source-redirect host hook is also used by tsserver; it lets source
     // workspaces resolve references before declaration outputs have been built.
     const host: ts.LanguageServiceHost & { useSourceOfProjectReferenceRedirect(): boolean } = {
@@ -92,8 +91,8 @@ function getProject(key: string, root: string, files: string[], options: ts.Comp
       getScriptVersion: file => String(snapshotFor(state, file)?.version ?? "missing"),
       getScriptSnapshot: file => snapshotFor(state, file)?.snapshot,
       getCurrentDirectory: () => root,
-      getCompilationSettings: () => options,
-      getProjectReferences: () => references,
+      getCompilationSettings: () => state.options,
+      getProjectReferences: () => state.references,
       useSourceOfProjectReferenceRedirect: () => true,
       getDefaultLibFileName: ts.getDefaultLibFilePath,
       fileExists: ts.sys.fileExists, readFile: ts.sys.readFile, readDirectory: ts.sys.readDirectory,
@@ -105,6 +104,8 @@ function getProject(key: string, root: string, files: string[], options: ts.Comp
     projects.set(key, project);
   }
   project.files = files;
+  project.options = options;
+  project.references = references;
   project.touched = Date.now();
   scheduleEviction();
   return { project, reused };
@@ -177,9 +178,9 @@ export function findTypeScriptReferences(input: { rootDir: string; files: string
       // nearest config. Never force every monorepo file into unrelated projects.
       files = [...new Set([...indexedFiles, ...parsed.fileNames.filter(file => allowed.has(file))])].sort();
     }
-    const { project, reused } = getProject(`${root}\0${config}`, root, files, options, references);
-    // The isolated worker exposes GC so disposed compiler graphs are reclaimed
-    // before allocating the next one. In-process callers use normal V8 GC.
+    const { project, reused } = getProject(root, root, files, options, references);
+    // Reclaim an evicted root before allocating its replacement. The isolated
+    // worker exposes GC; in-process callers use normal V8 GC.
     if (!reused) global.gc?.();
     projectCount++; if (reused) reusedProjects++;
     const program = project.service.getProgram();
@@ -264,13 +265,11 @@ export function findTypeScriptReferences(input: { rootDir: string; files: string
       }
     }
   }
-  // A returned stack frame releases its program/checker before the next config.
-  // Keeping several monorepo programs alive duplicates large dependency graphs.
+  // TypeScript refreshes options/bindings while reusing dependency syntax in one
+  // language service. Collect discarded graphs after its stack frame returns.
   for (const [config, indexedFiles] of configs) {
-    if (configs.size > 1) {
-      clearTypeScriptReferenceCache();
-    }
     checkProject(config, indexedFiles);
+    if (configs.size > 1) global.gc?.();
   }
   const unchecked = [...allowed].filter(file => !checkedFiles.has(file));
   if (unchecked.length) warnings.push(`${unchecked.length} indexed TS/JS files could not be checked: ${unchecked.slice(0, 5).map(file => relative(root, file).slice(0, 200)).join(", ")}${unchecked.length > 5 ? `; +${unchecked.length - 5} more` : ""}.`);

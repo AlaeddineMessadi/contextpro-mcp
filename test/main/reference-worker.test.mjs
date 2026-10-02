@@ -144,7 +144,7 @@ it("reports heap exhaustion without leaking worker stderr and recovers after a c
   } finally { pool.close(); await rm(root, { recursive: true, force: true }); }
 });
 
-it("checks every project after releasing the previous compiler and avoids stale results on repeat", async () => {
+it("reuses one compiler across configurations and avoids stale results on repeat", async () => {
   const root = await mkdtemp(join(tmpdir(), "contextpro-reference-projects-"));
   const pool = new TypeScriptReferenceProcess();
   try {
@@ -163,9 +163,11 @@ it("checks every project after releasing the previous compiler and avoids stale 
     assert.equal(first.counts.call,4);
     assert.equal(first.scope.checkedFiles,5);
     assert.equal(first.projectCount,5);
+    assert.equal(first.reusedProjects,4);
     await writeFile(files[1], 'import {value} from "../definition";\nvalue(); value();\n');
     const next=await pool.query(input);
     assert.equal(next.counts.call,5);
     assert.equal(next.scope.checkedFiles,5);
+    assert.equal(next.reusedProjects,5);
   } finally { pool.close(); await rm(root,{recursive:true,force:true}); }
 });
