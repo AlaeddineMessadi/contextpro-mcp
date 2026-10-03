@@ -385,6 +385,27 @@ it('discovers project status and readiness documents outside the structural inde
   });
 });
 
+it('finds topic documentation when a query asks where it is documented', async () => {
+  await fixture({
+    'docs/IMPLEMENTATION_STATUS.md': '# Acquisition preparation status\nThe opportunity tracker is ready for review.\n',
+    'docs/review.md': '# Acquisition review evidence\nTracker review passed.\n',
+    'src/replies.ts': 'export const prompt = "acquisition preparation opportunity tracker status current paragraph review evidence";\n',
+  }, async root => {
+    const query = 'Where is acquisition preparation and opportunity tracker status documented? Need current acquisition status paragraph and review evidence.';
+    for (const connected of [false, true]) {
+      const text = await getContext({rootDir:root,query,maxTokens:2200,connected,retrievalPreset:'keyword_only'});
+      assert.match(text, /docs\/IMPLEMENTATION_STATUS.md:/);
+      assert.match(text, /The opportunity tracker is ready for review/);
+      assert.match(text, /Tracker review passed/);
+      assert.ok(Buffer.byteLength(text) <= 8800);
+      const semantic = await getContext({rootDir:root,query,maxTokens:2200,connected,retrievalPreset:'semantic_only'});
+      assert.doesNotMatch(semantic, /docs\/IMPLEMENTATION_STATUS.md:/);
+    }
+    assert.equal(wantsDocuments('Find document update handler'), false);
+    assert.equal(wantsDocuments('Find documentedState in src/replies.ts'), false);
+  });
+});
+
 
 it('orients web UI queries to routes, navigation, styles and feature components in both selectors', async () => {
   await fixture({

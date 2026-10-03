@@ -547,6 +547,6 @@ export async function collectSourceEvidence(options: ContextOptions): Promise<So
     !merged.length ? "No source fit or matched. Try exact file/line targets or native search." : ""].filter(Boolean).join("\n\n");
   return { text, ranges: merged, hashes: Object.fromEntries([...snapshots].map(([file, source]) => [file, createHash("sha256").update(source).digest("hex")])),
     notices: [footer, summary].filter((value): value is string => !!value), complete: true,
-    settings: JSON.stringify({ version: 27, connected, preset: options.retrievalPreset ?? "balanced", rerank: process.env.CONTEXTPRO_CHAT_RERANK === "true",
+    settings: JSON.stringify({ version: 28, connected, preset: options.retrievalPreset ?? "balanced", rerank: process.env.CONTEXTPRO_CHAT_RERANK === "true",
       embedding: `${getProvider()}:${getEmbedModelName()}`, chat: options.targets?.length ? "unused" : await chatModelIdentity(options.rootDir) }) };
 }

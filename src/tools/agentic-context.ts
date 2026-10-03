@@ -97,7 +97,7 @@ async function taskPackArtifactKey(task: string, maxFiles: number, opts: TaskPac
   return createHash("sha256").update(JSON.stringify({
     task,
     connected,
-    retrievalVersion: 26,
+    retrievalVersion: 27,
     rerank: process.env.CONTEXTPRO_CHAT_RERANK === "true",
     chatModel: process.env.CONTEXTPRO_CHAT_RERANK === "true" ? await chatModelIdentity(opts.rootDir) : null,
     embeddingModel: `${getProvider()}:${getEmbedModelName()}`,

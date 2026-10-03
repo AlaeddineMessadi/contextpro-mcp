@@ -12,7 +12,7 @@ export function wantsDocuments(query: string): boolean {
   return (isOrientationQuery(query) && !isUiOrientationQuery(query))
     || docsIntent
     || /\b[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+\b/.test(query)
-    || /\b(?:readme|roadmap|handoff|readiness|documentation)\b|\.(?:md|mdx|rst|txt)\b|\b(?:project|repository)\s+(?:instructions|status)\b|\b(?:status|qa|audit)\s+(?:documents?|reports?)\b|\bagent\s+brief\b/i.test(query);
+    || /\b(?:readme|roadmap|handoff|readiness|document(?:ation|ed))\b|\.(?:md|mdx|rst|txt)\b|\b(?:project|repository)\s+(?:instructions|status)\b|\b(?:status|qa|audit)\s+(?:documents?|reports?)\b|\bagent\s+brief\b/i.test(query);
 }
 
 export async function discoverDocuments(rootDir: string, query: string): Promise<{
