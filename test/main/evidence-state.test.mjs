@@ -1,12 +1,59 @@
 import { it } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, writeFile, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, rm, symlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { bindEvidence, memoryEvidenceStatus, createValidationSnapshot, recordValidation, validationState, evidenceConfigurationFiles } from '../../build/core/evidence-state.js';
 import { getDB, closeDB } from '../../build/core/db.js';
 import { getProjectMemoryHits } from '../../build/tools/retrieval-helpers.js';
 import { recordTaskMemory } from '../../build/tools/agentic-context.js';
+import { readArtifact } from '../../build/core/artifacts.js';
+import { walkDirectory } from '../../build/core/walker.js';
+
+it('validation and memory include authored dot-configs while respecting ignore and symlink exclusions', async () => {
+  const root=await mkdtemp(join(tmpdir(),'cp-hidden-evidence-'));
+  try {
+    await writeFile(join(root,'source.ts'),'export const value = 1;\n');
+    await writeFile(join(root,'.gitignore'),'.env\n');
+    await writeFile(join(root,'.contextproignore'),'.private/\n');
+    await writeFile(join(root,'.eslintrc.json'),'{}');
+    await mkdir(join(root,'nested'));
+    await writeFile(join(root,'nested','.gitignore'),'.excludedrc\n');
+    await writeFile(join(root,'nested','.excludedrc'),'ignored');
+    await writeFile(join(root,'nested','.babelrc'),'{}');
+    await mkdir(join(root,'.config'));
+    await writeFile(join(root,'.config','checker.json'),'{}');
+    for (const directory of ['.private','.git','.contextpro','node_modules','dist']) {
+      await mkdir(join(root,directory));
+      await writeFile(join(root,directory,'.testrc'),'ignored');
+    }
+    await writeFile(join(root,'.env'),'ignored secret');
+    await symlink(join(root,'.eslintrc.json'),join(root,'.linkedrc'));
+    const snapshot=await createValidationSnapshot(root);
+    const artifact=await readArtifact(root,snapshot.id);
+    const paths=artifact.payload.state.files.map(item=>item.file);
+    for(const file of ['.eslintrc.json','nested/.babelrc','.config/checker.json'])assert.ok(paths.includes(file),file);
+    assert.ok(!paths.some(file=>/^(?:\.env|\.linkedrc|\.private\/|\.git\/|\.contextpro\/|node_modules\/|dist\/)|\.excludedrc$/.test(file)));
+    assert.ok(!(await walkDirectory({rootDir:root})).some(entry=>entry.relativePath==='.eslintrc.json'),'discovery keeps its original hidden-file policy');
+    const configs=await evidenceConfigurationFiles(root);
+    for(const file of ['.eslintrc.json','nested/.babelrc','.config/checker.json'])assert.ok(configs.includes(file),file);
+    const record=async()=>recordValidation({rootDir:root,snapshotId:(await createValidationSnapshot(root)).id,command:'eslint .',exitCode:0,runtime:process.version});
+    const initial=await record();
+    await writeFile(join(root,'.env'),'changed ignored secret');
+    assert.equal(await validationState(root,initial.artifact.id),'host-reported passed');
+    const memory=JSON.parse(await recordTaskMemory({rootDir:root,task:'lint',summary:'Checked source',files:['source.ts'],format:'json'}));
+    await writeFile(join(root,'.eslintrc.json'),'{"rules":{"semi":"error"}}');
+    assert.equal(await validationState(root,initial.artifact.id),'stale');
+    assert.equal((await recordValidation({rootDir:root,snapshotId:snapshot.id,command:'eslint .',exitCode:0,runtime:process.version})).applicable,false);
+    assert.equal(await memoryEvidenceStatus(root,(await getDB(root)).getMemoryNode(memory.taskMemoryId)),'stale');
+    const beforeAdd=await record();
+    await writeFile(join(root,'.prettierrc'),'{}');
+    assert.equal(await validationState(root,beforeAdd.artifact.id),'stale');
+    const beforeDelete=await record();
+    await rm(join(root,'nested','.babelrc'));
+    assert.equal(await validationState(root,beforeDelete.artifact.id),'stale');
+  } finally {closeDB(root);await rm(root,{recursive:true,force:true});}
+});
 
 it('invalidates memory and host verification after source changes and retains supersession history', async () => {
   const root = await mkdtemp(join(tmpdir(),'cp-evidence-'));

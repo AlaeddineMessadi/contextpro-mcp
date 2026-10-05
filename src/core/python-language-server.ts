@@ -10,7 +10,8 @@ import { resolveProjectPath } from "./path-guard.js";
 import type { CompilerResult } from "./typescript-references.js";
 import { sharedCompute } from "./local-daemon.js";
 import { pythonRuntimeIdentity } from "./python-runtime-identity.js";
-import { evidenceConfigurationFiles } from "./evidence-state.js";
+import { bindEvidence, evidenceConfigurationFiles } from "./evidence-state.js";
+import { walkDirectory } from "./walker.js";
 
 interface Position { line: number; character: number }
 interface Range { start: Position; end: Position }
@@ -21,6 +22,7 @@ interface Session {
   process: ChildProcessWithoutNullStreams; connection: MessageConnection; identity: string;
   opened: Map<string, { version: number; text: string }>;
   diagnostics: Map<string, { version?: number; diagnostics: Diagnostic[] }>;
+  sources?: Map<string, string>;
   idle?: NodeJS.Timeout;
 }
 const sessions = new Map<string, Session>(), limit = pLimit(1);
@@ -80,20 +82,35 @@ export async function pythonOperation(input: { rootDir: string; files: string[];
       const session = await sessionFor(root), connection = session.connection;
       const files = [...new Set([...input.files, ...input.file ? [input.file] : []].map(canonicalFile))];
       if (files.length > 1000) throw new Error("Python operation exceeds 1,000 files; narrow the workspace.");
+      // Imported modules may never be opened by this client. Observe their contents
+      // and membership too, rather than reusing diagnostics for unchanged callers.
+      const workspace = (await walkDirectory({rootDir:root,includeHidden:true}))
+        .filter(entry=>!entry.isDirectory && /\.pyi?$/.test(entry.relativePath)).map(entry=>entry.relativePath);
+      const state = await bindEvidence(root, [...new Set([...workspace,...files.map(file=>relative(root,file))])].map(file=>({file})));
+      const sources = new Map(state.files.map(item=>[pathToFileURL(resolveProjectPath(root,item.file)).href,item.hash]));
+      const changes: Array<{uri:string;type:number}> = [];
+      if (session.sources) {
+        for (const [uri,hash] of sources) if (session.sources.get(uri)!==hash) changes.push({uri,type:session.sources.has(uri)?2:1});
+        for (const uri of session.sources.keys()) if (!sources.has(uri)) changes.push({uri,type:3});
+      }
+      // Close old overlays before notifying disk changes, including deleted imports.
+      const active = new Set(files.map(file=>pathToFileURL(file).href));
+      for (const uri of session.opened.keys()) if (!active.has(uri)) {
+        await connection.sendNotification("textDocument/didClose",{textDocument:{uri}}); session.opened.delete(uri); session.diagnostics.delete(uri);
+      }
+      if (changes.length) await connection.sendNotification("workspace/didChangeWatchedFiles",{changes});
+      session.sources = sources;
       for (const file of files) {
         const path = resolveProjectPath(root,file), uri = pathToFileURL(path).href;
         const text = await readFile(path,"utf8"), previous = session.opened.get(uri);
-        if (previous?.text === text) continue;
+        // A new document version fences off diagnostics queued before an imported
+        // source changed, even if the requested document itself is unchanged.
+        if (previous?.text === text && !changes.length) continue;
         const version = (previous?.version ?? 0)+1;
         session.diagnostics.delete(uri);
         session.opened.set(uri,{text,version});
         if (previous) await connection.sendNotification("textDocument/didChange",{textDocument:{uri,version},contentChanges:[{text}]});
         else await connection.sendNotification("textDocument/didOpen",{textDocument:{uri,version,languageId:"python",text}});
-      }
-      // Close removed files so deleted callers cannot survive in the server's overlay.
-      const active = new Set(files.map(file=>pathToFileURL(resolveProjectPath(root,file)).href));
-      for (const uri of session.opened.keys()) if (!active.has(uri)) {
-        await connection.sendNotification("textDocument/didClose",{textDocument:{uri}}); session.opened.delete(uri); session.diagnostics.delete(uri);
       }
       const file = input.file ? canonicalFile(input.file) : undefined;
       const textDocument = file ? {uri:pathToFileURL(file).href} : undefined;

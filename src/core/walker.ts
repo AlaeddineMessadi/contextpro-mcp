@@ -12,6 +12,8 @@ export interface WalkOptions {
   targetPath?: string;
   depthLimit?: number;
   rootDir: string;
+  /** Include authored hidden inputs for evidence snapshots; ignore layers and cache exclusions still apply. */
+  includeHidden?: boolean;
 }
 
 export interface FileEntry {
@@ -87,6 +89,7 @@ async function walkRecursive(
   depth: number,
   maxDepth: number,
   results: FileEntry[],
+  includeHidden: boolean,
 ): Promise<void> {
   if (maxDepth > 0 && depth > maxDepth) return;
 
@@ -97,15 +100,15 @@ async function walkRecursive(
   const entries = await readdir(dir, { withFileTypes: true }).catch(() => []);
 
   for (const entry of entries) {
-    // Only recognized source directories bypass the hidden-entry exclusion;
-    // dotfiles such as .env and ignored workflow artifacts remain excluded.
+    // Discovery only admits recognized hidden source directories. Evidence can
+    // include hidden inputs, while still honoring ignore layers and cache policy.
     if (isAlwaysIgnoredDir(entry.name)
-      || (entry.name.startsWith(".") && !(entry.isDirectory() && SOURCE_DOT_DIRECTORIES.has(entry.name)))) continue;
+      || (!includeHidden && entry.name.startsWith(".") && !(entry.isDirectory() && SOURCE_DOT_DIRECTORIES.has(entry.name)))) continue;
 
     const fullPath = join(dir, entry.name);
 
     const stats = await lstat(fullPath).catch(() => null);
-    if (!stats || stats.isSymbolicLink()) continue;
+    if (!stats || stats.isSymbolicLink() || (!stats.isFile() && !stats.isDirectory())) continue;
 
     const isDir = entry.isDirectory();
     if (isDir && await isGeneratedGraftDirectory(fullPath)) continue;
@@ -114,7 +117,7 @@ async function walkRecursive(
     const relPath = relative(rootDir, fullPath).replace(/\\/g, "/");
     results.push({ path: fullPath, relativePath: relPath, isDirectory: isDir, depth });
 
-    if (isDir) await walkRecursive(fullPath, rootDir, layers, depth + 1, maxDepth, results);
+    if (isDir) await walkRecursive(fullPath, rootDir, layers, depth + 1, maxDepth, results, includeHidden);
   }
 }
 
@@ -151,7 +154,7 @@ export async function walkDirectory(options: WalkOptions): Promise<FileEntry[]> 
     return results;
   }
 
-  await walkRecursive(startDir, rootDir, [], 0, options.depthLimit ?? 0, results);
+  await walkRecursive(startDir, rootDir, [], 0, options.depthLimit ?? 0, results, options.includeHidden ?? false);
   return results;
 }
 

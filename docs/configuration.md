@@ -153,6 +153,8 @@ Referenced validation receipts also affect task-memory applicability: a stale re
 
 Call `validate_scope` after edits and before running checks. Its snapshot covers ignore-aware workspace files, configuration and manifests; ignored dependencies, build outputs and unsaved buffers are outside that snapshot. Run checks in the coding host, then call `validation_record({root, snapshot_id, command, exit_code, runtime, evidence?})`. Results are explicitly host-reported. Source/configuration/membership/revision changes invalidate applicability; recommended commands never count as executed checks. Snapshots cap at 20,000 files and fail rather than silently truncate evidence.
 
+Evidence snapshots include authored hidden files and directories, including `.eslintrc.json` and `.babelrc`, while honoring nested ignore rules, dependency/cache exclusions and symlink protections. Their contents are hashed, not copied into the evidence record. Configuration-bound memory and rename previews use the same policy. Older snapshots that omitted these inputs become stale when compared with the expanded inventory; take a new snapshot and rerun the checks.
+
 Rollback: previous builds ignore the additive metadata/artifacts. Retain records for inspection; do not infer that an older build validates them. Writes require an enabled specialist tool or the full profile; the discovery dispatcher does not execute memory/validation writes.
 
 ## Local teamwork
@@ -172,3 +174,5 @@ For compiler-backed edits, request `rename_preview({root,file,line,column,new_na
 The older `rename_symbol` remains an explicitly textual compatibility tool. It is never a silent fallback for `rename_apply`. Rollback: unset Python configuration and stop using the added specialist tools; source restoration uses the returned restore point. Stop the shared service before rebuilding, then restart it with matching build, parser/compiler dependencies, Node ABI and environment. Shared compute remains opt-in.
 
 Python cache identity includes the configured executable, npm Pyright package/server content and version, interpreter setting, relevant configuration and dependency manifests. Installation or manifest changes restart the session. Shared-service compatibility also includes the configured Python installation identity.
+
+Each Python operation checks the hashes and membership of ignore-aware workspace `.py` and `.pyi` files, not only the requested files. Changes notify Pyright and advance requested document versions so diagnostics must reflect refreshed imports; deleted imports also lose any old open-document overlay. The freshness inventory caps at 20,000 files, requested open files at 1,000, and existing operation deadlines still apply. Ignored dependency installations and external source trees remain outside this inventory.

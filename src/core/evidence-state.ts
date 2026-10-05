@@ -14,8 +14,9 @@ export interface EvidenceFile { file: string; hash?: string; start?: number; end
 export interface EvidenceState { root: string; revision: string | null; files: Array<EvidenceFile & { hash: string }>; digest: string }
 const digest = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
 export async function evidenceConfigurationFiles(rootDir:string):Promise<string[]> {
-  return (await walkDirectory({rootDir})).filter(entry=>!entry.isDirectory
-    && /(?:^|\/)(?:package(?:-lock)?\.json|npm-shrinkwrap\.json|pnpm-lock\.yaml|yarn\.lock|uv\.lock|poetry\.lock|Pipfile(?:\.lock)?|setup\.(?:py|cfg)|environment\.ya?ml|pyproject\.toml|requirements[^/]*\.txt|(?:ts|js|pyright)config[^/]*\.json|[^/]+\.config\.[^/]+)$/.test(entry.relativePath))
+  return (await walkDirectory({rootDir,includeHidden:true})).filter(entry=>!entry.isDirectory
+    && (/(?:^|\/)\.[^/]+(?:\/|$)/.test(entry.relativePath)
+      || /(?:^|\/)(?:package(?:-lock)?\.json|npm-shrinkwrap\.json|pnpm-lock\.yaml|yarn\.lock|uv\.lock|poetry\.lock|Pipfile(?:\.lock)?|setup\.(?:py|cfg)|environment\.ya?ml|pyproject\.toml|requirements[^/]*\.txt|(?:ts|js|pyright)config[^/]*\.json|[^/]+\.config\.[^/]+)$/.test(entry.relativePath)))
     .map(entry=>entry.relativePath).sort();
 }
 
@@ -86,7 +87,7 @@ export async function memoryEvidenceStatus(rootDir: string, node: MemoryNodeRow)
 }
 
 export async function workspaceState(rootDir: string): Promise<EvidenceState> {
-  const paths = async () => (await walkDirectory({ rootDir })).filter(entry => !entry.isDirectory).map(entry => entry.relativePath).sort();
+  const paths = async () => (await walkDirectory({ rootDir, includeHidden: true })).filter(entry => !entry.isDirectory).map(entry => entry.relativePath).sort();
   const before = await paths();
   const state = await bindEvidence(rootDir, before.map(file => ({ file })));
   if (JSON.stringify(before) !== JSON.stringify(await paths())) throw new Error("Workspace membership changed while taking the validation snapshot; retry.");

@@ -124,7 +124,7 @@ async function serve(): Promise<void> {
       args = { ...(args as Record<string, unknown>), rootDir: root };
       validateSelectedRoot({ rootDir: root, source: "flag" });
       roots.set(root, (roots.get(root) ?? 0) + 1); trackedRoot = root;
-      if (method === "freshness") return (await import("./index-freshness.js")).ensureFreshIndex(root);
+      if (method === "freshness") return await (await import("./index-freshness.js")).ensureFreshIndex(root);
       if (method === "references") {
         const input = z.object({ rootDir: rootSchema, files: filesSchema, file: z.string(), line: z.number().int().positive(), symbol: z.string().min(1), limit: z.number().optional() }).strict().parse(args);
         input.file = canonicalFile(input.file);

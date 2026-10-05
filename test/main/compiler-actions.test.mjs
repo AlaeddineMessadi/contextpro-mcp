@@ -96,6 +96,42 @@ it('configured Pyright supplies references, diagnostics and cross-file rename wi
   }
 });
 
+it('Pyright refreshes unchanged callers after imported sources change, disappear or reappear', async () => {
+  const root=await mkdtemp(join(tmpdir(),'cp-python-import-refresh-'));
+  const previous=process.env.CONTEXTPRO_PYRIGHT_COMMAND;
+  process.env.CONTEXTPRO_PYRIGHT_COMMAND=resolve('node_modules/.bin/pyright-langserver');
+  try {
+    await writeFile(join(root,'pyrightconfig.json'),'{"typeCheckingMode":"basic"}');
+    const implementation=type=>`def charge() -> ${type}:\n    return ${type==='int'?'1':'"changed"'}\n`;
+    await writeFile(join(root,'service.py'),implementation('int'));
+    await writeFile(join(root,'caller.py'),'from service import charge\nvalue: int = charge()\n');
+    const check=async files=>(await compilerDiagnostics({rootDir:root,files})).results[0].diagnostics;
+    assert.deepEqual(await check(['caller.py']),[]);
+    assert.deepEqual(await check(['caller.py']),[]);
+    await writeFile(join(root,'service.py'),implementation('str'));
+    assert.ok((await check(['caller.py'])).some(item=>item.code==='reportAssignmentType'));
+    // A previously opened import must also stop shadowing its new disk contents.
+    await check(['caller.py','service.py']);
+    await writeFile(join(root,'service.py'),implementation('int'));
+    assert.deepEqual(await check(['caller.py']),[]);
+    await rm(join(root,'service.py'));
+    assert.ok((await check(['caller.py'])).some(item=>item.code==='reportMissingImports'));
+    await writeFile(join(root,'service.py'),implementation('str'));
+    const restored=await check(['caller.py']);
+    assert.ok(restored.some(item=>item.code==='reportAssignmentType'));
+    assert.ok(!restored.some(item=>item.code==='reportMissingImports'));
+    // Stub imports are part of the same freshness boundary.
+    await writeFile(join(root,'service.pyi'),'def charge() -> int: ...\n');
+    assert.deepEqual(await check(['caller.py']),[]);
+    await writeFile(join(root,'service.pyi'),'def charge() -> str: ...\n');
+    assert.ok((await check(['caller.py'])).some(item=>item.code==='reportAssignmentType'));
+  } finally {
+    closePythonLanguageServers();closeDB(root);
+    if(previous===undefined)delete process.env.CONTEXTPRO_PYRIGHT_COMMAND;else process.env.CONTEXTPRO_PYRIGHT_COMMAND=previous;
+    await rm(root,{recursive:true,force:true});
+  }
+});
+
 it('JavaScript compiler rename preserves aliases, strings and same-named local parameters',async()=>{
   const root=await mkdtemp(join(tmpdir(),'cp-js-rename-'));
   try{
