@@ -60,7 +60,7 @@ const WORKFLOW_TOOLS = new Set([
 ]);
 
 const MUTATING_TOOLS = new Set([
-  "validation_record", "team_task",
+  "validation_record", "team_task", "rename_apply",
   "discover_tools", // Compatibility dispatch can rebuild the derived index.
   "gc",
   "graph_export",
@@ -82,6 +82,7 @@ const MUTATING_TOOLS = new Set([
 ]);
 
 const DESTRUCTIVE_TOOLS = new Set([
+  "rename_apply",
   "gc",
   "restore",
   "memory_delete",

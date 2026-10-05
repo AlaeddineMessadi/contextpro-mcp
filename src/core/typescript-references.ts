@@ -7,6 +7,15 @@ export interface TypedReference {
   file: string; line: number; column: number; context: string; isDefinition: boolean;
   kind: "definition" | "import" | "call" | "reference";
 }
+export interface CompilerInput {
+  rootDir: string; files: string[]; operation: "diagnostics" | "rename";
+  file?: string; line?: number; column?: number; newName?: string;
+}
+export interface CompilerResult {
+  engine: "typescript" | "pyright"; warnings: string[];
+  diagnostics?: Array<{ file: string; line: number; column: number; severity: string; code: string; message: string }>;
+  edits?: Array<{ file: string; start: number; length: number; text: string }>;
+}
 interface Snapshot { stamp: string; text: string; snapshot: ts.IScriptSnapshot; version: number }
 interface Project {
   files: string[]; options: ts.CompilerOptions; references?: readonly ts.ProjectReference[];
@@ -279,4 +288,61 @@ export function findTypeScriptReferences(input: { rootDir: string; files: string
     warnings: [...new Set(warnings)], scope: { kind: "indexed_ts_js_files", files: allowed.size, checkedFiles: checkedFiles.size,
       configs: [...configs.keys()].filter(Boolean).map(file => relative(root, file)), includesIndexedTests: true },
     projectCount, reusedProjects };
+}
+
+/** Diagnostics and rename share the existing bounded compiler cache and worker. */
+export function runTypeScriptOperation(input: CompilerInput): CompilerResult {
+  const root = resolve(input.rootDir), files = [...new Set(input.files.map(file => resolve(file)))];
+  const target = input.file ? resolve(input.file) : undefined;
+  if (target && !files.includes(target)) files.push(target);
+  const groups = new Map<string, string[]>(), memo = new Map<string, string | undefined>();
+  for (const file of files) {
+    const config = findConfig(root, file, memo) ?? "";
+    groups.set(config, [...groups.get(config) ?? [], file]);
+  }
+  const result: CompilerResult = { engine: "typescript", warnings: [], diagnostics: [], edits: [] };
+  for (const [config, group] of groups) {
+    let options: ts.CompilerOptions = { allowJs: true, checkJs: false, jsx: ts.JsxEmit.ReactJSX, target: ts.ScriptTarget.ES2022, moduleResolution: ts.ModuleResolutionKind.NodeJs };
+    let references: readonly ts.ProjectReference[] | undefined;
+    let projectFiles = group;
+    if (config) {
+      const loaded = ts.readConfigFile(config, ts.sys.readFile);
+      const parsed = ts.parseJsonConfigFileContent(loaded.config ?? {}, ts.sys, dirname(config), undefined, config);
+      if (loaded.error || parsed.errors.some(error => error.code !== 18003)) throw new Error(`Invalid compiler configuration: ${config}`);
+      options = { allowJs: true, ...parsed.options }; references = parsed.projectReferences;
+      projectFiles = [...new Set([...group, ...parsed.fileNames.filter(file => inRoot(root, file))])];
+    }
+    const { project } = getProject(root, root, projectFiles, options, references);
+    const program = project.service.getProgram();
+    if (!program) throw new Error("Compiler project unavailable.");
+    if (input.operation === "diagnostics") {
+      for (const file of group) {
+        if (!program.getSourceFile(file)) { result.warnings.push(`File outside compiler project: ${relative(root, file)}`); continue; }
+        for (const diagnostic of [...project.service.getSyntacticDiagnostics(file), ...project.service.getSemanticDiagnostics(file)]) {
+          if (result.diagnostics!.length >= 500) { result.warnings.push("Diagnostics capped at 500; narrow files for remaining results."); break; }
+          const at = diagnostic.file?.getLineAndCharacterOfPosition(diagnostic.start ?? 0);
+          result.diagnostics!.push({ file: relative(root, diagnostic.file?.fileName ?? file), line: (at?.line ?? 0) + 1,
+            column: (at?.character ?? 0) + 1, severity: ts.DiagnosticCategory[diagnostic.category].toLowerCase(), code: String(diagnostic.code),
+            message: ts.flattenDiagnosticMessageText(diagnostic.messageText, "\n").slice(0, 1500) });
+        }
+      }
+    } else if (target && program.getSourceFile(target)) {
+      const source = program.getSourceFile(target)!;
+      const line = (input.line ?? 0) - 1, column = (input.column ?? 0) - 1;
+      const starts = source.getLineStarts();
+      if (line < 0 || line >= starts.length || column < 0 || starts[line] + column >= (starts[line + 1] ?? source.text.length)) throw new Error("Rename position outside source.");
+      const position = starts[line] + column;
+      const info = project.service.getRenameInfo(target, position, { allowRenameOfImportPath: false });
+      if (!info.canRename) throw new Error(info.localizedErrorMessage);
+      for (const edit of project.service.findRenameLocations(target, position, false, false, true) ?? []) {
+        if (!inRoot(root, edit.fileName) || /(?:^|[/\\])node_modules[/\\]/.test(edit.fileName)) throw new Error("Rename crosses workspace/dependency boundary; no preview produced.");
+        result.edits!.push({ file: relative(root, edit.fileName).split("\\").join("/"), start: edit.textSpan.start, length: edit.textSpan.length,
+          text: `${edit.prefixText ?? ""}${input.newName}${edit.suffixText ?? ""}` });
+      }
+    }
+  }
+  result.edits = [...new Map(result.edits!.map(edit => [`${edit.file}:${edit.start}:${edit.length}`, edit])).values()];
+  result.warnings = [...new Set(result.warnings)];
+  if (input.operation === "rename" && !result.edits.length) throw new Error("Compiler returned no rename edits.");
+  return result;
 }

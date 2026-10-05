@@ -8,7 +8,7 @@ Baseline: `2448966b055e9d9b929e0596aabcaa528bc7aedf`. Preserve the earlier codin
 2. Shared local compute: request freshness reuse and opt-in daemon implemented; two-root refresh and crash/restart fallback tests pass. Multi-session resource measurements and default enablement remain pending.
 3. Source-bound memory and immutable handoffs: implemented with lexical fallback, explicit supersession, configuration invalidation and historical validation receipts; targeted tests pass locally.
 4. Local task ownership, dependencies and advisory leases: implemented; competing-process, linked-worktree overlap, dependency-cycle and lease-expiry regressions pass locally.
-5. Validation receipts, TS/JS and Python diagnostics, safe rename: pending.
+5. Validation receipts, TS/JS and Python diagnostics, compiler rename: implemented; real Pyright tests cover imports, aliases, shadowing, virtual environments and cross-file edits; stale TS previews reject newly added callers. No runtime downloads.
 6. Frozen native/current/candidate campaign and external retrieval comparison: pending.
 
 No speed or provider-usage improvement is established by unit-test success. Each phase records its local gates, review and release state separately. Rollback for adaptive retrieval is to omit `intent` and unset `CONTEXTPRO_ADAPTIVE_CONTEXT`; exact reads and the existing selector remain available.

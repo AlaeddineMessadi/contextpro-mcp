@@ -15,7 +15,9 @@ it('shared service isolates roots, refreshes edits, and falls back after a crash
   try {
     const roots = [join(temp,'one'),join(temp,'two')];
     for (const [index,root] of roots.entries()) { await mkdir(root); await writeFile(join(root,'entry.ts'),`export const value${index} = "é";\n`); }
-    const status = await daemonCommand('start'); pid = status.pid;
+    const starters = await Promise.all(Array.from({length:4},()=>daemonCommand('start')));
+    assert.equal(new Set(starters.map(item=>item.pid)).size,1);
+    const status = starters[0]; pid = status.pid;
     const results = await Promise.all(roots.map(rootDir => sharedCompute('freshness',{rootDir})));
     assert.ok(results.every(result => result?.value.checked));
     assert.equal((await getDB(roots[0])).searchSymbolsByName('value1').length,0);
@@ -26,7 +28,9 @@ it('shared service isolates roots, refreshes edits, and falls back after a crash
     process.kill(pid,'SIGKILL');
     await new Promise(done=>setTimeout(done,100));
     assert.equal(await sharedCompute('freshness',{rootDir:roots[0]}),undefined);
-    const restarted = await daemonCommand('start'); pid = restarted.pid;
+    const restarts = await Promise.all(Array.from({length:4},()=>daemonCommand('start')));
+    assert.equal(new Set(restarts.map(item=>item.pid)).size,1);
+    const restarted = restarts[0]; pid = restarted.pid;
     assert.notEqual(restarted.pid,status.pid);
     for(const root of roots) closeDB(root);
   } finally {

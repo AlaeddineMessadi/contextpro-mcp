@@ -29,6 +29,7 @@ import { explain } from "./explain.js";
 import { getContext } from "./context.js";
 import { recordValidation, validationState, evidenceCurrent, type EvidenceState } from "../core/evidence-state.js";
 import { teamStatus, teamTask } from "../core/team-ledger.js";
+import { compilerDiagnostics, previewRename, applyRename } from "./compiler-actions.js";
 import { getFeatureBrief } from "./feature-brief.js";
 import { getRepoMap } from "./repo-map.js";
 import { resolveSymbol } from "./resolve-symbol.js";
@@ -100,7 +101,7 @@ export function registerTools(
   const invocations = new Map<string, { schema: z.AnyZodObject; handler: (args: unknown) => Promise<CallToolResult> }>();
   // This compatibility route must never dispatch source edits or destructive
   // maintenance under discovery's non-destructive annotation.
-  const callable = new Set(["context", "exact_references", "search", "grep", "skeleton", "explain", "tree", "status", "health", "reindex", "blast_radius", "validate_scope", "efficiency_report", "task_pack", "repo_map", "feature_brief", "artifact_read", "team_status"]);
+  const callable = new Set(["context", "exact_references", "search", "grep", "skeleton", "explain", "tree", "status", "health", "reindex", "blast_radius", "validate_scope", "efficiency_report", "task_pack", "repo_map", "feature_brief", "artifact_read", "team_status", "compiler_diagnostics", "rename_preview"]);
   const refreshCatalogCost = (): void => setToolSchemaTokens(Buffer.byteLength(JSON.stringify({ tools: [...catalog.values()].filter(tool => active.has(tool.name)) }), "utf8") / 4);
   const noteSchema = (name: string, description: string, shape: Record<string, unknown>, output?: unknown): void => {
     const entry = { name, description, inputSchema: toJsonSchemaCompat(z.object({ ...shape, root: rootArg } as z.ZodRawShape).strict()), annotations: annotationsForTool(name),
@@ -1371,6 +1372,17 @@ export function registerTools(
   }, withRequestActivity(async ({ action, task_id, title, dependencies, owner, files, note, handoff_id }) => ({ content: [{ type: "text" as const,
     text: JSON.stringify(await teamTask({ rootDir: rootDir(), action, taskId: task_id, title, dependencies, owner, files, note, handoffId: handoff_id })) }],
   }), { toolName: "team_task", waitForIndexing: false }));
+
+  server.tool("compiler_diagnostics", "Read current TS/JS or configured Pyright diagnostics for explicit files. Does not run tests. Missing language servers fail explicitly.", {
+    files: z.array(z.string().min(1).max(240)).min(1).max(100),
+  }, withRequestActivity(async ({files}) => ({content:[{type:"text" as const,text:JSON.stringify(await compilerDiagnostics({rootDir:rootDir(),files}))}]}), {toolName:"compiler_diagnostics",ensureFreshIndex:true}));
+  server.tool("rename_preview", "Preview compiler-backed TS/JS or Python rename edits. Inspect the immutable artifact before rename_apply; source/config changes invalidate it. No source is edited.", {
+    file:z.string().min(1).max(240),line:z.number().int().positive(),column:z.number().int().positive(),new_name:z.string().min(1).max(200),
+    max_tokens:z.number().int().min(512).max(12000).optional(),
+  }, withRequestActivity(async ({file,line,column,new_name,max_tokens}) => ({content:[{type:"text" as const,text:await previewRename({rootDir:rootDir(),file,line,column,newName:new_name,maxTokens:max_tokens})}]}), {toolName:"rename_preview",ensureFreshIndex:true}));
+  server.tool("rename_apply", "Apply only a previously inspected compiler rename preview, with workspace and per-file hash checks and a restore point. No textual fallback.", {
+    preview_id:z.string().regex(/^rename_preview-[a-f0-9]{14}$/),
+  }, withRequestActivity(async ({preview_id}) => ({content:[{type:"text" as const,text:JSON.stringify(await applyRename({rootDir:rootDir(),previewId:preview_id}))}]}), {toolName:"rename_apply",waitForIndexing:false}));
 
   registerDeprecatedAlias(
     "remember",

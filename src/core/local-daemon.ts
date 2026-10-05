@@ -1,11 +1,12 @@
 // Optional per-user compute service. No source edits or network listener.
 import { createConnection, createServer } from "node:net";
-import { chmod, mkdir, readFile, readdir, unlink } from "node:fs/promises";
-import { fork } from "node:child_process";
+import { chmod, mkdir, readFile, readdir, unlink, realpath } from "node:fs/promises";
+import { spawn } from "node:child_process";
 import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, resolve, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
+import { createRequire } from "node:module";
 import { z } from "zod";
 import { validateSelectedRoot } from "./root-guard.js";
 import { resolveProjectPath } from "./path-guard.js";
@@ -28,6 +29,10 @@ async function buildIdentity(): Promise<string> {
       }
     };
     await visit(resolve(dirname(fileURLToPath(import.meta.url)), ".."));
+    const require = createRequire(import.meta.url);
+    for (const name of ["typescript", "web-tree-sitter", "tree-sitter-wasms", "better-sqlite3"]) {
+      hash.update(name).update(await readFile(require.resolve(`${name}/package.json`)));
+    }
     // Different provider/ignore/runtime policies cannot share global module state.
     for (const key of Object.keys(process.env).sort()) if (/^(?:CONTEXTPRO_|CONTEXTPLUS_|OLLAMA_|OPENAI_|ANTHROPIC_)/.test(key)
       && !/DAEMON|TRACE|IDLE|PARENT/.test(key)) hash.update(key).update(process.env[key] ?? "");
@@ -78,8 +83,8 @@ export async function daemonCommand(action: string): Promise<unknown> {
     if (!/ENOENT|ECONNREFUSED/.test(String(error))) throw error;
   }
   await mkdir(directory(), { recursive: true, mode: 0o700 });
-  const child = fork(new URL(import.meta.url), ["--serve"], {
-    detached: true, stdio: "ignore", execArgv: [], env: { ...process.env, CONTEXTPRO_DAEMON_SERVER: "true" },
+  const child = spawn(process.execPath, [fileURLToPath(import.meta.url), "--serve"], {
+    detached: true, stdio: "ignore", env: { ...process.env, CONTEXTPRO_DAEMON_SERVER: "true" },
   });
   let spawnError: Error | undefined;
   child.on("error", error => { spawnError = error; }); child.unref();
@@ -98,6 +103,7 @@ const filesSchema = z.array(z.string()).max(20_000);
 async function serve(): Promise<void> {
   const build = await buildIdentity();
   let active = 0, closing = false;
+  const roots = new Map<string, number>();
   let idle: NodeJS.Timeout;
   const stop = () => { closing = true; clearTimeout(idle); server.close(() => process.exit(0)); };
   const touch = () => { clearTimeout(idle); idle = setTimeout(() => { if (!active) stop(); else touch(); }, 300_000); };
@@ -105,16 +111,26 @@ async function serve(): Promise<void> {
     if (method === "status") return { protocol: PROTOCOL, build, pid: process.pid, active, memory: process.memoryUsage(), closing };
     if (method === "stop") { setImmediate(stop); return { stopping: true }; }
     if (closing || active >= 16) throw new Error("Shared service busy; use local compute.");
-    const root = z.object({ rootDir: rootSchema }).passthrough().parse(args).rootDir;
+    const originalRoot = z.object({ rootDir: rootSchema }).passthrough().parse(args).rootDir;
+    const root = await realpath(originalRoot);
+    const canonicalFile = (file: string) => resolveProjectPath(root, relative(originalRoot, resolveProjectPath(originalRoot, file)));
+    args = { ...(args as Record<string, unknown>), rootDir: root };
     validateSelectedRoot({ rootDir: root, source: "flag" });
-    active++; touch();
+    active++; roots.set(root, (roots.get(root) ?? 0) + 1); touch();
     try {
       if (method === "freshness") return (await import("./index-freshness.js")).ensureFreshIndex(root);
       if (method === "references") {
         const input = z.object({ rootDir: rootSchema, files: filesSchema, file: z.string(), line: z.number().int().positive(), symbol: z.string().min(1), limit: z.number().optional() }).strict().parse(args);
-        input.file = resolveProjectPath(root, input.file);
-        input.files = input.files.map(file => resolveProjectPath(root, file));
+        input.file = canonicalFile(input.file);
+        input.files = input.files.map(canonicalFile);
         return await (await import("./typescript-reference-process.js")).queryTypeScriptReferences(input);
+      }
+      if (method === "compiler") {
+        const input = z.object({ rootDir: rootSchema, files: filesSchema, operation: z.enum(["diagnostics", "rename"]), file: z.string().optional(),
+          line: z.number().int().positive().optional(), column: z.number().int().positive().optional(), newName: z.string().min(1).max(200).optional() }).strict().parse(args);
+        input.files = input.files.map(canonicalFile);
+        if (input.file) input.file = canonicalFile(input.file);
+        return await (await import("./typescript-reference-process.js")).queryTypeScriptCompiler(input);
       }
       if (method === "reindex") {
         const input = z.object({ rootDir: rootSchema, targetPath: z.string().optional(), force: z.boolean().optional(), noEmbed: z.boolean().optional(), autoHubs: z.boolean().optional() }).strict().parse(args);
@@ -125,7 +141,16 @@ async function serve(): Promise<void> {
         return await (await import("../tools/reindex.js")).quickRefresh(root, input.options);
       }
       throw new Error("Unsupported shared operation.");
-    } finally { active--; touch(); }
+    } finally {
+      active--; const count = (roots.get(root) ?? 1) - 1;
+      roots.delete(root); roots.set(root, count);
+      // Retain at most four idle database connections, never evict an active root.
+      const idleRoots = [...roots].filter(([, running]) => running === 0);
+      for (const [stale] of idleRoots.slice(0, Math.max(0, idleRoots.length - 4))) {
+        (await import("./db.js")).closeDB(stale); roots.delete(stale);
+      }
+      touch();
+    }
   };
   const server = createServer(socket => {
     socket.setEncoding("utf8");
@@ -150,6 +175,14 @@ async function serve(): Promise<void> {
   });
   await mkdir(directory(), { recursive: true, mode: 0o700 });
   if (process.platform !== "win32") await chmod(directory(), 0o700);
+  // A SQLite write lock serializes socket recovery across independently starting processes.
+  const native = await import("./db-native.js");
+  await native.ensureNativeStorage();
+  const { Database } = native.loadNativeStorageBindings();
+  const startup = new Database(join(directory(), "startup.db"));
+  startup.pragma("busy_timeout = 5000");
+  startup.exec("BEGIN IMMEDIATE");
+  try {
   // Remove only a refused stale endpoint, never a compatible or incompatible live service.
   try { await request("status", {}); return; } catch (error) {
     if (!/ENOENT|ECONNREFUSED/.test(String(error))) return;
@@ -158,6 +191,7 @@ async function serve(): Promise<void> {
   await new Promise<void>((done, reject) => { server.once("error", reject); server.listen(endpoint(), done); });
   if (process.platform !== "win32") await chmod(endpoint(), 0o600);
   touch();
+  } finally { startup.exec("COMMIT"); startup.close(); }
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url) && process.argv[2] === "--serve") {

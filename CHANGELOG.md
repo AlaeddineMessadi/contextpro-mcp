@@ -4,6 +4,9 @@ All notable changes to this project are recorded here. The project follows [Sema
 
 ## [Unreleased]
 
+- Discoverable TS/JS and optional Pyright diagnostics and compiler rename preview/apply reuse bounded workers, source hashes and restore points. Configured Python exact references use LSP evidence; unsupported/stale rename operations reject without textual fallback.
+- Shared compute now supports compiler operations, canonical root isolation, serialized startup recovery and bounded idle database retention. Compiler/parser package identities participate in compatibility checks.
+
 - Discoverable `team_status` / `team_task` share an advisory SQLite task ledger across local worktrees, with atomic ownership, dependency readiness, renewable five-minute file leases and retained handoffs. The lean catalog remains three tools.
 
 - Task memory captures source/configuration evidence and explicit supersession without overwriting history. Retrieval labels stale/unverified records, excludes stale conclusions from recommendations, and works lexically without embeddings. Immutable handoffs reuse `artifact_read`.
