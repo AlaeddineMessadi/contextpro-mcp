@@ -43,6 +43,8 @@ it('configured Pyright supplies references, diagnostics and cross-file rename wi
     await writeFile(join(root,'service.py'),'def charge(n: int) -> int:\n    return n + 1\n');
     await writeFile(join(root,'caller.py'),'from service import charge as alias\nvalue = alias(2)\ndef local(charge: int):\n    return charge\n');
     await writeFile(join(root,'broken.py'),'wrong: int = "text"\n');
+    await writeFile(join(root,'unicode.py'),'def précharge(n: int) -> int:\n    return n\n');
+    await writeFile(join(root,'ambiguous.py'),'def charge():\n    return 1\nclass Account:\n    def charge(self):\n        return 2\n');
     await writeFile(join(root,'pyrightconfig.json'),'{"typeCheckingMode":"basic"}');
     await reindex({rootDir:root,noEmbed:true,autoHubs:false});
     const diagnostics=await compilerDiagnostics({rootDir:root,files:['broken.py']});
@@ -50,6 +52,10 @@ it('configured Pyright supplies references, diagnostics and cross-file rename wi
     const refs=JSON.parse(await exactReferencesTool({rootDir:root,file:'service.py',line:1,symbolName:'charge',format:'json'}));
     assert.equal(refs.confidence,'LSP_RESOLVED');
     assert.ok(refs.references.some(ref=>ref.file==='caller.py'));
+    const ambiguous=JSON.parse(await exactReferencesTool({rootDir:root,file:'ambiguous.py',symbolName:'charge',format:'json'}));
+    assert.equal(ambiguous.ambiguous,true);
+    assert.deepEqual(ambiguous.ambiguousCandidates.map(item=>item.line),[1,4]);
+    await assert.rejects(exactReferencesTool({rootDir:root,file:'unicode.py',line:1,symbolName:'charge'}),/absent or ambiguous/);
     const preview=JSON.parse(await previewRename({rootDir:root,file:'service.py',line:1,column:5,newName:'bill'}));
     await applyRename({rootDir:root,previewId:preview.artifact.id});
     assert.match(await readFile(join(root,'caller.py'),'utf8'),/from service import bill as alias/);

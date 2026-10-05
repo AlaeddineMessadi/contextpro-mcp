@@ -96,7 +96,8 @@ async function resolveTarget(options: ExactReferencesOptions): Promise<ResolvedT
         .filter((symbol) => symbol.file_id === dbFile.id)
         .sort((a, b) => a.line_start - b.line_start);
       if (inFile.length > 0) {
-        return { file: relativeFile, line: inFile[0].line_start };
+        return { file: relativeFile, line: inFile[0].line_start,
+          ...(inFile.length > 1 ? { ambiguousCandidates: inFile.slice(0,5).map(symbol=>({file:relativeFile,line:symbol.line_start,kind:symbol.kind})) } : {}) };
       }
     }
     return null;
@@ -342,7 +343,7 @@ export async function exactReferencesTool(options: ExactReferencesOptions): Prom
       const source = await readFile(resolveProjectPath(options.rootDir,target.file),"utf8");
       const line = source.split("\n")[target.line-1] ?? "";
       const escaped = options.symbolName.replace(/[.*+?^${}()|[\]\\]/g,"\\$&");
-      const matches = [...line.matchAll(new RegExp(`(?<![\\w])${escaped}(?![\\w])`,"g"))];
+      const matches = [...line.matchAll(new RegExp(`(?<![\\p{ID_Continue}])${escaped}(?![\\p{ID_Continue}])`,"gu"))];
       if(matches.length!==1) throw new Error("Python reference target is absent or ambiguous on the supplied line.");
       const db = await getDB(options.rootDir);
       const found = await pythonOperation({rootDir:options.rootDir,files:db.getAllFiles().filter(file=>isPython(file.path)).map(file=>file.path),
