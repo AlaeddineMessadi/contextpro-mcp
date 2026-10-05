@@ -27,6 +27,7 @@ import { getRelated } from "./related.js";
 import { getTestMap } from "./test-map.js";
 import { explain } from "./explain.js";
 import { getContext } from "./context.js";
+import { recordValidation, validationState, evidenceCurrent, type EvidenceState } from "../core/evidence-state.js";
 import { getFeatureBrief } from "./feature-brief.js";
 import { getRepoMap } from "./repo-map.js";
 import { resolveSymbol } from "./resolve-symbol.js";
@@ -258,10 +259,13 @@ export function registerTools(
     },
     withRequestActivity(async ({ artifact_id }) => {
       const artifact = await readArtifact(rootDir(), artifact_id);
+      const applicability = artifact?.kind === "validation_result" ? await validationState(rootDir(), artifact_id)
+        : artifact?.kind === "handoff" ? await evidenceCurrent(rootDir(), (artifact.payload as {sourceEvidence:EvidenceState}).sourceEvidence) ? "current source evidence; validation must be rechecked" : "stale or unverified source evidence"
+        : undefined;
       return {
         content: [{
           type: "text" as const,
-          text: artifact ? JSON.stringify(artifact, null, 2) : JSON.stringify({ error: `Artifact not found: ${artifact_id}` }, null, 2),
+          text: artifact ? JSON.stringify({...artifact,...applicability ? {currentApplicability:applicability} : {}}, null, 2) : JSON.stringify({ error: `Artifact not found: ${artifact_id}` }, null, 2),
         }],
       };
     }, { toolName: "artifact_read", waitForIndexing: false }),
@@ -1309,19 +1313,23 @@ export function registerTools(
   );
 
   const MEMORY_RECORD_TASK_SHAPE = {
-    task: z.string().min(1).describe("Task or issue name."),
-    summary: z.string().min(1).describe("What changed or was learned."),
-    files: z.array(z.string()).optional().describe("Files touched or relevant to the task."),
-    assumptions: z.array(z.string()).optional().describe("Assumptions made during the task."),
-    evidence: z.array(z.string()).optional().describe("Evidence supporting the outcome."),
-    open_risks: z.array(z.string()).optional().describe("Risks that remain unresolved."),
+    task: z.string().min(1).max(300).describe("Task or issue name."),
+    summary: z.string().min(1).max(8000).describe("What changed or was learned."),
+    source_evidence: z.array(z.object({ file: z.string().max(240), hash: z.string().regex(/^[a-f0-9]{64}$/).optional(), start: z.number().int().positive().optional(), end: z.number().int().positive().optional() }).strict()).max(256).optional().describe("Source supporting this memory. Whole-file hashes are captured and rechecked on retrieval."),
+    supersedes: z.array(z.string()).max(50).optional().describe("Previous memory IDs explicitly superseded; history is retained."),
+    validation_refs: z.array(z.string()).max(20).optional().describe("Validation result artifact IDs; host-reported status is checked for current applicability."),
+    files: z.array(z.string().max(240)).max(256).optional().describe("Files touched or relevant to the task."),
+    assumptions: z.array(z.string().max(1000)).max(20).optional().describe("Assumptions made during the task."),
+    evidence: z.array(z.string().max(1000)).max(20).optional().describe("Evidence supporting the outcome."),
+    open_risks: z.array(z.string().max(1000)).max(20).optional().describe("Risks that remain unresolved."),
     format: z.enum(["text", "json"]).optional().describe("Return plain text or structured JSON. Default: text."),
   };
   type MemoryRecordTaskArgs = {
     task: string; summary: string; files?: string[]; assumptions?: string[];
     evidence?: string[]; open_risks?: string[]; format?: "text" | "json";
+    source_evidence?: Array<{file: string; hash?: string; start?: number; end?: number}>; supersedes?: string[]; validation_refs?: string[];
   };
-  const runMemoryRecordTask = ({ task, summary, files, assumptions, evidence, open_risks, format }: MemoryRecordTaskArgs) =>
+  const runMemoryRecordTask = ({ task, summary, files, assumptions, evidence, open_risks, format, source_evidence, supersedes, validation_refs }: MemoryRecordTaskArgs) =>
     recordTaskMemory({
       rootDir: rootDir(),
       task,
@@ -1329,6 +1337,7 @@ export function registerTools(
       files,
       assumptions,
       evidence,
+      sourceEvidence: source_evidence, supersedes, validationRefs: validation_refs,
       openRisks: open_risks,
       format,
     });
@@ -1341,6 +1350,14 @@ export function registerTools(
       content: [{ type: "text" as const, text: await runMemoryRecordTask(args) }],
     }), { useEmbeddingTracker: true, toolName: "memory_record_task" }),
   );
+
+  server.tool("validation_record", "Record host-executed checks against a pre-check validation snapshot. Results are host-reported and become stale when inputs change.", {
+    snapshot_id: z.string().regex(/^validation_snapshot-[a-f0-9]{14}$/),
+    command: z.string().min(1).max(2000), exit_code: z.number().int(),
+    runtime: z.string().min(1).max(1000), evidence: z.string().max(8000).optional(),
+  }, withRequestActivity(async ({ snapshot_id, command, exit_code, runtime, evidence }) => ({ content: [{type:"text" as const,
+    text: JSON.stringify(await recordValidation({ rootDir: rootDir(), snapshotId: snapshot_id, command, exitCode: exit_code, runtime, evidence })) }],
+  }), { toolName: "validation_record", waitForIndexing: false }));
 
   registerDeprecatedAlias(
     "remember",

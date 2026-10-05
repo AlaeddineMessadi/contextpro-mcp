@@ -2,6 +2,7 @@
 // FEATURE: Helper layer for agentic-context — query-independent data fetching functions
 
 import { execFile } from "child_process";
+import { memoryEvidenceStatus } from "../core/evidence-state.js";
 import { promisify } from "util";
 import { readFile } from "fs/promises";
 import { basename, join } from "path";
@@ -158,6 +159,8 @@ export async function getProjectMemoryHits(rootDir: string, query: string, topK:
   const hits = [...semanticHits, ...lexicalHits.filter((hit) => !semanticHits.some((candidate) => candidate.node.id === hit.node.id))];
   const filtered: Array<{ id: string; kind: string; summary: string }> = [];
   for (const hit of hits) {
+    const evidenceStatus = await memoryEvidenceStatus(rootDir, hit.node);
+    if (evidenceStatus === "stale" || evidenceStatus === "superseded") continue;
     const metadata = parseMetadata(hit.node.metadata);
     const scope = metadata.scope ?? "project";
     if (scope === "global") {
@@ -172,7 +175,7 @@ export async function getProjectMemoryHits(rootDir: string, query: string, topK:
     filtered.push({
       id: hit.node.id,
       kind: metadata.record_kind ?? "memory",
-      summary: hit.node.content.slice(0, 220),
+      summary: `[${evidenceStatus}] ${hit.node.content.slice(0, 220)}`,
     });
     if (filtered.length >= topK) break;
   }

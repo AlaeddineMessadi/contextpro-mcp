@@ -4,6 +4,9 @@ All notable changes to this project are recorded here. The project follows [Sema
 
 ## [Unreleased]
 
+- Task memory captures source/configuration evidence and explicit supersession without overwriting history. Retrieval labels stale/unverified records, excludes stale conclusions from recommendations, and works lexically without embeddings. Immutable handoffs reuse `artifact_read`.
+- `validate_scope` issues a pre-check workspace snapshot; `validation_record` stores bounded host-reported results and detects changed inputs. ContextPro does not execute recommended checks.
+
 - Opt-in `context.intent` selects bounded change/debug/review evidence and reports structural/textual provenance and missing roles. Adaptive discovery considers relevant documents without requiring document-specific wording. Enable per query or with `CONTEXTPRO_ADAPTIVE_CONTEXT=true`; default promotion awaits coding trials.
 
 - `status` reports an active rebuild without waiting for indexing to finish, including through the expert dispatcher. Initial rebuilds report `indexing` even before the first source file is indexed.
