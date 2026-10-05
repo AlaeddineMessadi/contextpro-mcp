@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { bindEvidence, memoryEvidenceStatus, createValidationSnapshot, recordValidation, validationState } from '../../build/core/evidence-state.js';
+import { bindEvidence, memoryEvidenceStatus, createValidationSnapshot, recordValidation, validationState, evidenceConfigurationFiles } from '../../build/core/evidence-state.js';
 import { getDB, closeDB } from '../../build/core/db.js';
 import { getProjectMemoryHits } from '../../build/tools/retrieval-helpers.js';
 import { recordTaskMemory } from '../../build/tools/agentic-context.js';
@@ -31,6 +31,7 @@ it('invalidates memory and host verification after source changes and retains su
     assert.equal(db.getMemoryNode(id).content,'auth requires token');
     assert.equal(await memoryEvidenceStatus(root,db.getMemoryNode(successor)),'unverified');
     await assert.rejects(bindEvidence(root,[{file:'source.ts',hash:'0'.repeat(64)}]), /mismatch/);
+    await assert.rejects(bindEvidence(root,[{file:'source.ts',start:1,end:100}]), /exceeds source/);
   } finally { closeDB(root); await rm(root,{recursive:true,force:true}); }
 });
 
@@ -45,5 +46,10 @@ it('task records preserve repeated history and invalidate when configuration is 
     assert.equal(await memoryEvidenceStatus(root,db.getMemoryNode(first.taskMemoryId)),'current');
     await writeFile(join(root,'pyrightconfig.json'),'{}');
     assert.equal(await memoryEvidenceStatus(root,db.getMemoryNode(first.taskMemoryId)),'stale');
+    for(const file of ['poetry.lock','Pipfile.lock','setup.cfg','environment.yml'])await writeFile(join(root,file),'fixture');
+    assert.deepEqual(await evidenceConfigurationFiles(root),['Pipfile.lock','environment.yml','poetry.lock','pyrightconfig.json','setup.cfg']);
+    const deletion=JSON.parse(await recordTaskMemory({rootDir:root,task:'delete old source',summary:'Deleted obsolete file',files:['deleted.py'],format:'json'}));
+    assert.equal(deletion.evidenceState,'unverified');
+    await assert.rejects(recordTaskMemory({rootDir:root,task:'explicit missing',summary:'Unproved',sourceEvidence:[{file:'deleted.py'}]}),/ENOENT/);
   } finally {closeDB(root);await rm(root,{recursive:true,force:true});}
 });

@@ -27,7 +27,8 @@ import { getRelated } from "./related.js";
 import { getTestMap } from "./test-map.js";
 import { explain } from "./explain.js";
 import { getContext } from "./context.js";
-import { recordValidation, validationState, evidenceCurrent, type EvidenceState } from "../core/evidence-state.js";
+import { recordValidation, validationState, memoryEvidenceStatus } from "../core/evidence-state.js";
+import { getDB } from "../core/db.js";
 import { teamStatus, teamTask } from "../core/team-ledger.js";
 import { compilerDiagnostics, previewRename, applyRename } from "./compiler-actions.js";
 import { getFeatureBrief } from "./feature-brief.js";
@@ -261,9 +262,14 @@ export function registerTools(
     },
     withRequestActivity(async ({ artifact_id }) => {
       const artifact = await readArtifact(rootDir(), artifact_id);
-      const applicability = artifact?.kind === "validation_result" ? await validationState(rootDir(), artifact_id)
-        : artifact?.kind === "handoff" ? await evidenceCurrent(rootDir(), (artifact.payload as {sourceEvidence:EvidenceState}).sourceEvidence) ? "current source evidence; validation must be rechecked" : "stale or unverified source evidence"
-        : undefined;
+      let applicability: unknown;
+      if (artifact?.kind === "validation_result") applicability = await validationState(rootDir(), artifact_id);
+      if (artifact?.kind === "handoff") {
+        const payload=artifact.payload as {taskMemoryId?:string;validation?:Array<{id:string}>};
+        const node=payload.taskMemoryId ? (await getDB(rootDir())).getMemoryNode(payload.taskMemoryId) : null;
+        applicability={sourceEvidence:node ? await memoryEvidenceStatus(rootDir(),node) : "unverified",
+          validation:await Promise.all((payload.validation??[]).map(async ({id})=>({id,state:await validationState(rootDir(),id)})))};
+      }
       return {
         content: [{
           type: "text" as const,

@@ -1,7 +1,8 @@
 // Task-oriented retrieval and memory tools for multi-project agent workflows
 // FEATURE: High-leverage agent context assembly over project intelligence data
 
-import { readFile } from "fs/promises";
+import { readFile, stat } from "fs/promises";
+import { resolveProjectPath } from "../core/path-guard.js";
 import { createHash, randomUUID } from "node:crypto";
 import { bindEvidence, createValidationSnapshot, validationState, memoryEvidenceStatus, evidenceConfigurationFiles, type EvidenceFile } from "../core/evidence-state.js";
 import { execFile } from "node:child_process";
@@ -1489,7 +1490,13 @@ export async function buildValidateScope(options: ValidateScopeOptions): Promise
 export async function recordTaskMemory(options: MemoryRecordTaskOptions): Promise<string> {
   const db = await getDB(options.rootDir);
   const config = await loadProjectConfig(options.rootDir);
-  const requestedEvidence = options.sourceEvidence ?? (options.files ?? []).map(file => ({ file }));
+  const requestedEvidence: EvidenceFile[] = [], unavailableEvidence: string[] = [];
+  if(options.sourceEvidence) requestedEvidence.push(...options.sourceEvidence);
+  else for(const file of options.files ?? []) {
+    const path=resolveProjectPath(options.rootDir,file);
+    try { if((await stat(path)).isFile()) requestedEvidence.push({file}); else unavailableEvidence.push(file); }
+    catch(error) { if((error as NodeJS.ErrnoException).code!=="ENOENT") throw error; unavailableEvidence.push(file); }
+  }
   const configuration = requestedEvidence.length ? (await evidenceConfigurationFiles(options.rootDir)).map(file=>({file})) : [];
   const sourceEvidence = await bindEvidence(options.rootDir, [...requestedEvidence,...configuration.filter(item=>!requestedEvidence.some(ref=>ref.file===item.file))]);
   const supersedes = [...new Set(options.supersedes ?? [])];
@@ -1512,6 +1519,7 @@ export async function recordTaskMemory(options: MemoryRecordTaskOptions): Promis
     source_evidence: JSON.stringify(sourceEvidence),
     configuration_paths: JSON.stringify(configuration.map(item=>item.file)),
     validation_refs: JSON.stringify(options.validationRefs ?? []),
+    unavailable_evidence: JSON.stringify(unavailableEvidence),
   };
   let embedding: number[] = [];
   try {
@@ -1558,7 +1566,7 @@ export async function recordTaskMemory(options: MemoryRecordTaskOptions): Promis
     linkedNodes.push(fileNodeId);
   }
   const handoff = await persistArtifact({ rootDir: options.rootDir, kind: "handoff", key: taskMemoryId, immutable: true,
-    payload: { task: options.task, completed: options.summary, remaining: options.openRisks ?? [], assumptions: options.assumptions ?? [], sourceEvidence, validation, taskMemoryId } });
+    payload: { task: options.task, completed: options.summary, remaining: options.openRisks ?? [], assumptions: options.assumptions ?? [], sourceEvidence, unavailableEvidence, validation, taskMemoryId } });
   const payload = {
     taskMemoryId,
     handoff,

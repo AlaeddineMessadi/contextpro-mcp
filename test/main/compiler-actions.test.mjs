@@ -71,3 +71,16 @@ it('configured Pyright supplies references, diagnostics and cross-file rename wi
     await rm(root,{recursive:true,force:true});
   }
 });
+
+it('JavaScript compiler rename preserves aliases, strings and same-named local parameters',async()=>{
+  const root=await mkdtemp(join(tmpdir(),'cp-js-rename-'));
+  try{
+    await writeFile(join(root,'service.js'),'export const charge = (n) => n + 1;\n');
+    await writeFile(join(root,'caller.js'),'import { charge as alias } from "./service.js";\nexport const result = alias(2);\nexport function local(charge) { return charge + "charge"; }\n');
+    await reindex({rootDir:root,noEmbed:true,autoHubs:false});
+    const preview=JSON.parse(await previewRename({rootDir:root,file:'service.js',line:1,column:14,newName:'bill'}));
+    assert.equal(preview.files.length,2);await applyRename({rootDir:root,previewId:preview.artifact.id});
+    const caller=await readFile(join(root,'caller.js'),'utf8');
+    assert.match(caller,/bill as alias/);assert.match(caller,/local\(charge\) \{ return charge \+ "charge"/);
+  }finally{closeTypeScriptReferenceProcess();closeDB(root);await rm(root,{recursive:true,force:true});}
+});

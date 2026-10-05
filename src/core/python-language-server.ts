@@ -8,6 +8,7 @@ import { createMessageConnection, StreamMessageReader, StreamMessageWriter, type
 import pLimit from "p-limit";
 import { resolveProjectPath } from "./path-guard.js";
 import type { CompilerResult } from "./typescript-references.js";
+import { sharedCompute } from "./local-daemon.js";
 
 interface Position { line: number; character: number }
 interface Range { start: Position; end: Position }
@@ -64,7 +65,10 @@ const offset = (text: string, position: Position): number => {
   return lines.slice(0,position.line).reduce((size,line)=>size+line.length+1,0)+position.character;
 };
 
-export async function pythonOperation(input: { rootDir: string; files: string[]; operation: "diagnostics" | "rename" | "references"; file?: string; line?: number; column?: number; newName?: string }): Promise<CompilerResult & { references?: Array<{file:string;line:number;column:number;context:string;isDefinition:boolean}> }> {
+type PythonResult = CompilerResult & { references?: Array<{file:string;line:number;column:number;context:string;isDefinition:boolean}> };
+export async function pythonOperation(input: { rootDir: string; files: string[]; operation: "diagnostics" | "rename" | "references"; file?: string; line?: number; column?: number; newName?: string }): Promise<PythonResult> {
+  const shared = await sharedCompute<PythonResult>("python", input);
+  if (shared) return shared.value;
   if (limit.pendingCount >= 16) throw new Error("Python queue capacity exceeded; narrow the request.");
   return limit(async () => {
     const root = await realpath(input.rootDir);

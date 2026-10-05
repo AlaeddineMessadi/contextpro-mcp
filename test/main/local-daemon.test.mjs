@@ -2,15 +2,16 @@ import { it } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { daemonCommand, sharedCompute } from '../../build/core/local-daemon.js';
 import { getDB, closeDB } from '../../build/core/db.js';
 
 it('shared service isolates roots, refreshes edits, and falls back after a crash', {skip:process.platform === 'win32'}, async () => {
   const temp = await mkdtemp(join(tmpdir(), 'cp-service-'));
-  const before = { runtime:process.env.CONTEXTPRO_RUNTIME_DIR, daemon:process.env.CONTEXTPRO_DAEMON };
+  const before = { runtime:process.env.CONTEXTPRO_RUNTIME_DIR, daemon:process.env.CONTEXTPRO_DAEMON, pyright:process.env.CONTEXTPRO_PYRIGHT_COMMAND };
   process.env.CONTEXTPRO_RUNTIME_DIR = join(temp,'ipc');
   process.env.CONTEXTPRO_DAEMON = 'true';
+  process.env.CONTEXTPRO_PYRIGHT_COMMAND = resolve('node_modules/.bin/pyright-langserver');
   let pid;
   try {
     const roots = [join(temp,'one'),join(temp,'two')];
@@ -25,6 +26,10 @@ it('shared service isolates roots, refreshes edits, and falls back after a crash
     await writeFile(join(roots[0],'entry.ts'),'export const edited = 3;\n');
     assert.equal((await sharedCompute('freshness',{rootDir:roots[0]})).value.refreshed,true);
     assert.ok((await getDB(roots[0])).searchSymbolsByName('edited').length);
+    await writeFile(join(roots[0],'check.py'),'value: int = "wrong"\n');
+    const python=await sharedCompute('python',{rootDir:roots[0],files:[join(roots[0],'check.py')],operation:'diagnostics'});
+    assert.equal(python?.value.engine,'pyright');
+    assert.ok(python.value.diagnostics.some(item=>item.severity==='error'));
     process.kill(pid,'SIGKILL');
     await new Promise(done=>setTimeout(done,100));
     assert.equal(await sharedCompute('freshness',{rootDir:roots[0]}),undefined);
@@ -37,6 +42,7 @@ it('shared service isolates roots, refreshes edits, and falls back after a crash
     try { await daemonCommand('stop'); } catch { if(pid) try { process.kill(pid,'SIGTERM'); } catch {} }
     if(before.runtime===undefined) delete process.env.CONTEXTPRO_RUNTIME_DIR; else process.env.CONTEXTPRO_RUNTIME_DIR=before.runtime;
     if(before.daemon===undefined) delete process.env.CONTEXTPRO_DAEMON; else process.env.CONTEXTPRO_DAEMON=before.daemon;
+    if(before.pyright===undefined) delete process.env.CONTEXTPRO_PYRIGHT_COMMAND; else process.env.CONTEXTPRO_PYRIGHT_COMMAND=before.pyright;
     await rm(temp,{recursive:true,force:true});
   }
 });

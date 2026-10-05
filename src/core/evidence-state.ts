@@ -15,7 +15,7 @@ export interface EvidenceState { root: string; revision: string | null; files: A
 const digest = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
 export async function evidenceConfigurationFiles(rootDir:string):Promise<string[]> {
   return (await walkDirectory({rootDir})).filter(entry=>!entry.isDirectory
-    && /(?:^|\/)(?:package(?:-lock)?\.json|pnpm-lock\.yaml|yarn\.lock|uv\.lock|pyproject\.toml|requirements[^/]*\.txt|(?:ts|js|pyright)config[^/]*\.json|[^/]+\.config\.[^/]+)$/.test(entry.relativePath))
+    && /(?:^|\/)(?:package(?:-lock)?\.json|npm-shrinkwrap\.json|pnpm-lock\.yaml|yarn\.lock|uv\.lock|poetry\.lock|Pipfile(?:\.lock)?|setup\.(?:py|cfg)|environment\.ya?ml|pyproject\.toml|requirements[^/]*\.txt|(?:ts|js|pyright)config[^/]*\.json|[^/]+\.config\.[^/]+)$/.test(entry.relativePath))
     .map(entry=>entry.relativePath).sort();
 }
 
@@ -32,10 +32,16 @@ export async function bindEvidence(rootDir: string, files: EvidenceFile[]): Prom
       const before = await handle.stat();
       if (!before.isFile()) throw new Error(`Evidence requires a regular file: ${item.file}`);
       const hash = createHash("sha256");
-      for await (const chunk of handle.createReadStream({ autoClose: false })) hash.update(chunk);
+      let lines = 1;
+      for await (const chunk of handle.createReadStream({ autoClose: false })) {
+        hash.update(chunk);
+        if(item.start !== undefined || item.end !== undefined) for(const byte of chunk) if(byte === 10) lines++;
+      }
+      if ((item.start ?? 1)>lines || (item.end ?? item.start ?? 1)>lines) throw new Error(`Evidence range exceeds source: ${item.file}`);
       const after = await handle.stat();
       const published = await stat(path);
-      if (published.ino !== after.ino || published.dev !== after.dev || before.size !== after.size || before.mtimeMs !== after.mtimeMs || before.ctimeMs !== after.ctimeMs) throw new Error(`Evidence changed while reading: ${item.file}`);
+      if (published.ino !== after.ino || published.dev !== after.dev || before.size !== after.size || before.mtimeMs !== after.mtimeMs || before.ctimeMs !== after.ctimeMs
+        || published.size !== after.size || published.mtimeMs !== after.mtimeMs || published.ctimeMs !== after.ctimeMs) throw new Error(`Evidence changed while reading: ${item.file}`);
       const value = hash.digest("hex");
       if (item.hash && value !== item.hash) throw new Error(`Evidence hash mismatch: ${item.file}`);
       bound.push({ ...item, file: relative(root, path).split("\\").join("/"), hash: value });
@@ -66,7 +72,8 @@ export async function memoryEvidenceStatus(rootDir: string, node: MemoryNodeRow)
     const state = JSON.parse(metadata.source_evidence);
     if (!state.files?.length) return "unverified";
     if(metadata.configuration_paths && metadata.configuration_paths!==JSON.stringify(await evidenceConfigurationFiles(rootDir))) return "stale";
-    return await evidenceCurrent(rootDir, state) ? "current" : "stale";
+    if (!await evidenceCurrent(rootDir, state)) return "stale";
+    return JSON.parse(metadata.unavailable_evidence ?? "[]").length ? "unverified" : "current";
   } catch { return "unverified"; }
 }
 

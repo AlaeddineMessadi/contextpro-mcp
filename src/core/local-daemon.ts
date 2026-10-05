@@ -67,7 +67,7 @@ async function request(method: string, args: unknown): Promise<unknown> {
   });
 }
 
-export async function sharedCompute<T>(method: "freshness" | "references" | "reindex" | "quickRefresh" | "compiler", args: unknown): Promise<{ value: T } | undefined> {
+export async function sharedCompute<T>(method: "freshness" | "references" | "reindex" | "quickRefresh" | "compiler" | "python", args: unknown): Promise<{ value: T } | undefined> {
   if (process.env.CONTEXTPRO_DAEMON !== "true" || process.env.CONTEXTPRO_DAEMON_SERVER === "true") return;
   try { return { value: await request(method, args) as T }; }
   catch (error) {
@@ -131,6 +131,13 @@ async function serve(): Promise<void> {
         input.files = input.files.map(canonicalFile);
         if (input.file) input.file = canonicalFile(input.file);
         return await (await import("./typescript-reference-process.js")).queryTypeScriptCompiler(input);
+      }
+      if (method === "python") {
+        const input = z.object({ rootDir: rootSchema, files: filesSchema.max(1000), operation: z.enum(["diagnostics", "rename", "references"]), file: z.string().optional(),
+          line: z.number().int().positive().optional(), column: z.number().int().positive().optional(), newName: z.string().min(1).max(200).optional() }).strict().parse(args);
+        input.files = input.files.map(canonicalFile);
+        if (input.file) input.file = canonicalFile(input.file);
+        return await (await import("./python-language-server.js")).pythonOperation(input);
       }
       if (method === "reindex") {
         const input = z.object({ rootDir: rootSchema, targetPath: z.string().optional(), force: z.boolean().optional(), noEmbed: z.boolean().optional(), autoHubs: z.boolean().optional() }).strict().parse(args);
