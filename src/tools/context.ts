@@ -2,7 +2,7 @@
 // snapshot per file. Query packets can persist regenerable evidence artifacts;
 // exact targets remain stateless and never request model enrichment.
 import { readFile, stat } from "node:fs/promises";
-import { relative } from "node:path";
+import { relative, dirname } from "node:path";
 import { createHash } from "node:crypto";
 import ts from "typescript";
 import { analyzeContent, flattenSymbols, type FileAnalysis } from "../core/parser.js";
@@ -178,7 +178,7 @@ export async function collectSourceEvidence(options: ContextOptions): Promise<So
     const definitions = [...definingFiles].sort((a, b) => Number(query.includes(b)) - Number(query.includes(a)) || a.localeCompare(b));
     if (definitions.length > 6 || hints.length > 16) notices.push("Some named definitions omitted; narrow the query or use exact file/symbol targets.");
     targets = [...definitions.slice(0, 6).map(file => ({ file })), ...targets.filter(target => !definitions.slice(0, 6).includes(target.file))];
-    const documents = options.retrievalPreset !== "semantic_only" && (wantsDocuments(query) || (adaptive && !exact))
+    const documents = options.retrievalPreset !== "semantic_only" && (wantsDocuments(query) || (adaptive && (!exact || definitions.length === 0)))
       ? await discoverDocuments(options.rootDir, query, { requireRelevance: adaptive && !wantsDocuments(query) }) : undefined;
     // Strict multi-topic candidates can include controls without saying "code";
     // discovering them does not itself authorize capping documentation.
@@ -219,6 +219,14 @@ export async function collectSourceEvidence(options: ContextOptions): Promise<So
     if (!wantsLockfile(query) && targets.some(target => !isLockfile(target.file))) {
       targets = targets.filter(target => !isLockfile(target.file) || requestedFiles.has(target.file));
     }
+    if (changeContext) {
+      const configurations = (await walkDirectory({rootDir:options.rootDir})).filter(entry => !entry.isDirectory
+        && /(?:^|\/)(?:package\.json|(?:ts|js|pyright)config[^/]*\.json|pyproject\.toml|[^/]+\.config\.[^/]+)$/.test(entry.relativePath)
+        && targets.some(target => dirname(entry.relativePath)==="." || target.file.startsWith(dirname(entry.relativePath)+"/")))
+        .sort((a,b)=>b.depth-a.depth || a.relativePath.localeCompare(b.relativePath));
+      targets.push(...configurations.slice(0,8).map(entry=>({file:entry.relativePath,helper:true})));
+      if(configurations.length>8) notices.push("Additional configuration candidates omitted at the eight-file bound.");
+    }
     if (packet) {
       targets = [...new Map(targets.map(target => [target.file, target])).values()];
       if (targets.length > 32) { targets = targets.slice(0, 32); notices.push("Additional discovery targets omitted at the 32-file bound."); }
@@ -235,6 +243,7 @@ export async function collectSourceEvidence(options: ContextOptions): Promise<So
   const literalParts: Excerpt[] = [];
   const identifierParts: Excerpt[] = [];
   const priorityParts: Excerpt[] = [];
+  const documentPassages: Excerpt[] = [];
   const scopedParts: Excerpt[] = [];
   const smallDependencies: Excerpt[] = [];
   const seen = new Set<string>();
@@ -300,6 +309,15 @@ export async function collectSourceEvidence(options: ContextOptions): Promise<So
     seen.add(key);
     const excerpt = { file, start, end, text: lines.slice(start - 1, end).join("\n") };
     const discovery = !options.targets?.length;
+    if (adaptive && documentFiles.has(file)) {
+      // Operational notes often use long paragraphs or table rows. Rank the
+      // actual matching line before generic heading previews and large windows.
+      const hits = lines.map((text, index) => ({part:{file,start:index+1,end:index+1,text},
+        score:[...new Set(searchTerms(text))].filter(term=>terms.has(term)).length}))
+        .filter(item=>item.score>=Math.min(2,terms.size) && bytes(render(item.part))<=Math.min(1600,available))
+        .sort((a,b)=>b.score-a.score || a.part.start-b.part.start);
+      documentPassages.push(...hits.slice(0,2).map(item=>item.part));
+    }
     if (target.symbol && !target.helper && end - start < 10 && bytes(excerpt.text) < 600) {
       const executable = maskSourceText(excerpt.text, file);
       const calls = new Set([...executable.matchAll(/(?<![.\w$])([A-Za-z_$][\w$]*)\s*\(/g)].map(match => match[1]));
@@ -448,6 +466,7 @@ export async function collectSourceEvidence(options: ContextOptions): Promise<So
   // covering the rest of the question over the first incidental occurrence.
   const literalRank = (part: Excerpt) => literals.findIndex(literal => part.text.normalize("NFC").toLowerCase().includes(literal));
   const coverage = (part: Excerpt) => [...new Set(searchTerms(part.text))].filter(term => terms.has(term)).length;
+  documentPassages.sort((a,b)=>coverage(b)-coverage(a) || Number(requestedFiles.has(b.file))-Number(requestedFiles.has(a.file)) || a.file.localeCompare(b.file));
   literalParts.sort((a,b)=>literalRank(a)-literalRank(b) || coverage(b)-coverage(a));
   identifierParts.sort((a,b)=>Number(coverageFiles.has(b.file))-Number(coverageFiles.has(a.file)) || coverage(b)-coverage(a));
   let documentBytes = 0;
@@ -455,7 +474,7 @@ export async function collectSourceEvidence(options: ContextOptions): Promise<So
   const isDocument = (part: Excerpt) => (documentFiles.has(part.file) || /\.(?:md|mdx|rst|txt)$/i.test(part.file))
     && !requestedFiles.has(part.file);
   // Preserve the existing exact-name priority before adding scoped usage windows.
-  for (const definition of [...priorityParts, ...definitions, ...literalParts, ...identifierParts, ...scopedParts]) {
+  for (const definition of [...documentPassages, ...priorityParts, ...definitions, ...literalParts, ...identifierParts, ...scopedParts]) {
     for (const part of uncoveredRanges(definition, candidates)) {
       const size = bytes(render(part)) + 2;
       if (size <= available && (!isDocument(part) || documentBytes + size <= documentLimit)) {
@@ -561,6 +580,6 @@ export async function collectSourceEvidence(options: ContextOptions): Promise<So
     !merged.length ? "No source fit or matched. Try exact file/line targets or native search." : ""].filter(Boolean).join("\n\n");
   return { text, ranges: merged, hashes: Object.fromEntries([...snapshots].map(([file, source]) => [file, createHash("sha256").update(source).digest("hex")])),
     notices: [coverageNotice, footer, summary].filter((value): value is string => !!value), complete: true,
-    settings: JSON.stringify({ version: 29, adaptive, intent, connected, preset: options.retrievalPreset ?? "balanced", rerank: process.env.CONTEXTPRO_CHAT_RERANK === "true",
+    settings: JSON.stringify({ version: 30, adaptive, intent, connected, preset: options.retrievalPreset ?? "balanced", rerank: process.env.CONTEXTPRO_CHAT_RERANK === "true",
       embedding: `${getProvider()}:${getEmbedModelName()}`, chat: options.targets?.length ? "unused" : await chatModelIdentity(options.rootDir) }) };
 }

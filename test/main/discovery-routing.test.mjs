@@ -36,6 +36,10 @@ it('adaptive context finds operational evidence without document trigger words a
     const text = await getContext({rootDir:root,query,intent:'auto',maxTokens:1500,retrievalPreset:'keyword_only'});
     assert.match(text, /HUMAN-PENDING.md:\d/);
     assert.match(text, /Account owner must resolve payment/);
+    const word=await getContext({rootDir:root,query:'billing',intent:'lookup',maxTokens:1400,retrievalPreset:'keyword_only'});
+    assert.match(word,/Account owner must resolve payment/);
+    const absent=await getContext({rootDir:root,query:'nonexistent_zebra_468291',intent:'auto',maxTokens:1400,retrievalPreset:'keyword_only'});
+    assert.doesNotMatch(absent,/Account owner must resolve payment|src\/service.ts:\d/);
     const change = await getContext({rootDir:root,query:'charge',intent:'change',maxTokens:3000,retrievalPreset:'keyword_only'});
     assert.match(change, /src\/client.ts:\d/);
     assert.match(change, /src\/service.test.ts:\d/);
@@ -45,6 +49,19 @@ it('adaptive context finds operational evidence without document trigger words a
     const bounded = await getContext({rootDir:root,query:'charge',intent:'change',maxTokens:512,retrievalPreset:'keyword_only'});
     assert.ok(Buffer.byteLength(bounded) <= 2048);
     await assert.rejects(getContext({rootDir:root,targets:[{file:'src/service.ts'}],intent:'change'}), /query discovery only/);
+  });
+});
+
+it('adaptive retrieval prioritizes decisive operational paragraphs over headings and incidental CI mentions',async()=>{
+  await fixture({
+    'humanpending.md':'# Owner dependencies\n'+('Unrelated release detail.\n'.repeat(29))+'GitHub Actions availability: account payments failed or the spending limit must be increased. The owner must resolve runner billing before hosted CI can run. '+('Local checks do not prove hosted success. '.repeat(10))+'\n',
+    'docs/ci.md':'# GitHub Actions CI\n'+('GitHub Actions workflow checks run tests.\n'.repeat(40)),
+    'src/billing.ts':'export function billing() { return "GitHub"; }\n',
+  },async root=>{
+    for(const query of ['Find the humanpending entry recording GitHub Actions billing or spending limit blocked CI.','Why cannot hosted CI run when the account spending limit is reached?']) {
+      const text=await getContext({rootDir:root,query,intent:'auto',maxTokens:1400,retrievalPreset:'keyword_only'});
+      assert.match(text,/owner must resolve runner billing/);assert.ok(Buffer.byteLength(text)<=5600);
+    }
   });
 });
 
