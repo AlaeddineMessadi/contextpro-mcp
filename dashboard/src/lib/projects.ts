@@ -16,6 +16,8 @@ export interface DashboardProject {
   lastActiveAt: string | null;
   /** Whether a .contextpro/index.db actually exists for this root right now. */
   hasIndex: boolean;
+  /** Whether the workspace folder still exists. */
+  available: boolean;
 }
 
 const REGISTRY_PATHS = [
@@ -35,11 +37,13 @@ async function exists(p: string): Promise<boolean> {
 async function readRegistry(): Promise<Array<Record<string, unknown>>> {
   for (const path of REGISTRY_PATHS) {
     try {
-      const raw = await readFile(path, "utf-8");
+      const raw = await readFile(/* turbopackIgnore: true */ path, "utf-8");
       const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed)) return parsed as Array<Record<string, unknown>>;
+      if (Array.isArray(parsed))
+        return parsed as Array<Record<string, unknown>>;
       if (Array.isArray((parsed as { workspaces?: unknown }).workspaces)) {
-        return (parsed as { workspaces: Array<Record<string, unknown>> }).workspaces;
+        return (parsed as { workspaces: Array<Record<string, unknown>> })
+          .workspaces;
       }
     } catch {
       // try next
@@ -59,7 +63,9 @@ export async function listProjects(): Promise<DashboardProject[]> {
   const seen = new Set<string>();
 
   for (const entry of entries) {
-    const root = (entry.workspaceRoot ?? entry.root ?? entry.gitRoot) as string | undefined;
+    const root = (entry.workspaceRoot ?? entry.root ?? entry.gitRoot) as
+      | string
+      | undefined;
     if (!root || seen.has(root)) continue;
     seen.add(root);
     projects.push({
@@ -69,20 +75,26 @@ export async function listProjects(): Promise<DashboardProject[]> {
       gitRoot: (entry.gitRoot as string) ?? null,
       lastActiveAt: (entry.lastActiveAt as string) ?? null,
       hasIndex: await exists(dbPathFor(root)),
+      available: await exists(root),
     });
   }
 
   // Always include an explicit override / CWD fallback so the dashboard is useful
   // even with an empty registry (e.g. pointed straight at one repo).
   const fallbackRoot = process.env.CONTEXTPRO_DASHBOARD_ROOT ?? process.cwd();
-  if (!seen.has(fallbackRoot) && (await exists(dbPathFor(fallbackRoot)))) {
+  const fallbackHasIndex = await exists(dbPathFor(fallbackRoot));
+  if (
+    !seen.has(fallbackRoot) &&
+    (fallbackHasIndex || process.env.CONTEXTPRO_DASHBOARD_ROOT)
+  ) {
     projects.unshift({
       projectId: null,
       clientId: null,
       root: fallbackRoot,
       gitRoot: null,
       lastActiveAt: null,
-      hasIndex: true,
+      hasIndex: fallbackHasIndex,
+      available: await exists(fallbackRoot),
     });
   }
 
@@ -94,9 +106,14 @@ export async function listProjects(): Promise<DashboardProject[]> {
 }
 
 /** Resolve the root a request is asking about, defaulting to the first project. */
-export async function resolveRoot(requested: string | null): Promise<string | null> {
+export async function resolveRoot(
+  requested: string | null,
+): Promise<string | null> {
   if (requested) return requested;
-  if (process.env.CONTEXTPRO_DASHBOARD_ROOT) return process.env.CONTEXTPRO_DASHBOARD_ROOT;
+  if (process.env.CONTEXTPRO_DASHBOARD_ROOT)
+    return process.env.CONTEXTPRO_DASHBOARD_ROOT;
   const projects = await listProjects();
-  return projects.find((p) => p.hasIndex)?.root ?? projects[0]?.root ?? process.cwd();
+  return (
+    projects.find((p) => p.hasIndex)?.root ?? projects[0]?.root ?? process.cwd()
+  );
 }

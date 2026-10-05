@@ -81,5 +81,7 @@ jobs:
       - run: npm run build
       - run: npm ci
         working-directory: ${{ matrix.app }}
+      - run: npm run test --if-present
+        working-directory: ${{ matrix.app }}
       - run: npm run build
         working-directory: ${{ matrix.app }}

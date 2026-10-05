@@ -1,114 +1,203 @@
 "use client";
+import { useState } from "react";
+import type { ToolCall } from "@/lib/mcp";
+import type { ToolsData } from "@/lib/dashboard-types";
 
-import { useMemo, useState } from "react";
-
-interface ToolAggregate { tool: string; calls: number; errors: number; avgMs: number; maxMs: number; lastAt: number; savedTokens: number; representedFiles: number }
-interface ToolCall { tool: string; status: string; durationMs: number; calledAt: number; savedTokens: number; representedFiles: number }
-interface ToolsData { total: number; aggregates: ToolAggregate[]; history: ToolCall[] }
-
-function ago(ms: number): string {
-  const s = Math.round((Date.now() - ms) / 1000);
-  if (s < 60) return `${s}s ago`;
-  if (s < 3600) return `${Math.round(s / 60)}m ago`;
-  if (s < 86400) return `${Math.round(s / 3600)}h ago`;
-  return `${Math.round(s / 86400)}d ago`;
-}
-
-/** Tiny inline bar sparkline of call counts over the last `buckets` time slots. */
-function Sparkline({ history }: { history: ToolCall[] }) {
-  const buckets = 40;
-  const data = useMemo(() => {
-    if (history.length === 0) return [];
-    const now = Date.now();
-    const oldest = Math.min(...history.map((h) => h.calledAt));
-    const span = Math.max(60_000, now - oldest);
-    const slot = span / buckets;
-    const counts = new Array(buckets).fill(0);
-    for (const h of history) {
-      const i = Math.min(buckets - 1, Math.floor((h.calledAt - oldest) / slot));
-      counts[i] += 1;
-    }
-    return counts;
-  }, [history]);
-  if (data.length === 0) return null;
-  const max = Math.max(1, ...data);
+export function CallTable({ calls }: { calls: ToolCall[] }) {
+  if (!calls.length)
+    return (
+      <div className="empty-inline">
+        <strong>No recorded calls here yet.</strong>
+        <p>
+          Run a ContextPro tool in this workspace, or change the activity
+          filters.
+        </p>
+      </div>
+    );
   return (
-    <div style={{ display: "flex", alignItems: "flex-end", gap: 1, height: 36, marginBottom: 10 }}>
-      {data.map((c, i) => (
-        <div key={i} title={`${c} calls`} style={{ flex: 1, height: `${(c / max) * 100}%`, minHeight: c > 0 ? 2 : 0, background: "var(--accent)", opacity: 0.4 + (c / max) * 0.6, borderRadius: 1 }} />
-      ))}
+    <div className="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Tool</th>
+            <th>Result</th>
+            <th className="num">Duration</th>
+            <th className="num">Called at</th>
+          </tr>
+        </thead>
+        <tbody>
+          {calls.map((c, i) => (
+            <tr key={`${c.calledAt}-${i}`}>
+              <td>
+                <code>{c.tool}</code>
+              </td>
+              <td>
+                <span
+                  className={`badge ${c.status === "error" ? "red" : "green"}`}
+                >
+                  {c.status}
+                </span>
+              </td>
+              <td className="num">{c.durationMs.toLocaleString()} ms</td>
+              <td className="num muted">
+                <time
+                  dateTime={new Date(c.calledAt).toISOString()}
+                  title={new Date(c.calledAt).toLocaleString()}
+                >
+                  {new Date(c.calledAt).toLocaleString(undefined, {
+                    month: "short",
+                    day: "numeric",
+                    hour: "2-digit",
+                    minute: "2-digit",
+                    second: "2-digit",
+                  })}
+                </time>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }
-
 export function ToolsPanel({ data }: { data: ToolsData | null }) {
-  const [toolFilter, setToolFilter] = useState<string>("");
-  const [statusFilter, setStatusFilter] = useState<string>("all");
-
-  if (!data) return <div className="panel"><h2>Tool Activity</h2><p className="muted">No data.</p></div>;
-
-  const filteredHistory = data.history.filter((c) =>
-    (!toolFilter || c.tool === toolFilter) &&
-    (statusFilter === "all" || c.status === statusFilter),
+  const [tool, setTool] = useState("");
+  const [result, setResult] = useState("all");
+  const [limit, setLimit] = useState(25);
+  if (!data)
+    return (
+      <section className="panel">
+        <h2>Recorded activity</h2>
+        <p className="muted">Waiting for tool history…</p>
+      </section>
+    );
+  const filtered = data.history.filter(
+    (c) =>
+      (!tool || c.tool === tool) && (result === "all" || c.status === result),
   );
-  const maxCalls = Math.max(1, ...data.aggregates.map((a) => a.calls));
-  const totalSaved = data.aggregates.reduce((sum, item) => sum + (item.savedTokens ?? 0), 0);
-
+  const saved = data.aggregates.reduce((n, a) => n + (a.savedTokens ?? 0), 0);
   return (
-    <div className="panel">
-      <h2>Tool Activity &amp; History</h2>
-      {totalSaved > 0 && <p className="muted">Estimated source tokens avoided: <strong>~{totalSaved.toLocaleString()}</strong> · numeric history only, not billing data</p>}
-      {data.total === 0 ? (
-        <p className="muted">No tool calls recorded yet. Use any MCP tool (search, status, semantic_diff…) and they&apos;ll appear here. (Requires the MCP server running the persistence build.)</p>
-      ) : (
-        <>
-          <Sparkline history={data.history} />
+    <>
+      <section className="panel">
+        <div className="section-heading">
+          <h2>Recorded activity</h2>
+          <span className="muted">
+            {data.total.toLocaleString()} calls · all time
+          </span>
+        </div>
+        <div className="filters">
+          <label>
+            Tool
+            <select
+              value={tool}
+              onChange={(e) => {
+                setTool(e.target.value);
+                setLimit(25);
+              }}
+            >
+              <option value="">All tools</option>
+              {data.aggregates.map((a) => (
+                <option key={a.tool}>{a.tool}</option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Result
+            <select
+              value={result}
+              onChange={(e) => {
+                setResult(e.target.value);
+                setLimit(25);
+              }}
+            >
+              <option value="all">All results</option>
+              <option value="ok">Successful</option>
+              <option value="error">Errors</option>
+            </select>
+          </label>
+          <span className="muted">
+            {filtered.length} matches in latest {data.history.length} calls
+          </span>
+        </div>
+        <CallTable calls={filtered.slice(0, limit)} />
+        {filtered.length > limit && (
+          <button className="load-more" onClick={() => setLimit((n) => n + 25)}>
+            Show 25 more calls
+          </button>
+        )}
+      </section>
+      <details className="panel diagnostics">
+        <summary>Tool timings · {data.aggregates.length} tools</summary>
+        <p className="muted">
+          Measured durations across this project&apos;s recorded history.
+        </p>
+        <div className="table-wrap">
           <table>
-            <thead><tr><th>Tool</th><th className="num">Calls</th><th className="num">Err</th><th className="num">Avg</th><th className="num">Saved est.</th><th></th></tr></thead>
+            <thead>
+              <tr>
+                <th>Tool</th>
+                <th className="num">Calls</th>
+                <th className="num">Errors</th>
+                <th className="num">Average</th>
+                <th className="num">Maximum</th>
+              </tr>
+            </thead>
             <tbody>
               {data.aggregates.map((a) => (
-                <tr key={a.tool} onClick={() => setToolFilter((t) => (t === a.tool ? "" : a.tool))}
-                    style={{ cursor: "pointer", background: toolFilter === a.tool ? "var(--panel-2)" : undefined }}>
-                  <td>{a.tool}</td>
-                  <td className="num">{a.calls}</td>
-                  <td className="num" style={{ color: a.errors > 0 ? "var(--red)" : "inherit" }}>{a.errors}</td>
-                  <td className="num">{a.avgMs}ms</td>
-                  <td className="num" title={`${a.representedFiles ?? 0} represented file references`}>~{(a.savedTokens ?? 0).toLocaleString()}</td>
-                  <td style={{ width: 80 }}><div className="bar"><span style={{ width: `${(a.calls / maxCalls) * 100}%` }} /></div></td>
+                <tr key={a.tool}>
+                  <td>
+                    <button
+                      className="tool-link"
+                      onClick={() => {
+                        setTool(a.tool);
+                        setLimit(25);
+                      }}
+                    >
+                      {a.tool}
+                    </button>
+                  </td>
+                  <td className="num">{a.calls.toLocaleString()}</td>
+                  <td className={`num ${a.errors ? "err" : ""}`}>{a.errors}</td>
+                  <td className="num">{a.avgMs.toLocaleString()} ms</td>
+                  <td className="num">{a.maxMs.toLocaleString()} ms</td>
                 </tr>
               ))}
             </tbody>
           </table>
-
-          <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 14, marginBottom: 6 }}>
-            <h2 style={{ margin: 0 }}>Recent Calls</h2>
-            <span className="spacer" style={{ flex: 1 }} />
-            {toolFilter && <button className="chip" onClick={() => setToolFilter("")}>tool: {toolFilter} ✕</button>}
-            <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="chip">
-              <option value="all">all</option>
-              <option value="ok">ok</option>
-              <option value="error">errors</option>
-            </select>
-          </div>
-          <div className="scroll">
-            <table>
-              <tbody>
-                {filteredHistory.slice(0, 80).map((c, idx) => (
-                  <tr key={idx}>
-                    <td>{c.tool}</td>
-                    <td>{c.status === "error" ? <span className="badge red">error</span> : <span className="badge green">ok</span>}</td>
-                    <td className="num">{c.durationMs}ms</td>
-                    <td className="num muted">{c.savedTokens > 0 ? `~${c.savedTokens.toLocaleString()} saved` : "—"}</td>
-                    <td className="num muted">{ago(c.calledAt)}</td>
-                  </tr>
-                ))}
-                {filteredHistory.length === 0 && <tr><td className="muted">No calls match the filter.</td></tr>}
-              </tbody>
-            </table>
-          </div>
-        </>
-      )}
-      <style>{`.chip{background:var(--panel-2);color:var(--text);border:1px solid var(--border);border-radius:5px;padding:3px 8px;font-size:11px;font-family:var(--mono);cursor:pointer}.chip:hover{border-color:var(--accent)}`}</style>
-    </div>
+        </div>
+      </details>
+      <details className="panel diagnostics">
+        <summary>Source-output estimates</summary>
+        <p>
+          ~{saved.toLocaleString()} estimated source tokens avoided compared
+          with full-file reads. These estimates are not measured billing savings
+          or a comparison with native coding-agent behavior.
+        </p>
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Tool</th>
+                <th className="num">Estimated tokens avoided</th>
+                <th className="num">Represented file references</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.aggregates.map((a) => (
+                <tr key={a.tool}>
+                  <td>
+                    <code>{a.tool}</code>
+                  </td>
+                  <td className="num">
+                    ~{(a.savedTokens ?? 0).toLocaleString()}
+                  </td>
+                  <td className="num">{a.representedFiles ?? 0}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </details>
+    </>
   );
 }

@@ -12,6 +12,7 @@
 
 import { pathToFileURL } from "url";
 import { join } from "path";
+import { parseReindexResult } from "./reindex-result.mjs";
 
 // The dashboard runs with cwd at <repo>/dashboard (next dev) or is invoked from the
 // repo; allow an explicit override for safety.
@@ -28,19 +29,35 @@ function buildModuleUrl(rel: string): string {
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 async function mcpDB() {
-  const mod: any = await import(/* webpackIgnore: true */ /* turbopackIgnore: true */ buildModuleUrl("core/db.js"));
+  const mod: any = await import(
+    /* webpackIgnore: true */ /* turbopackIgnore: true */ buildModuleUrl(
+      "core/db.js",
+    )
+  );
   return mod;
 }
 async function mcpStatus() {
-  const mod: any = await import(/* webpackIgnore: true */ /* turbopackIgnore: true */ buildModuleUrl("tools/status.js"));
+  const mod: any = await import(
+    /* webpackIgnore: true */ /* turbopackIgnore: true */ buildModuleUrl(
+      "tools/status.js",
+    )
+  );
   return mod;
 }
 async function mcpGraph() {
-  const mod: any = await import(/* webpackIgnore: true */ /* turbopackIgnore: true */ buildModuleUrl("core/project-graph.js"));
+  const mod: any = await import(
+    /* webpackIgnore: true */ /* turbopackIgnore: true */ buildModuleUrl(
+      "core/project-graph.js",
+    )
+  );
   return mod;
 }
 async function mcpFreshness() {
-  const mod: any = await import(/* webpackIgnore: true */ /* turbopackIgnore: true */ buildModuleUrl("core/index-freshness.js"));
+  const mod: any = await import(
+    /* webpackIgnore: true */ /* turbopackIgnore: true */ buildModuleUrl(
+      "core/index-freshness.js",
+    )
+  );
   return mod;
 }
 
@@ -71,7 +88,11 @@ export interface ToolAggregate {
 }
 
 async function mcpReindex() {
-  const mod: any = await import(/* webpackIgnore: true */ /* turbopackIgnore: true */ buildModuleUrl("tools/reindex.js"));
+  const mod: any = await import(
+    /* webpackIgnore: true */ /* turbopackIgnore: true */ buildModuleUrl(
+      "tools/reindex.js",
+    )
+  );
   return mod;
 }
 
@@ -92,7 +113,11 @@ export interface IndexStats {
 export async function indexStats(rootDir: string): Promise<IndexStats> {
   const { getDB } = await mcpDB();
   const db = await getDB(rootDir);
-  const files = db.getAllFiles() as Array<{ path: string; language: string | null; symbol_count: number }>;
+  const files = db.getAllFiles() as Array<{
+    path: string;
+    language: string | null;
+    symbol_count: number;
+  }>;
 
   const byLang = new Map<string, { files: number; symbols: number }>();
   let totalSymbols = 0;
@@ -117,7 +142,9 @@ export async function indexStats(rootDir: string): Promise<IndexStats> {
   return {
     totalFiles: files.length,
     totalSymbols,
-    avgSymbolsPerFile: files.length ? Math.round((totalSymbols / files.length) * 10) / 10 : 0,
+    avgSymbolsPerFile: files.length
+      ? Math.round((totalSymbols / files.length) * 10) / 10
+      : 0,
     languages,
     largestFiles,
   };
@@ -146,39 +173,71 @@ export function getReindexState(rootDir: string): ReindexState | null {
 }
 
 /** Kick off a reindex in the background; returns immediately. Poll status + getReindexState. */
-export async function startReindex(rootDir: string, force: boolean): Promise<{ started: boolean; alreadyRunning: boolean }> {
+export async function startReindex(
+  rootDir: string,
+  force: boolean,
+): Promise<{ started: boolean; alreadyRunning: boolean }> {
   const existing = reindexState.get(rootDir);
   if (existing?.running) return { started: false, alreadyRunning: true };
 
   reindexState.set(rootDir, { running: true, startedAt: Date.now() });
-  const { reindex } = await mcpReindex();
+  let reindex;
+  try {
+    ({ reindex } = await mcpReindex());
+  } catch (error) {
+    reindexState.set(rootDir, {
+      running: false,
+      startedAt: Date.now(),
+      finishedAt: Date.now(),
+      error: String(error),
+    });
+    throw error;
+  }
 
   void (async () => {
     const start = Date.now();
     try {
-      const result = await reindex({ rootDir, force });
+      const result = parseReindexResult(await reindex({ rootDir, force }));
       const durationMs = Date.now() - start;
-      const indexed = result?.indexed ?? 0;
+      const indexed = result.indexed;
       reindexState.set(rootDir, {
-        running: false, startedAt: start, finishedAt: Date.now(),
-        indexed, skipped: result?.skipped ?? 0, durationMs,
-        filesPerSec: durationMs > 0 ? Math.round((indexed / (durationMs / 1000)) * 10) / 10 : 0,
+        running: false,
+        startedAt: start,
+        finishedAt: Date.now(),
+        indexed,
+        skipped: result.skipped,
+        durationMs,
+        filesPerSec:
+          durationMs > 0
+            ? Math.round((indexed / (durationMs / 1000)) * 10) / 10
+            : 0,
       });
     } catch (error) {
-      reindexState.set(rootDir, { running: false, startedAt: start, finishedAt: Date.now(), error: String(error) });
+      reindexState.set(rootDir, {
+        running: false,
+        startedAt: start,
+        finishedAt: Date.now(),
+        error: String(error),
+      });
     }
   })();
 
   return { started: true, alreadyRunning: false };
 }
 
-export async function toolHistory(rootDir: string, limit = 200): Promise<ToolCall[]> {
+export async function toolHistory(
+  rootDir: string,
+  limit = 200,
+): Promise<ToolCall[]> {
   const { getDB } = await mcpDB();
   const db = await getDB(rootDir);
   return db.getToolCallHistory(limit);
 }
 
-export async function toolAggregates(rootDir: string, sinceMs?: number): Promise<ToolAggregate[]> {
+export async function toolAggregates(
+  rootDir: string,
+  sinceMs?: number,
+): Promise<ToolAggregate[]> {
   const { getDB } = await mcpDB();
   const db = await getDB(rootDir);
   return db.getToolCallAggregates(sinceMs);
@@ -208,7 +267,10 @@ export interface GraphEdge {
  * file/test nodes plus the import edges between them. PageRank-style importance is
  * approximated by in-degree so node size conveys "depended-on-ness".
  */
-export async function codeGraph(rootDir: string, maxNodes = 200): Promise<{
+export async function codeGraph(
+  rootDir: string,
+  maxNodes = 200,
+): Promise<{
   nodes: Array<GraphNode & { importance: number }>;
   edges: GraphEdge[];
   stats: Record<string, number>;
@@ -217,12 +279,15 @@ export async function codeGraph(rootDir: string, maxNodes = 200): Promise<{
   await ensureFreshIndex(rootDir);
   const { buildProjectGraph } = await mcpGraph();
   const graph = await buildProjectGraph(rootDir);
-  const fileNodes = graph.nodes.filter((n: GraphNode) => n.type === "file" || n.type === "test");
+  const fileNodes = graph.nodes.filter(
+    (n: GraphNode) => n.type === "file" || n.type === "test",
+  );
   const fileIds = new Set(fileNodes.map((n: GraphNode) => n.id));
 
   // File-level import edges only, for a readable map.
   const importEdges = graph.edges.filter(
-    (e: GraphEdge) => e.type === "imports" && fileIds.has(e.source) && fileIds.has(e.target),
+    (e: GraphEdge) =>
+      e.type === "imports" && fileIds.has(e.source) && fileIds.has(e.target),
   );
 
   // total degree (in+out) — connectivity, used both for importance and node selection.
@@ -243,8 +308,13 @@ export async function codeGraph(rootDir: string, maxNodes = 200): Promise<{
     .slice(0, maxNodes) as Array<{ node: GraphNode; deg: number }>;
   const keepIds = new Set(keep.map((x) => x.node.id));
 
-  const nodes = keep.map(({ node }) => ({ ...node, importance: inDegree.get(node.id) ?? 0 }));
-  const edges = importEdges.filter((e: GraphEdge) => keepIds.has(e.source) && keepIds.has(e.target));
+  const nodes = keep.map(({ node }) => ({
+    ...node,
+    importance: inDegree.get(node.id) ?? 0,
+  }));
+  const edges = importEdges.filter(
+    (e: GraphEdge) => keepIds.has(e.source) && keepIds.has(e.target),
+  );
 
   return { nodes, edges, stats: graph.stats };
 }
@@ -262,21 +332,43 @@ export interface MemoryEdge {
   weight: number;
 }
 
-export async function memoryGraph(rootDir: string): Promise<{ nodes: MemoryNode[]; edges: MemoryEdge[] }> {
+export async function memoryGraph(
+  rootDir: string,
+): Promise<{ nodes: MemoryNode[]; edges: MemoryEdge[] }> {
   const { getDB } = await mcpDB();
   const db = await getDB(rootDir);
-  const rawNodes = db.listMemoryNodes() as Array<{ id: string; type: string; label: string; access_count?: number }>;
-  const nodes: MemoryNode[] = rawNodes.map((n) => ({ id: n.id, type: n.type, label: n.label, accessCount: n.access_count }));
+  const rawNodes = db.listMemoryNodes() as Array<{
+    id: string;
+    type: string;
+    label: string;
+    access_count?: number;
+  }>;
+  const nodes: MemoryNode[] = rawNodes.map((n) => ({
+    id: n.id,
+    type: n.type,
+    label: n.label,
+    accessCount: n.access_count,
+  }));
 
   const edges: MemoryEdge[] = [];
   const seen = new Set<string>();
   for (const node of rawNodes) {
-    const nodeEdges = db.getMemoryEdgesForNode(node.id) as Array<{ source: string; target: string; relation: string; weight: number }>;
+    const nodeEdges = db.getMemoryEdgesForNode(node.id) as Array<{
+      source: string;
+      target: string;
+      relation: string;
+      weight: number;
+    }>;
     for (const e of nodeEdges) {
       const key = `${e.source}->${e.target}:${e.relation}`;
       if (seen.has(key)) continue;
       seen.add(key);
-      edges.push({ source: e.source, target: e.target, relation: e.relation, weight: e.weight });
+      edges.push({
+        source: e.source,
+        target: e.target,
+        relation: e.relation,
+        weight: e.weight,
+      });
     }
   }
   return { nodes, edges };

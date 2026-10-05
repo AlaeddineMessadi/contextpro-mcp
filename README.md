@@ -132,7 +132,7 @@ npm run release:check
 npm run pack:check
 ```
 
-Start with [CONTRIBUTING.md](https://github.com/AlaeddineMessadi/contextpro-mcp/blob/main/CONTRIBUTING.md), [open issues](https://github.com/AlaeddineMessadi/contextpro-mcp/issues) or the [roadmap](https://github.com/AlaeddineMessadi/contextpro-mcp/blob/main/TODO.md). The optional `landing/` website and local `dashboard/` have their own npm lockfiles. [Maintenance](docs/maintenance.md) explains safe cleanup and runtime-specific testing.
+Start with [CONTRIBUTING.md](https://github.com/AlaeddineMessadi/contextpro-mcp/blob/main/CONTRIBUTING.md), [open issues](https://github.com/AlaeddineMessadi/contextpro-mcp/issues) or the [roadmap](https://github.com/AlaeddineMessadi/contextpro-mcp/blob/main/TODO.md). The optional `landing/` website and local [dashboard](docs/dashboard.md) have their own npm lockfiles. [Maintenance](docs/maintenance.md) explains safe cleanup and runtime-specific testing.
 
 For questions, see [support](https://github.com/AlaeddineMessadi/contextpro-mcp/blob/main/SUPPORT.md). Report vulnerabilities privately through the process in [SECURITY.md](SECURITY.md). Community participation follows our [code of conduct](https://github.com/AlaeddineMessadi/contextpro-mcp/blob/main/CODE_OF_CONDUCT.md).
 

@@ -2,16 +2,37 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 
-export interface GNode { id: string; label: string; importance?: number; group?: string }
-export interface GEdge { source: string; target: string; weight?: number }
+export interface GNode {
+  id: string;
+  label: string;
+  importance?: number;
+  group?: string;
+}
+export interface GEdge {
+  source: string;
+  target: string;
+  weight?: number;
+  type?: string;
+}
 
 const GROUP_COLORS: Record<string, string> = {
-  file: "#5b9dff", test: "#3fb950", config: "#d29922", document: "#a371f7",
-  concept: "#5b9dff", note: "#d29922", symbol: "#79c0ff", folder: "#8b90a0",
-  default: "#8b90a0",
+  file: "#477562",
+  test: "#6b8838",
+  config: "#a17d32",
+  document: "#91765f",
+  concept: "#477562",
+  note: "#a17d32",
+  symbol: "#68858d",
+  folder: "#728075",
+  default: "#728075",
 };
 
-interface Pos { x: number; y: number; r: number; color: string }
+interface Pos {
+  x: number;
+  y: number;
+  r: number;
+  color: string;
+}
 
 /**
  * A dependency-free, force-directed graph with zoom/pan and click-to-focus.
@@ -21,14 +42,32 @@ interface Pos { x: number; y: number; r: number; color: string }
  *   neighborhood stays bright, the rest dims, and a side label shows its degree.
  * - Node size = importance; color = group.
  */
-export function GraphView({ nodes, edges, height = 480, search = "", onSelect }: {
-  nodes: GNode[]; edges: GEdge[]; height?: number; search?: string;
-  onSelect?: (node: { id: string; label: string; group?: string; degree: number } | null) => void;
+export function GraphView({
+  nodes,
+  edges,
+  height = 480,
+  search = "",
+  selectedId,
+  onSelect,
+}: {
+  nodes: GNode[];
+  edges: GEdge[];
+  height?: number;
+  search?: string;
+  selectedId?: string | null;
+  onSelect?: (
+    node: { id: string; label: string; group?: string; degree: number } | null,
+  ) => void;
 }) {
   const [hover, setHover] = useState<string | null>(null);
   const [focus, setFocus] = useState<string | null>(null);
   const [view, setView] = useState({ x: 0, y: 0, k: 1 });
-  const dragRef = useRef<{ x: number; y: number; vx: number; vy: number } | null>(null);
+  const dragRef = useRef<{
+    x: number;
+    y: number;
+    vx: number;
+    vy: number;
+  } | null>(null);
   const svgRef = useRef<SVGSVGElement | null>(null);
 
   const W = 1000;
@@ -45,15 +84,24 @@ export function GraphView({ nodes, edges, height = 480, search = "", onSelect }:
     const py = new Float64Array(N);
     for (let i = 0; i < N; i++) {
       const a = (i / N) * Math.PI * 2;
-      px[i] = W / 2 + Math.cos(a) * (Math.min(W, H) / 3) * (0.6 + ((i % 7) / 10));
-      py[i] = H / 2 + Math.sin(a) * (Math.min(W, H) / 3) * (0.6 + ((i % 5) / 10));
+      px[i] = W / 2 + Math.cos(a) * (Math.min(W, H) / 3) * (0.6 + (i % 7) / 10);
+      py[i] = H / 2 + Math.sin(a) * (Math.min(W, H) / 3) * (0.6 + (i % 5) / 10);
     }
 
     const links = edges
-      .map((e) => [idx.get(e.source), idx.get(e.target)] as [number | undefined, number | undefined])
-      .filter((l): l is [number, number] => l[0] !== undefined && l[1] !== undefined);
+      .map(
+        (e) =>
+          [idx.get(e.source), idx.get(e.target)] as [
+            number | undefined,
+            number | undefined,
+          ],
+      )
+      .filter(
+        (l): l is [number, number] => l[0] !== undefined && l[1] !== undefined,
+      );
 
-    const cx = W / 2, cy = H / 2;
+    const cx = W / 2,
+      cy = H / 2;
     const area = W * H;
     // Ideal edge length, scaled so the graph fills the canvas without crowding.
     const k = Math.sqrt(area / N) * 0.55;
@@ -75,8 +123,10 @@ export function GraphView({ nodes, edges, height = 480, search = "", onSelect }:
           const rep = Math.min((k * k) / dist, k * 2) * repScale; // capped
           ddx = (ddx / dist) * rep;
           ddy = (ddy / dist) * rep;
-          dx[i] += ddx; dy[i] += ddy;
-          dx[j] -= ddx; dy[j] -= ddy;
+          dx[i] += ddx;
+          dy[i] += ddy;
+          dx[j] -= ddx;
+          dy[j] -= ddy;
         }
       }
       // Attraction along edges.
@@ -87,8 +137,10 @@ export function GraphView({ nodes, edges, height = 480, search = "", onSelect }:
         const att = (dist * dist) / k;
         ddx = (ddx / dist) * att;
         ddy = (ddy / dist) * att;
-        dx[a] -= ddx; dy[a] -= ddy;
-        dx[b] += ddx; dy[b] += ddy;
+        dx[a] -= ddx;
+        dy[a] -= ddy;
+        dx[b] += ddx;
+        dy[b] += ddy;
       }
       // Gravity: a gentle pull toward center keeps the whole graph on-canvas and
       // prevents disconnected nodes from drifting to the walls.
@@ -108,10 +160,15 @@ export function GraphView({ nodes, edges, height = 480, search = "", onSelect }:
 
     // Fit the final layout into the viewport with padding (no hard clamping during
     // simulation — we rescale once at the end so clusters keep their shape).
-    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    let minX = Infinity,
+      minY = Infinity,
+      maxX = -Infinity,
+      maxY = -Infinity;
     for (let i = 0; i < N; i++) {
-      minX = Math.min(minX, px[i]); maxX = Math.max(maxX, px[i]);
-      minY = Math.min(minY, py[i]); maxY = Math.max(maxY, py[i]);
+      minX = Math.min(minX, px[i]);
+      maxX = Math.max(maxX, px[i]);
+      minY = Math.min(minY, py[i]);
+      maxY = Math.max(maxY, py[i]);
     }
     const pad = 30;
     const sx = (W - pad * 2) / Math.max(1, maxX - minX);
@@ -126,7 +183,8 @@ export function GraphView({ nodes, edges, height = 480, search = "", onSelect }:
     const map = new Map<string, Pos>();
     nodes.forEach((n, i) => {
       map.set(n.id, {
-        x: px[i], y: py[i],
+        x: px[i],
+        y: py[i],
         r: 3.5 + ((n.importance ?? 0) / maxImp) * 12,
         color: GROUP_COLORS[n.group ?? "default"] ?? GROUP_COLORS.default,
       });
@@ -136,7 +194,10 @@ export function GraphView({ nodes, edges, height = 480, search = "", onSelect }:
 
   const degree = useMemo(() => {
     const d = new Map<string, number>();
-    for (const e of edges) { d.set(e.source, (d.get(e.source) ?? 0) + 1); d.set(e.target, (d.get(e.target) ?? 0) + 1); }
+    for (const e of edges) {
+      d.set(e.source, (d.get(e.source) ?? 0) + 1);
+      d.set(e.target, (d.get(e.target) ?? 0) + 1);
+    }
     return d;
   }, [edges]);
 
@@ -181,44 +242,117 @@ export function GraphView({ nodes, edges, height = 480, search = "", onSelect }:
     const sy = (ev.clientY - d.y) * (H / rect.height);
     setView((v) => ({ ...v, x: d.vx + sx, y: d.vy + sy }));
   }
-  function onPointerUp() { dragRef.current = null; }
+  function onPointerUp() {
+    dragRef.current = null;
+  }
 
-  useEffect(() => { setFocus(null); }, [nodes]);
+  useEffect(() => {
+    if (selectedId !== undefined) setFocus(selectedId);
+  }, [selectedId]);
+  useEffect(() => {
+    setFocus((current) =>
+      current && nodes.some((n) => n.id === current) ? current : null,
+    );
+  }, [nodes]);
 
   // Report the focused node (id, label, degree) to the parent for the details panel.
   useEffect(() => {
     if (!onSelect) return;
-    if (!focus) { onSelect(null); return; }
+    if (!focus) {
+      onSelect(null);
+      return;
+    }
     const n = nodes.find((x) => x.id === focus);
-    if (n) onSelect({ id: n.id, label: n.label, group: n.group, degree: degree.get(n.id) ?? 0 });
+    if (n)
+      onSelect({
+        id: n.id,
+        label: n.label,
+        group: n.group,
+        degree: degree.get(n.id) ?? 0,
+      });
   }, [focus, nodes, degree, onSelect]);
 
   // Search highlight: nodes whose label matches the query.
   const searchMatch = useMemo(() => {
     const q = search.trim().toLowerCase();
     if (!q) return null;
-    return new Set(nodes.filter((n) => n.label.toLowerCase().includes(q)).map((n) => n.id));
+    return new Set(
+      nodes.filter((n) => n.label.toLowerCase().includes(q)).map((n) => n.id),
+    );
   }, [search, nodes]);
 
-  if (nodes.length === 0) return <p className="muted">No graph data — index this project first.</p>;
+  if (nodes.length === 0)
+    return <p className="muted">No graph data — index this project first.</p>;
 
   return (
     <div style={{ position: "relative" }}>
-      <div style={{ position: "absolute", top: 6, right: 8, zIndex: 2, display: "flex", gap: 6 }}>
-        <button className="gbtn" onClick={() => setView((v) => ({ ...v, k: Math.min(6, v.k * 1.3) }))}>+</button>
-        <button className="gbtn" onClick={() => setView((v) => ({ ...v, k: Math.max(0.4, v.k / 1.3) }))}>−</button>
-        <button className="gbtn" onClick={() => { setView({ x: 0, y: 0, k: 1 }); setFocus(null); }}>reset</button>
+      <div
+        style={{
+          position: "absolute",
+          top: 6,
+          right: 8,
+          zIndex: 2,
+          display: "flex",
+          gap: 6,
+        }}
+      >
+        <button
+          className="gbtn"
+          aria-label="Zoom in"
+          onClick={() => setView((v) => ({ ...v, k: Math.min(6, v.k * 1.3) }))}
+        >
+          +
+        </button>
+        <button
+          className="gbtn"
+          aria-label="Zoom out"
+          onClick={() =>
+            setView((v) => ({ ...v, k: Math.max(0.4, v.k / 1.3) }))
+          }
+        >
+          −
+        </button>
+        <button
+          className="gbtn"
+          onClick={() => {
+            setView({ x: 0, y: 0, k: 1 });
+            setFocus(null);
+          }}
+        >
+          reset
+        </button>
       </div>
       {focus && (
-        <div style={{ position: "absolute", top: 6, left: 8, zIndex: 2, fontSize: 11 }} className="muted">
-          focused: <b style={{ color: "var(--text)" }}>{(nodes.find((n) => n.id === focus)?.label || "").split("/").pop()}</b>
-          {" "}· {degree.get(focus) ?? 0} connections
+        <div
+          style={{
+            position: "absolute",
+            top: 6,
+            left: 8,
+            zIndex: 2,
+            fontSize: 11,
+          }}
+          className="muted"
+        >
+          focused:{" "}
+          <b style={{ color: "var(--text)" }}>
+            {(nodes.find((n) => n.id === focus)?.label || "").split("/").pop()}
+          </b>{" "}
+          · {degree.get(focus) ?? 0} connections
         </div>
       )}
       <svg
+        role="img"
+        aria-label="Project relationship graph. Use the Inspect a node selector for keyboard navigation."
         ref={svgRef}
         viewBox={`0 0 ${W} ${H}`}
-        style={{ width: "100%", height, cursor: dragRef.current ? "grabbing" : "grab", touchAction: "none", background: "var(--panel-2)", borderRadius: 8 }}
+        style={{
+          width: "100%",
+          height,
+          cursor: dragRef.current ? "grabbing" : "grab",
+          touchAction: "none",
+          background: "var(--panel-2)",
+          borderRadius: 8,
+        }}
         onWheel={onWheel}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
@@ -227,29 +361,72 @@ export function GraphView({ nodes, edges, height = 480, search = "", onSelect }:
       >
         <g transform={`translate(${view.x},${view.y}) scale(${view.k})`}>
           {edges.map((e, i) => {
-            const a = positions.get(e.source), b = positions.get(e.target);
+            const a = positions.get(e.source),
+              b = positions.get(e.target);
             if (!a || !b) return null;
-            const isActive = active && (e.source === active || e.target === active);
+            const isActive =
+              active && (e.source === active || e.target === active);
             const dim = active && !isActive;
-            return <line key={i} x1={a.x} y1={a.y} x2={b.x} y2={b.y}
-              stroke={isActive ? "#5b9dff" : "#30343f"} strokeWidth={(isActive ? 1.4 : 0.6) / view.k}
-              opacity={dim ? 0.06 : 0.55} />;
+            return (
+              <line
+                key={i}
+                x1={a.x}
+                y1={a.y}
+                x2={b.x}
+                y2={b.y}
+                stroke={isActive ? "#477562" : "#b2bdad"}
+                strokeWidth={(isActive ? 1.4 : 0.6) / view.k}
+                opacity={dim ? 0.06 : 0.55}
+              />
+            );
           })}
           {nodes.map((n) => {
             const p = positions.get(n.id);
             if (!p) return null;
             const searchHit = searchMatch ? searchMatch.has(n.id) : null;
-            const dim = searchMatch ? !searchHit : (neighborhood ? !neighborhood.has(n.id) : false);
-            const showLabel = p.r * view.k > 9 || n.id === active || searchHit === true;
+            const dim = searchMatch
+              ? !searchHit
+              : neighborhood
+                ? !neighborhood.has(n.id)
+                : false;
+            const showLabel =
+              p.r * view.k > 9 || n.id === active || searchHit === true;
             const r = searchHit ? p.r * 1.4 : p.r;
             return (
-              <g key={n.id} opacity={dim ? 0.12 : 1}
-                 onMouseEnter={() => setHover(n.id)} onMouseLeave={() => setHover(null)}
-                 onClick={() => setFocus((f) => (f === n.id ? null : n.id))} style={{ cursor: "pointer" }}>
-                {searchHit && <circle cx={p.x} cy={p.y} r={r + 3 / view.k} fill="none" stroke="#d29922" strokeWidth={1.5 / view.k} />}
-                <circle cx={p.x} cy={p.y} r={r} fill={p.color} stroke={n.id === focus ? "#fff" : "#0a0b0f"} strokeWidth={(n.id === focus ? 2 : 1) / view.k} />
+              <g
+                key={n.id}
+                opacity={dim ? 0.12 : 1}
+                onMouseEnter={() => setHover(n.id)}
+                onMouseLeave={() => setHover(null)}
+                onClick={() => setFocus((f) => (f === n.id ? null : n.id))}
+                style={{ cursor: "pointer" }}
+              >
+                {searchHit && (
+                  <circle
+                    cx={p.x}
+                    cy={p.y}
+                    r={r + 3 / view.k}
+                    fill="none"
+                    stroke="#a17d32"
+                    strokeWidth={1.5 / view.k}
+                  />
+                )}
+                <circle
+                  cx={p.x}
+                  cy={p.y}
+                  r={r}
+                  fill={p.color}
+                  stroke={n.id === focus ? "#23332c" : "#f5f6f2"}
+                  strokeWidth={(n.id === focus ? 2 : 1) / view.k}
+                />
                 {showLabel && (
-                  <text x={p.x + r + 2 / view.k} y={p.y + 3 / view.k} fontSize={9 / view.k} fill="#cfd3dd" style={{ pointerEvents: "none" }}>
+                  <text
+                    x={p.x + r + 2 / view.k}
+                    y={p.y + 3 / view.k}
+                    fontSize={9 / view.k}
+                    fill="#23332c"
+                    style={{ pointerEvents: "none" }}
+                  >
                     {(n.label || "").split("/").pop()}
                   </text>
                 )}
