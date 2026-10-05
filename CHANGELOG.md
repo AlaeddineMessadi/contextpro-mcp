@@ -4,6 +4,8 @@ All notable changes to this project are recorded here. The project follows [Sema
 
 ## [Unreleased]
 
+- Discoverable `team_status` / `team_task` share an advisory SQLite task ledger across local worktrees, with atomic ownership, dependency readiness, renewable five-minute file leases and retained handoffs. The lean catalog remains three tools.
+
 - Task memory captures source/configuration evidence and explicit supersession without overwriting history. Retrieval labels stale/unverified records, excludes stale conclusions from recommendations, and works lexically without embeddings. Immutable handoffs reuse `artifact_read`.
 - `validate_scope` issues a pre-check workspace snapshot; `validation_record` stores bounded host-reported results and detects changed inputs. ContextPro does not execute recommended checks.
 

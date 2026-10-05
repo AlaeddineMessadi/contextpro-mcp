@@ -28,6 +28,7 @@ import { getTestMap } from "./test-map.js";
 import { explain } from "./explain.js";
 import { getContext } from "./context.js";
 import { recordValidation, validationState, evidenceCurrent, type EvidenceState } from "../core/evidence-state.js";
+import { teamStatus, teamTask } from "../core/team-ledger.js";
 import { getFeatureBrief } from "./feature-brief.js";
 import { getRepoMap } from "./repo-map.js";
 import { resolveSymbol } from "./resolve-symbol.js";
@@ -99,7 +100,7 @@ export function registerTools(
   const invocations = new Map<string, { schema: z.AnyZodObject; handler: (args: unknown) => Promise<CallToolResult> }>();
   // This compatibility route must never dispatch source edits or destructive
   // maintenance under discovery's non-destructive annotation.
-  const callable = new Set(["context", "exact_references", "search", "grep", "skeleton", "explain", "tree", "status", "health", "reindex", "blast_radius", "validate_scope", "efficiency_report", "task_pack", "repo_map", "feature_brief", "artifact_read"]);
+  const callable = new Set(["context", "exact_references", "search", "grep", "skeleton", "explain", "tree", "status", "health", "reindex", "blast_radius", "validate_scope", "efficiency_report", "task_pack", "repo_map", "feature_brief", "artifact_read", "team_status"]);
   const refreshCatalogCost = (): void => setToolSchemaTokens(Buffer.byteLength(JSON.stringify({ tools: [...catalog.values()].filter(tool => active.has(tool.name)) }), "utf8") / 4);
   const noteSchema = (name: string, description: string, shape: Record<string, unknown>, output?: unknown): void => {
     const entry = { name, description, inputSchema: toJsonSchemaCompat(z.object({ ...shape, root: rootArg } as z.ZodRawShape).strict()), annotations: annotationsForTool(name),
@@ -1358,6 +1359,18 @@ export function registerTools(
   }, withRequestActivity(async ({ snapshot_id, command, exit_code, runtime, evidence }) => ({ content: [{type:"text" as const,
     text: JSON.stringify(await recordValidation({ rootDir: rootDir(), snapshotId: snapshot_id, command, exitCode: exit_code, runtime, evidence })) }],
   }), { toolName: "validation_record", waitForIndexing: false }));
+
+  server.tool("team_status", "Inspect local shared task ownership, dependencies, readiness, file leases and recent handoffs. Advisory coordination only.", {},
+    withRequestActivity(async () => ({ content: [{ type: "text" as const, text: JSON.stringify(await teamStatus(rootDir())) }] }), { toolName: "team_status", waitForIndexing: false }));
+  server.tool("team_task", "Explicit local task coordination. Claims and individual-file leases are atomic and expire after five minutes; renew while working. No agents are spawned or messaged.", {
+    action: z.enum(["create", "update", "claim", "renew", "release", "block", "complete", "handoff"]),
+    task_id: z.string().min(1).max(128).optional(), title: z.string().min(1).max(500).optional(),
+    dependencies: z.array(z.string().min(1).max(128)).max(50).optional(), owner: z.string().min(1).max(128).optional(),
+    files: z.array(z.string().min(1).max(240)).max(100).optional(), note: z.string().max(8000).optional(),
+    handoff_id: z.string().regex(/^handoff-[a-f0-9]{14}$/).optional(),
+  }, withRequestActivity(async ({ action, task_id, title, dependencies, owner, files, note, handoff_id }) => ({ content: [{ type: "text" as const,
+    text: JSON.stringify(await teamTask({ rootDir: rootDir(), action, taskId: task_id, title, dependencies, owner, files, note, handoffId: handoff_id })) }],
+  }), { toolName: "team_task", waitForIndexing: false }));
 
   registerDeprecatedAlias(
     "remember",

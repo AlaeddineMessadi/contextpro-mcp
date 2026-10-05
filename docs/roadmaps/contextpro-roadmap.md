@@ -7,7 +7,7 @@ Baseline: `2448966b055e9d9b929e0596aabcaa528bc7aedf`. Preserve the earlier codin
 1. Adaptive change context and document discovery: implemented behind explicit `context.intent` or `CONTEXTPRO_ADAPTIVE_CONTEXT=true`; default promotion awaits matched coding trials.
 2. Shared local compute: request freshness reuse and opt-in daemon implemented; two-root refresh and crash/restart fallback tests pass. Multi-session resource measurements and default enablement remain pending.
 3. Source-bound memory and immutable handoffs: implemented with lexical fallback, explicit supersession, configuration invalidation and historical validation receipts; targeted tests pass locally.
-4. Local task ownership, dependencies and advisory leases: pending.
+4. Local task ownership, dependencies and advisory leases: implemented; competing-process, linked-worktree overlap, dependency-cycle and lease-expiry regressions pass locally.
 5. Validation receipts, TS/JS and Python diagnostics, safe rename: pending.
 6. Frozen native/current/candidate campaign and external retrieval comparison: pending.
 
