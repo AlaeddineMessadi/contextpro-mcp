@@ -30,6 +30,13 @@ it('shared service isolates roots, refreshes edits, and falls back after a crash
     const python=await sharedCompute('python',{rootDir:roots[0],files:[join(roots[0],'check.py')],operation:'diagnostics'});
     assert.equal(python?.value.engine,'pyright');
     assert.ok(python.value.diagnostics.some(item=>item.severity==='error'));
+    // A simultaneous burst must reject excess work instead of admitting it
+    // while asynchronous root canonicalization is still in progress.
+    const burst=Array.from({length:40},()=>sharedCompute('python',{rootDir:roots[0],files:[join(roots[0],'check.py')],operation:'diagnostics'}));
+    const samples=await Promise.all(Array.from({length:8},()=>daemonCommand('status')));
+    assert.ok(samples.every(sample=>sample.active<=16),JSON.stringify(samples.map(sample=>sample.active)));
+    const settled=await Promise.all(burst);
+    assert.ok(settled.some(value=>value===undefined),'excess service work falls back locally');
     process.kill(pid,'SIGKILL');
     await new Promise(done=>setTimeout(done,100));
     assert.equal(await sharedCompute('freshness',{rootDir:roots[0]}),undefined);

@@ -10,6 +10,7 @@ import { createRequire } from "node:module";
 import { z } from "zod";
 import { validateSelectedRoot } from "./root-guard.js";
 import { resolveProjectPath } from "./path-guard.js";
+import { pythonRuntimeIdentity } from "./python-runtime-identity.js";
 
 const PROTOCOL = 1;
 const MAX_BYTES = 8 * 1024 * 1024;
@@ -33,6 +34,7 @@ async function buildIdentity(): Promise<string> {
     for (const name of ["typescript", "web-tree-sitter", "tree-sitter-wasms", "better-sqlite3"]) {
       hash.update(name).update(await readFile(require.resolve(`${name}/package.json`)));
     }
+    hash.update(await pythonRuntimeIdentity());
     // Different provider/ignore/runtime policies cannot share global module state.
     for (const key of Object.keys(process.env).sort()) if (/^(?:CONTEXTPRO_|CONTEXTPLUS_|OLLAMA_|OPENAI_|ANTHROPIC_)/.test(key)
       && !/DAEMON|TRACE|IDLE|PARENT/.test(key)) hash.update(key).update(process.env[key] ?? "");
@@ -112,12 +114,16 @@ async function serve(): Promise<void> {
     if (method === "stop") { setImmediate(stop); return { stopping: true }; }
     if (closing || active >= 16) throw new Error("Shared service busy; use local compute.");
     const originalRoot = z.object({ rootDir: rootSchema }).passthrough().parse(args).rootDir;
-    const root = await realpath(originalRoot);
-    const canonicalFile = (file: string) => resolveProjectPath(root, relative(originalRoot, resolveProjectPath(originalRoot, file)));
-    args = { ...(args as Record<string, unknown>), rootDir: root };
-    validateSelectedRoot({ rootDir: root, source: "flag" });
-    active++; roots.set(root, (roots.get(root) ?? 0) + 1); touch();
+    // Reserve capacity before the first await, otherwise simultaneous requests
+    // can all pass the bound while canonicalizing their roots.
+    active++; touch();
+    let trackedRoot: string | undefined;
     try {
+      const root = await realpath(originalRoot);
+      const canonicalFile = (file: string) => resolveProjectPath(root, relative(originalRoot, resolveProjectPath(originalRoot, file)));
+      args = { ...(args as Record<string, unknown>), rootDir: root };
+      validateSelectedRoot({ rootDir: root, source: "flag" });
+      roots.set(root, (roots.get(root) ?? 0) + 1); trackedRoot = root;
       if (method === "freshness") return (await import("./index-freshness.js")).ensureFreshIndex(root);
       if (method === "references") {
         const input = z.object({ rootDir: rootSchema, files: filesSchema, file: z.string(), line: z.number().int().positive(), symbol: z.string().min(1), limit: z.number().optional() }).strict().parse(args);
@@ -149,8 +155,11 @@ async function serve(): Promise<void> {
       }
       throw new Error("Unsupported shared operation.");
     } finally {
-      active--; const count = (roots.get(root) ?? 1) - 1;
-      roots.delete(root); roots.set(root, count);
+      active--;
+      if (trackedRoot) {
+        const count = (roots.get(trackedRoot) ?? 1) - 1;
+        roots.delete(trackedRoot); roots.set(trackedRoot, count);
+      }
       // Retain at most four idle database connections, never evict an active root.
       const idleRoots = [...roots].filter(([, running]) => running === 0);
       for (const [stale] of idleRoots.slice(0, Math.max(0, idleRoots.length - 4))) {

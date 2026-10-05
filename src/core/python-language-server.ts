@@ -9,6 +9,8 @@ import pLimit from "p-limit";
 import { resolveProjectPath } from "./path-guard.js";
 import type { CompilerResult } from "./typescript-references.js";
 import { sharedCompute } from "./local-daemon.js";
+import { pythonRuntimeIdentity } from "./python-runtime-identity.js";
+import { evidenceConfigurationFiles } from "./evidence-state.js";
 
 interface Position { line: number; character: number }
 interface Range { start: Position; end: Position }
@@ -34,8 +36,8 @@ function close(root: string): void {
 async function sessionFor(root: string): Promise<Session> {
   const command = process.env.CONTEXTPRO_PYRIGHT_COMMAND;
   if (!command) throw new Error("Configure CONTEXTPRO_PYRIGHT_COMMAND to an installed pyright-langserver executable. No runtime downloads are performed.");
-  const config = await Promise.all(["pyrightconfig.json", "pyproject.toml", "uv.lock"].map(file => readFile(resolveProjectPath(root, file)).catch(() => Buffer.from("missing"))));
-  const identity = createHash("sha256").update(command).update(process.env.CONTEXTPRO_PYTHON_PATH ?? "").update(Buffer.concat(config)).digest("hex");
+  const config = await Promise.all((await evidenceConfigurationFiles(root)).map(async file => [file, (await readFile(resolveProjectPath(root, file))).toString("base64")]));
+  const identity = createHash("sha256").update(await pythonRuntimeIdentity()).update(process.env.CONTEXTPRO_PYTHON_PATH ?? "").update(JSON.stringify(config)).digest("hex");
   const previous = sessions.get(root);
   if (previous?.identity === identity) { clearTimeout(previous.idle); return previous; }
   if (previous) close(root);

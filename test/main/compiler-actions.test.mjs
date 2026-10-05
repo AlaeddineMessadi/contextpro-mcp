@@ -1,6 +1,6 @@
 import { it } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, readFile, rm, symlink, chmod } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { join, resolve } from 'node:path';
@@ -83,4 +83,30 @@ it('JavaScript compiler rename preserves aliases, strings and same-named local p
     const caller=await readFile(join(root,'caller.js'),'utf8');
     assert.match(caller,/bill as alias/);assert.match(caller,/local\(charge\) \{ return charge \+ "charge"/);
   }finally{closeTypeScriptReferenceProcess();closeDB(root);await rm(root,{recursive:true,force:true});}
+});
+
+it('Pyright restarts after an installation version or dependency manifest changes', {skip:process.platform==='win32'}, async () => {
+  const temp = await mkdtemp(join(tmpdir(), 'cp-python-version-')), root = join(temp,'repo'), installation = join(temp,'pyright');
+  const previous = process.env.CONTEXTPRO_PYRIGHT_COMMAND, log = join(temp,'starts.log');
+  try {
+    await mkdir(root); await mkdir(installation);
+    await symlink(resolve('node_modules/pyright/dist'),join(installation,'dist'));
+    const manifest = join(installation,'package.json');
+    await writeFile(manifest,JSON.stringify({name:'pyright',version:'1.1.414'}));
+    const executable = join(installation,'launch.cjs');
+    await writeFile(executable,`#!/usr/bin/env node\nrequire('node:fs').appendFileSync(${JSON.stringify(log)},'start\\n');\nrequire(${JSON.stringify(resolve('node_modules/pyright/langserver.index.js'))});\n`);
+    await chmod(executable,0o755); process.env.CONTEXTPRO_PYRIGHT_COMMAND = executable;
+    await writeFile(join(root,'broken.py'),'wrong: int = "text"\n');
+    const check = async () => assert.ok((await compilerDiagnostics({rootDir:root,files:['broken.py']})).results[0].diagnostics.some(item=>item.severity==='error'));
+    const starts = async () => (await readFile(log,'utf8')).trim().split('\n').length;
+    await check(); await check(); assert.equal(await starts(),1);
+    await writeFile(manifest,JSON.stringify({name:'pyright',version:'1.1.415'}));
+    await check(); assert.equal(await starts(),2);
+    await writeFile(join(root,'requirements.txt'),'fixture-package==1.0\n');
+    await check(); assert.equal(await starts(),3);
+  } finally {
+    closePythonLanguageServers(); closeDB(root);
+    if(previous===undefined) delete process.env.CONTEXTPRO_PYRIGHT_COMMAND; else process.env.CONTEXTPRO_PYRIGHT_COMMAND=previous;
+    await rm(temp,{recursive:true,force:true});
+  }
 });
