@@ -5,7 +5,7 @@ import { ensureFreshIndex } from "../core/index-freshness.js";
 import { getIndexState } from "../core/context-metadata.js";
 import { persistArtifact } from "../core/artifacts.js";
 import { chatCompletion, chatModelIdentity, extractJsonBlock, hasConfiguredChatModel } from "../core/chat-model.js";
-import { FEATURE_BRIEF_VERSION, briefFacts, briefQuery, featureSignature, lookupFeatureBrief, type BriefCitation, type FeatureBrief } from "../core/feature-brief-cache.js";
+import { FEATURE_BRIEF_VERSION, briefFacts, briefQuery, featureSignature, featureRetrievalIdentity, lookupFeatureBrief, type BriefCitation, type FeatureBrief } from "../core/feature-brief-cache.js";
 
 export async function getFeatureBrief(options: { rootDir: string; query: string; refresh?: boolean; maxTokens?: number }): Promise<string> {
   const query = briefQuery(options.query), budget = options.maxTokens ?? 2000;
@@ -16,6 +16,7 @@ export async function getFeatureBrief(options: { rootDir: string; query: string;
     const cached = await lookupFeatureBrief(options.rootDir, query);
     if (cached) return renderBrief(cached.brief, cached.artifact.id, budget, true);
   }
+  const retrievalIdentity = await featureRetrievalIdentity(options.rootDir);
   const retrieved = await retrieveEvidence({ rootDir: options.rootDir, query });
   const packet = await collectSourceEvidence({ rootDir: options.rootDir, query, connected: true, retrieved, maxTokens: Math.min(4000, budget) });
   const files = Object.keys(packet.hashes);
@@ -24,7 +25,7 @@ export async function getFeatureBrief(options: { rootDir: string; query: string;
     id: `E${i + 1}`, file: part.file, start: part.start, end: part.end, hash: packet.hashes[part.file],
     roles: retrieved.candidates.find(item => item.path === part.file)?.roles ?? ["implementation"],
   }));
-  const brief: FeatureBrief = { version: FEATURE_BRIEF_VERSION, query, model: "deterministic", signature: signature ?? "", files,
+  const brief: FeatureBrief = { version: FEATURE_BRIEF_VERSION, query, model: "deterministic", signature: signature ?? "", retrievalIdentity, files,
     citations, facts: briefFacts(citations), interpretations: [], warnings: packet.notices };
   if (process.env.CONTEXTPRO_FEATURE_SUMMARIES === "true" && packet.ranges.length && await hasConfiguredChatModel(options.rootDir)) {
     try {
@@ -47,7 +48,7 @@ export async function getFeatureBrief(options: { rootDir: string; query: string;
     brief.interpretations = []; brief.warnings.push("Sources unavailable or changed during preparation; brief was not cached. Retry against current source.");
     return renderBrief(brief, null, budget, false);
   }
-  const key = createHash("sha256").update(JSON.stringify({ query, signature, model: brief.model, version: brief.version })).digest("hex");
+  const key = createHash("sha256").update(JSON.stringify({ query, signature, model: brief.model, version: brief.version, retrievalIdentity })).digest("hex");
   try {
     const artifact = await persistArtifact({ rootDir: options.rootDir, kind: "feature_brief", key, payload: brief });
     return renderBrief(brief, artifact.id, budget, false);

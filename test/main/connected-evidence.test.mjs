@@ -257,7 +257,7 @@ it('source context IDs reject altered packets and forged completion flags', asyn
   } finally { await cleanup(root); }
 });
 
-it('feature briefs invalidate on source, dependency membership and model changes', async () => {
+it('feature briefs invalidate on source, dependency membership and retrieval configuration changes', async () => {
   const root = await fixture();
   try {
     const query = 'upload reservation limit';
@@ -267,6 +267,14 @@ it('feature briefs invalidate on source, dependency membership and model changes
     assert.ok(await lookupFeatureBrief(root, query));
     assert.match(await getFeatureBrief({ rootDir: root, query }), /validated cache/);
     const cached = await lookupFeatureBrief(root, query);
+    for (const key of ['CONTEXTPRO_ADAPTIVE_CONTEXT', 'CONTEXTPRO_CHAT_RERANK', 'CONTEXTPRO_EMBED_MODEL']) {
+      const previous = process.env[key];
+      try {
+        process.env[key] = key === 'CONTEXTPRO_EMBED_MODEL' ? 'different-test-embedding' : previous === 'true' ? 'false' : 'true';
+        assert.equal(await lookupFeatureBrief(root, query), null, `${key} must invalidate prior ranking`);
+      } finally { if (previous === undefined) delete process.env[key]; else process.env[key] = previous; }
+      assert.ok(await lookupFeatureBrief(root, query));
+    }
     const corrupt = { ...cached.brief, query: 'corrupt brief', interpretations: [{ text: 'Unsupported cached claim', citations: ['E999'] }] };
     await persistArtifact({ rootDir: root, kind: 'feature_brief', key: 'invalid-cached-citation', payload: corrupt });
     assert.equal(await lookupFeatureBrief(root, 'corrupt brief'), null);
@@ -278,6 +286,7 @@ it('feature briefs invalidate on source, dependency membership and model changes
       ['missing-facts', brief => { brief.facts = []; }],
       ['invalid-fact-role', brief => { brief.citations[0].roles = ['Arbitrary extracted claim']; }],
       ['old-generator', brief => { brief.version = 2; }],
+      ['missing-retrieval-identity', brief => { delete brief.retrievalIdentity; }],
     ]) {
       const malformed = structuredClone(cached.brief); malformed.query = name; change(malformed);
       await persistArtifact({ rootDir: root, kind: 'feature_brief', key: name, payload: malformed });

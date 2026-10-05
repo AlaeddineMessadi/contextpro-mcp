@@ -6,21 +6,32 @@ import { getIndexState } from "./context-metadata.js";
 import { listArtifacts, readArtifact, type ArtifactReference } from "./artifacts.js";
 import { resolveProjectPath } from "./path-guard.js";
 import { chatModelIdentity } from "./chat-model.js";
+import { getProvider, getEmbedModelName } from "./provider-config.js";
 
-// v22 invalidates briefs predating explicit location precedence repairs.
-export const FEATURE_BRIEF_VERSION = 28;
+// Invalidate explanations assembled under earlier source-ranking behavior.
+export const FEATURE_BRIEF_VERSION = 29;
 const BRIEF_ROLES = ["implementation", "dependency", "caller", "test"] as const;
 export interface BriefCitation {
   id: string; file: string; start: number; end: number; hash: string;
   roles: Array<typeof BRIEF_ROLES[number]>;
 }
 export interface FeatureBrief {
-  version: number; query: string; model: string; signature: string;
+  version: number; query: string; model: string; signature: string; retrievalIdentity: string;
   files: string[]; citations: BriefCitation[];
   facts: string[]; interpretations: Array<{ text: string; citations: string[] }>;
   warnings: string[];
 }
 export const briefQuery = (query: string) => query.trim().replace(/\s+/g, " ");
+
+export async function featureRetrievalIdentity(rootDir: string): Promise<string> {
+  const rerank = process.env.CONTEXTPRO_CHAT_RERANK === "true";
+  return createHash("sha256").update(JSON.stringify({
+    version: FEATURE_BRIEF_VERSION,
+    adaptive: process.env.CONTEXTPRO_ADAPTIVE_CONTEXT === "true", rerank,
+    embedding: `${getProvider()}:${getEmbedModelName()}`,
+    rerankModel: rerank ? await chatModelIdentity(rootDir) : null,
+  })).digest("hex");
+}
 
 /** Facts contain only validated citation coordinates and enumerated retrieval roles. */
 export function briefFacts(citations: BriefCitation[]): string[] {
@@ -72,10 +83,12 @@ export async function lookupFeatureBrief(rootDir: string, query: string): Promis
   try {
     if ((await getIndexState(rootDir)).state !== "fresh") return null;
     const model = await chatModelIdentity(rootDir);
+    const retrievalIdentity = await featureRetrievalIdentity(rootDir);
     for (const ref of await listArtifacts(rootDir, "feature_brief", 200)) {
       const artifact = await readArtifact<FeatureBrief>(rootDir, ref.id);
       const brief = artifact?.payload;
       if (!brief || artifact?.repoRoot !== resolve(rootDir) || brief.query !== briefQuery(query) || brief.version !== FEATURE_BRIEF_VERSION
+        || brief.retrievalIdentity !== retrievalIdentity
         || (brief.model !== "deterministic" && brief.model !== model) || !validCitations(brief)) continue;
       if (await featureSignature(rootDir, brief.files, undefined, brief.citations) === brief.signature) return { artifact: ref, brief };
     }

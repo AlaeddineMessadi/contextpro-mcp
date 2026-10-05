@@ -234,6 +234,17 @@ export async function collectSourceEvidence(options: ContextOptions): Promise<So
     }
   }
   const terms = new Set(searchTerms(query));
+  if (adaptive && !orientation && /\b(?:routes?|endpoints?|handlers?)\b/i.test(positiveDiscoveryQuery(query))) {
+    // A named endpoint topic is stronger than an incidental prose match in a
+    // client or workflow. This stays a soft lexical prior: callers, contracts
+    // and tests still compete for the same bounded packet.
+    const generic = new Set("api app apps src source web native server route routes endpoint endpoints handler handlers code file files implementation locate find show".split(" "));
+    for (const target of targets) {
+      if (!/(?:^|\/)(?:api|routes?|endpoints?|handlers?)(?:\/|[.-])/i.test(target.file)) continue;
+      const topics = new Set(searchTerms(target.file).filter(term => terms.has(term) && !generic.has(term)));
+      if (topics.size) filePriors.set(target.file, (filePriors.get(target.file) ?? .5) * (1 + Math.min(2, topics.size)));
+    }
+  }
   const candidates: Excerpt[] = [];
   const omitted: string[] = [];
   const snapshots = new Map<string, string>();
@@ -598,6 +609,6 @@ export async function collectSourceEvidence(options: ContextOptions): Promise<So
     !merged.length ? "No source fit or matched. Try exact file/line targets or native search." : ""].filter(Boolean).join("\n\n");
   return { text, ranges: merged, hashes: Object.fromEntries([...snapshots].map(([file, source]) => [file, createHash("sha256").update(source).digest("hex")])),
     notices: [coverageNotice, riskNotice, footer, summary].filter((value): value is string => !!value), complete: true,
-    settings: JSON.stringify({ version: 31, adaptive, intent, connected, risks, preset: options.retrievalPreset ?? "balanced", rerank: process.env.CONTEXTPRO_CHAT_RERANK === "true",
+    settings: JSON.stringify({ version: 32, adaptive, intent, connected, risks, preset: options.retrievalPreset ?? "balanced", rerank: process.env.CONTEXTPRO_CHAT_RERANK === "true",
       embedding: `${getProvider()}:${getEmbedModelName()}`, chat: options.targets?.length ? "unused" : await chatModelIdentity(options.rootDir) }) };
 }

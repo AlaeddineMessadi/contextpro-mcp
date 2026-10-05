@@ -65,6 +65,38 @@ it('adaptive retrieval prioritizes decisive operational paragraphs over headings
   });
 });
 
+it('adaptive endpoint questions retain route source among client and workflow mentions', async () => {
+  await fixture({
+    'apps/web/api/download-batch/route.ts': `export async function POST(items: string[]) {
+  // Mint signed URLs for a batch, validating every upstream receipt.
+  let temporaryFailure = false;
+  const urls: string[] = [];
+  for (const item of items) {
+    const receipt = await mint(item);
+    if (!receipt.valid) temporaryFailure = true;
+    else urls.push(receipt.url);
+  }
+  if (temporaryFailure) return { status: 503 };
+  return { status: 200, urls };
+}\n`,
+    'apps/web/client/thumbnails.ts': '// The thumbnail client retries a transient signed batch failure after validation.\nexport const thumbnailRetry = true;\n',
+    'apps/native/client/thumbnails.ts': '// Native thumbnails share the transient signed batch failure retry contract.\nexport const nativeRetry = true;\n',
+    'docs/workflow.md': '# Web thumbnail workflow\nTransient signed thumbnail batch failure validation and whole-batch retry contract.\n',
+    'apps/web/api/unrelated/route.ts': 'export const unrelatedEndpoint = "unrelated-marker";\n',
+  }, async root => {
+    for (const query of [
+      'Locate the transient signed thumbnail batch failure validation and whole-batch retry contract in the web thumbnail route.',
+      'Review the download batch endpoint validation failure response.',
+    ]) {
+      const text = await getContext({rootDir:root,query,intent:'auto',maxTokens:1600,retrievalPreset:'keyword_only'});
+      assert.match(text, /apps\/web\/api\/download-batch\/route.ts:\d/);
+      assert.match(text, /if \(temporaryFailure\) return \{ status: 503 \}/);
+      assert.ok(text.indexOf("apps/web/api/download-batch/route.ts:") < text.indexOf("unrelated-marker") || !text.includes("unrelated-marker"));
+      assert.ok(Buffer.byteLength(text) <= 6400);
+    }
+  });
+});
+
 it('keeps case-distinct schema and value definitions in a multi-name query', async () => {
   await fixture({
     'core/index.ts': `export const orderSchema = z.object({\n${'  filler: z.string(),\n'.repeat(80)}  items: z.array(z.object({ regionCodes: z.array(z.string()) })),\n});\nexport type NormalizedOrder = z.infer<typeof orderSchema>;\n`,
