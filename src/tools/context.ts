@@ -21,6 +21,7 @@ import { finishSourceContext } from "../core/source-context.js";
 import { lookupFeatureBrief } from "../core/feature-brief-cache.js";
 import { chatModelIdentity } from "../core/chat-model.js";
 import { getProvider, getEmbedModelName } from "../core/provider-config.js";
+import { getProjectRiskEvidence } from "./retrieval-helpers.js";
 
 export interface ContextTarget {
   file: string;
@@ -248,9 +249,26 @@ export async function collectSourceEvidence(options: ContextOptions): Promise<So
   const smallDependencies: Excerpt[] = [];
   const seen = new Set<string>();
   const limit = budget * 4;
+  const risks = changeContext ? await getProjectRiskEvidence(options.rootDir, query) : [];
+  let riskNotice: string | undefined;
+  if (changeContext) {
+    riskNotice = "Known risks: unavailable in bounded current task memory; not proof of absence.";
+    if (risks.length) {
+      riskNotice = "Known risks (textual task notes; source evidence current):";
+      const riskBudget = Math.min(480, Math.floor(limit * .15));
+      riskEntries: for (const note of risks) for (const risk of note.risks) {
+        const entry = `\n${note.id}: ${risk}`;
+        if (bytes(riskNotice + entry) + 30 <= riskBudget) riskNotice += entry;
+        else {
+          riskNotice += "\nOmitted: more risk text.";
+          break riskEntries;
+        }
+      }
+    }
+  }
   // Explicit targets are admitted whole. Discovery may select labelled interior
   // ranges, always copied verbatim from the snapshot rather than synthesized.
-  let available = limit - 768 - (options.targets?.length ? 0 : 384) - (adaptive ? 480 : 0);
+  let available = limit - 768 - (options.targets?.length ? 0 : 384) - (adaptive ? 480 : 0) - (riskNotice ? bytes(riskNotice) + 2 : 0);
   for (const target of targets) {
     const fullPath = resolveProjectPath(options.rootDir, target.file, "context target");
     const file = relative(options.rootDir, fullPath).split("\\").join("/");
@@ -576,10 +594,10 @@ export async function collectSourceEvidence(options: ContextOptions): Promise<So
   }
   const summary = notices.at(-1)?.startsWith("Evidence not returned") ? notices.at(-1) : undefined;
   const coverageNotice = adaptive ? `Retrieval: ${intent}; ${connected ? "hybrid + structural relations" : "exact/lexical + configured semantic"}. Relations are structural/textual, not compiler-resolved.\nEvidence: ${["implementation", "caller", "dependency", "contract", "configuration", "test"].map(role => `${role}=${merged.some(part => roles(part).includes(role)) ? "returned" : targets.some(target => roles(target).includes(role)) ? "omitted" : "unavailable"}`).join(", ")}. Unavailable is not proof of absence.` : undefined;
-  const text = ["Source evidence (only the indicated ranges are included):", coverageNotice, ...merged.map(render), footer, summary,
+  const text = ["Source evidence (only the indicated ranges are included):", coverageNotice, ...merged.map(render), riskNotice, footer, summary,
     !merged.length ? "No source fit or matched. Try exact file/line targets or native search." : ""].filter(Boolean).join("\n\n");
   return { text, ranges: merged, hashes: Object.fromEntries([...snapshots].map(([file, source]) => [file, createHash("sha256").update(source).digest("hex")])),
-    notices: [coverageNotice, footer, summary].filter((value): value is string => !!value), complete: true,
-    settings: JSON.stringify({ version: 30, adaptive, intent, connected, preset: options.retrievalPreset ?? "balanced", rerank: process.env.CONTEXTPRO_CHAT_RERANK === "true",
+    notices: [coverageNotice, riskNotice, footer, summary].filter((value): value is string => !!value), complete: true,
+    settings: JSON.stringify({ version: 31, adaptive, intent, connected, risks, preset: options.retrievalPreset ?? "balanced", rerank: process.env.CONTEXTPRO_CHAT_RERANK === "true",
       embedding: `${getProvider()}:${getEmbedModelName()}`, chat: options.targets?.length ? "unused" : await chatModelIdentity(options.rootDir) }) };
 }

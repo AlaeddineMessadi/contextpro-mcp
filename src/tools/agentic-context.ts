@@ -1520,6 +1520,7 @@ export async function recordTaskMemory(options: MemoryRecordTaskOptions): Promis
     configuration_paths: JSON.stringify(configuration.map(item=>item.file)),
     validation_refs: JSON.stringify(options.validationRefs ?? []),
     unavailable_evidence: JSON.stringify(unavailableEvidence),
+    open_risks: JSON.stringify(options.openRisks ?? []),
   };
   let embedding: number[] = [];
   try {
