@@ -148,12 +148,13 @@ export function registerTools(
   };
 
   server.tool("context", "Find and read source evidence in one call. Query for discovery; targets for batched exact file/symbol/line reads without search. Returns deduplicated source ranges with explicit omissions. Prefer this for repository questions; stop when evidence suffices.", {
+    intent: z.enum(["auto", "lookup", "change", "debug", "review", "overview"]).optional().describe("Query-only opt-in adaptive retrieval. Change/debug/review include bounded connected evidence; auto infers intent."),
     query: z.string().max(2000).optional().describe("Discovery query, at most 2000 characters. Use a literal symbol name to prioritize its definition."),
     targets: z.array(z.object({ file: z.string().max(240), symbol: z.string().max(200).optional(), start: z.number().int().min(1).optional(), end: z.number().int().min(1).optional() }).strict()).min(1).max(6).optional().describe("Exact reads: 1–6 file/symbol/line targets per call. Split larger batches."),
     max_tokens: z.number().int().min(512).max(12000).optional().describe("Integer response budget: 512–12000, UTF-8 bytes/4; default 4000. Raise within this range or narrow targets if omitted."),
     previous_context_id: z.string().regex(/^source_context-[a-f0-9]{14}$/).optional().describe("Query mode only: source_context ID from a complete packet you still hold. Returns source changes; omit after compaction. Exact targets are stateless."),
-  }, withRequestActivity(async ({ query, targets, max_tokens, previous_context_id }) => ({
-    content: [{ type: "text" as const, text: await getContext({ rootDir: rootDir(), query, targets, maxTokens: max_tokens, previousContextId: previous_context_id }) }],
+  }, withRequestActivity(async ({ query, targets, max_tokens, previous_context_id, intent }) => ({
+    content: [{ type: "text" as const, text: await getContext({ rootDir: rootDir(), query, targets, intent, maxTokens: max_tokens, previousContextId: previous_context_id }) }],
   }), { toolName: "context", waitForIndexing: false }));
 
   server.tool("feature_brief", "Explain connected implementation and tests with source citations. Reuses hash-validated artifacts. Deterministic by default; model summaries require CONTEXTPRO_FEATURE_SUMMARIES=true.", {

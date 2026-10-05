@@ -23,6 +23,31 @@ async function fixture(files, run) {
   } finally { closeDB(root); await rm(root, { recursive: true, force: true }); }
 }
 
+it('adaptive context finds operational evidence without document trigger words and preserves bounded connected evidence', async () => {
+  await fixture({
+    'docs/HUMAN-PENDING.md': '# Pending actions\nGitHub Actions billing or spending limit blocked CI. Account owner must resolve payment.\n',
+    'src/service.ts': 'import { quota } from "./config";\nexport function charge(n: number) { if (n > quota) throw new Error("quota"); return n; }\n',
+    'src/config.ts': 'export const quota = 3;\n',
+    'src/client.ts': 'import { charge } from "./service";\nexport const run = () => charge(2);\n',
+    'src/service.test.ts': 'import { charge } from "./service";\nexport const test = () => charge(1);\n',
+  }, async root => {
+    const query = 'Find the humanpending entry recording GitHub Actions billing or spending limit blocked CI.';
+    assert.equal(wantsDocuments(query), false);
+    const text = await getContext({rootDir:root,query,intent:'auto',maxTokens:1500,retrievalPreset:'keyword_only'});
+    assert.match(text, /HUMAN-PENDING.md:\d/);
+    assert.match(text, /Account owner must resolve payment/);
+    const change = await getContext({rootDir:root,query:'charge',intent:'change',maxTokens:3000,retrievalPreset:'keyword_only'});
+    assert.match(change, /src\/client.ts:\d/);
+    assert.match(change, /src\/service.test.ts:\d/);
+    assert.match(change, /configuration=returned/);
+    assert.match(change, /not compiler-resolved/);
+    assert.ok(Buffer.byteLength(change) <= 12000);
+    const bounded = await getContext({rootDir:root,query:'charge',intent:'change',maxTokens:512,retrievalPreset:'keyword_only'});
+    assert.ok(Buffer.byteLength(bounded) <= 2048);
+    await assert.rejects(getContext({rootDir:root,targets:[{file:'src/service.ts'}],intent:'change'}), /query discovery only/);
+  });
+});
+
 it('keeps case-distinct schema and value definitions in a multi-name query', async () => {
   await fixture({
     'core/index.ts': `export const orderSchema = z.object({\n${'  filler: z.string(),\n'.repeat(80)}  items: z.array(z.object({ regionCodes: z.array(z.string()) })),\n});\nexport type NormalizedOrder = z.infer<typeof orderSchema>;\n`,

@@ -132,3 +132,8 @@ events are separate from the coding agent's usage and are not billing estimates.
 Set `CONTEXTPRO_TOOL_TRACE_PATH` to an absolute local JSONL path before starting the server. Tracing is off by default and adds no MCP response text. Each event records tool arguments, status, a session/request ID, total server duration, preparation (root verification/freshness/waits), handler execution and postprocessing. Spans can overlap; their sum is not elapsed agent time.
 
 The trace caps each argument payload at 8 KiB and the file at 64 MiB, redacts common credential/content keys and requires a private regular destination file (created with mode 0600). Query strings and paths can still contain private information; keep raw traces local. Write failures are best-effort and produce a stderr warning. A missing or partial trace is unavailable evidence, not zero execution time. See the [benchmark procedure](https://github.com/AlaeddineMessadi/contextpro-mcp/blob/main/docs/benchmarks/methodology.md).
+# Experimental development context
+
+`context` accepts a query-only `intent` hint: `auto`, `lookup`, `change`, `debug`, `review`, or `overview`. Supplying it enables adaptive retrieval for that call. `CONTEXTPRO_ADAPTIVE_CONTEXT=true` enables inferred intent for query calls. Omit both to retain the existing selector. Exact targets remain stateless and reject an intent hint.
+
+Change/debug/review requests reuse the connected evidence retriever for implementations, callers, dependencies and tests. Configuration and contract candidates are labelled by path; these are structural/textual hints, not compiler proof. Missing evidence and output omissions do not establish absence. Response budgets and source delta IDs retain their existing contracts.

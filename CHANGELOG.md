@@ -4,6 +4,8 @@ All notable changes to this project are recorded here. The project follows [Sema
 
 ## [Unreleased]
 
+- Opt-in `context.intent` selects bounded change/debug/review evidence and reports structural/textual provenance and missing roles. Adaptive discovery considers relevant documents without requiring document-specific wording. Enable per query or with `CONTEXTPRO_ADAPTIVE_CONTEXT=true`; default promotion awaits coding trials.
+
 - `status` reports an active rebuild without waiting for indexing to finish, including through the expert dispatcher. Initial rebuilds report `indexing` even before the first source file is indexed.
 - Landing/dashboard pin Next.js 16.3.6 (and matching landing lint config), with refreshed browser-mapping locks, clearing the production dependency advisories surfaced by CI.
 - Literal discovery retains up to eight source candidates per key and matching identifier windows after named definitions, recovering command schemas and object-property values behind incidental callers. Unambiguous indexed path suffixes return bounded whole-file source when it fits. Source/task/brief caches invalidate older packets. See the [October 1 replay](docs/benchmarks/2026-10-01-log-fixes.json) for evidence and remaining limits.

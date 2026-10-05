@@ -34,6 +34,7 @@ export interface ContextOptions {
   targets?: ContextTarget[];
   maxTokens?: number;
   previousContextId?: string;
+  intent?: "auto" | "lookup" | "change" | "debug" | "review" | "overview";
   /** Internal evaluation override; the MCP surface uses configured defaults. */
   retrievalPreset?: "balanced" | "keyword_only" | "semantic_only";
   connected?: boolean;
@@ -72,6 +73,13 @@ export async function getContext(options: ContextOptions): Promise<string> {
 
 export async function collectSourceEvidence(options: ContextOptions): Promise<SourceEvidence> {
   const query = options.query?.trim() ?? "";
+  if (options.targets?.length && options.intent) throw new Error("intent is for query discovery only.");
+  const adaptive = !options.targets?.length && (options.intent !== undefined || process.env.CONTEXTPRO_ADAPTIVE_CONTEXT === "true");
+  const intent = options.intent && options.intent !== "auto" ? options.intent
+    : isOrientationQuery(query) ? "overview" : /\b(?:fix|debug|failure|error|broken)\b/i.test(query) ? "debug"
+    : /\b(?:review|impact|regression)\b/i.test(query) ? "review"
+    : /\b(?:change|implement|add|update|refactor|remove)\b/i.test(query) ? "change" : "lookup";
+  const changeContext = adaptive && ["change", "debug", "review"].includes(intent);
   const literals = [...new Set([...queryLiterals(query), query.replace(/^(["'`])([\s\S]*)\1$/, "$2").normalize("NFC").toLowerCase()])];
   if (!query && !options.targets?.length) throw new Error("Provide query or targets.");
   if (query.length > 2000 || (options.targets?.length ?? 0) > 6) throw new Error("Use a query up to 2000 characters and at most six targets.");
@@ -85,8 +93,8 @@ export async function collectSourceEvidence(options: ContextOptions): Promise<So
   // Subjects such as authentication/frontend and output wording such as "source
   // ranges" do not request code. Only explicit code/implementation intent
   // authorizes a restricted document allowance.
-  const mixedDocuments = !options.targets?.length && /\b(?:code|implementation)\b/i.test(query);
-  const orientation = options.retrievalPreset !== "semantic_only" && isOrientationQuery(query);
+  const mixedDocuments = changeContext || (!options.targets?.length && /\b(?:code|implementation)\b/i.test(query));
+  const orientation = options.retrievalPreset !== "semantic_only" && (isOrientationQuery(query) || (adaptive && intent === "overview"));
   // File mentions within an overview supplement the requested architecture;
   // they must not switch discovery into a restricted whole-file read.
   const readRequestedFiles = !orientation && (/\b(?:read|show|open|whole|entire|full)\b/i.test(positiveDiscoveryQuery(query))
@@ -97,12 +105,12 @@ export async function collectSourceEvidence(options: ContextOptions): Promise<So
   const scopedFiles = new Set<string>();
   const coverageFiles = new Set<string>();
   let connectedCandidates: EvidenceCandidate[] = [];
-  const connected = options.connected ?? connectedRetrievalEnabled();
+  const connected = options.connected ?? (changeContext || connectedRetrievalEnabled());
   if (!targets.length) {
     // Exact identifiers need no embedding round trip. Natural language keeps the
     // hybrid retriever: no unvalidated lexical confidence gate discards recall.
     const exact = /^[A-Za-z_$][\w$]*$/.test(query);
-    const packet = options.retrieved ?? (connected && !exact ? await retrieveEvidence({ rootDir: options.rootDir, query, preset: options.retrievalPreset }) : undefined);
+    const packet = options.retrieved ?? (connected && (!exact || changeContext) ? await retrieveEvidence({ rootDir: options.rootDir, query, preset: options.retrievalPreset }) : undefined);
     // Gather beyond the first few hits before packing; incidental callers can
     // rank ahead of the implementation. The source/output budget stays fixed.
     const found = packet?.search ?? await unifiedSearchData({ rootDir: options.rootDir, query,
@@ -170,7 +178,8 @@ export async function collectSourceEvidence(options: ContextOptions): Promise<So
     const definitions = [...definingFiles].sort((a, b) => Number(query.includes(b)) - Number(query.includes(a)) || a.localeCompare(b));
     if (definitions.length > 6 || hints.length > 16) notices.push("Some named definitions omitted; narrow the query or use exact file/symbol targets.");
     targets = [...definitions.slice(0, 6).map(file => ({ file })), ...targets.filter(target => !definitions.slice(0, 6).includes(target.file))];
-    const documents = options.retrievalPreset !== "semantic_only" && wantsDocuments(query) ? await discoverDocuments(options.rootDir, query) : undefined;
+    const documents = options.retrievalPreset !== "semantic_only" && (wantsDocuments(query) || (adaptive && !exact))
+      ? await discoverDocuments(options.rootDir, query, { requireRelevance: adaptive && !wantsDocuments(query) }) : undefined;
     // Strict multi-topic candidates can include controls without saying "code";
     // discovering them does not itself authorize capping documentation.
     if (documents && !orientation && options.retrievalPreset !== "semantic_only") {
@@ -232,7 +241,7 @@ export async function collectSourceEvidence(options: ContextOptions): Promise<So
   const limit = budget * 4;
   // Explicit targets are admitted whole. Discovery may select labelled interior
   // ranges, always copied verbatim from the snapshot rather than synthesized.
-  let available = limit - 768 - (options.targets?.length ? 0 : 384);
+  let available = limit - 768 - (options.targets?.length ? 0 : 384) - (adaptive ? 480 : 0);
   for (const target of targets) {
     const fullPath = resolveProjectPath(options.rootDir, target.file, "context target");
     const file = relative(options.rootDir, fullPath).split("\\").join("/");
@@ -462,7 +471,11 @@ export async function collectSourceEvidence(options: ContextOptions): Promise<So
   const covered = new Set(candidates.flatMap(part => searchTerms(part.text)));
   const selectedBytes = new Map<string, number>();
   const coveredRoles = new Set<string>();
-  const roles = (part: Excerpt) => connectedCandidates.find(item => item.path === part.file)?.roles ?? [];
+  const roles = (part: Pick<Excerpt, "file">): string[] => [...new Set([
+    ...connectedCandidates.find(item => item.path === part.file)?.roles ?? [],
+    ...(/(?:^|\/)(?:[^/]*config[^/]*|package\.json|pyproject\.toml)$|\.(?:ya?ml|toml)$/i.test(part.file) ? ["configuration"] : []),
+    ...(/(?:^|\/)(?:types|schemas?|contracts?)(?:[./-]|$)/i.test(part.file) ? ["contract"] : []),
+  ])];
   for (const part of candidates) for (const role of roles(part)) coveredRoles.add(role);
   for (const part of candidates) selectedBytes.set(part.file, (selectedBytes.get(part.file) ?? 0) + bytes(render(part)));
   while (remaining.length && available > 0) {
@@ -543,10 +556,11 @@ export async function collectSourceEvidence(options: ContextOptions): Promise<So
     if (missing.length) notices.push(`Evidence not returned for: ${missing.join(", ")}; this is not proof of absence.`);
   }
   const summary = notices.at(-1)?.startsWith("Evidence not returned") ? notices.at(-1) : undefined;
-  const text = ["Source evidence (only the indicated ranges are included):", ...merged.map(render), footer, summary,
+  const coverageNotice = adaptive ? `Retrieval: ${intent}; ${connected ? "hybrid + structural relations" : "exact/lexical + configured semantic"}. Relations are structural/textual, not compiler-resolved.\nEvidence: ${["implementation", "caller", "dependency", "contract", "configuration", "test"].map(role => `${role}=${merged.some(part => roles(part).includes(role)) ? "returned" : targets.some(target => roles(target).includes(role)) ? "omitted" : "unavailable"}`).join(", ")}. Unavailable is not proof of absence.` : undefined;
+  const text = ["Source evidence (only the indicated ranges are included):", coverageNotice, ...merged.map(render), footer, summary,
     !merged.length ? "No source fit or matched. Try exact file/line targets or native search." : ""].filter(Boolean).join("\n\n");
   return { text, ranges: merged, hashes: Object.fromEntries([...snapshots].map(([file, source]) => [file, createHash("sha256").update(source).digest("hex")])),
-    notices: [footer, summary].filter((value): value is string => !!value), complete: true,
-    settings: JSON.stringify({ version: 28, connected, preset: options.retrievalPreset ?? "balanced", rerank: process.env.CONTEXTPRO_CHAT_RERANK === "true",
+    notices: [coverageNotice, footer, summary].filter((value): value is string => !!value), complete: true,
+    settings: JSON.stringify({ version: 29, adaptive, intent, connected, preset: options.retrievalPreset ?? "balanced", rerank: process.env.CONTEXTPRO_CHAT_RERANK === "true",
       embedding: `${getProvider()}:${getEmbedModelName()}`, chat: options.targets?.length ? "unused" : await chatModelIdentity(options.rootDir) }) };
 }

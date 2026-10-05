@@ -15,7 +15,7 @@ export function wantsDocuments(query: string): boolean {
     || /\b(?:readme|roadmap|handoff|readiness|document(?:ation|ed))\b|\.(?:md|mdx|rst|txt)\b|\b(?:project|repository)\s+(?:instructions|status)\b|\b(?:status|qa|audit)\s+(?:documents?|reports?)\b|\bagent\s+brief\b/i.test(query);
 }
 
-export async function discoverDocuments(rootDir: string, query: string): Promise<{
+export async function discoverDocuments(rootDir: string, query: string, options: { requireRelevance?: boolean } = {}): Promise<{
   files: string[]; mentioned: string[]; limited: boolean;
 }> {
   const documents = (await walkDirectory({ rootDir })).filter(entry =>
@@ -43,7 +43,11 @@ export async function discoverDocuments(rootDir: string, query: string): Promise
       if (prefix.includes("\0")) continue;
       const lines = prefix.split("\n");
       const headings = lines.filter(line => /^#{1,6}\s/.test(line)).join("\n");
-      const score = pathScore(entry.relativePath) + overlap(lines.find(line => /^#\s/.test(line)) ?? "") * 4 + overlap(headings) + overlap(lines.slice(0, 30).join("\n"));
+      // Automatic document discovery must earn its place through topic overlap;
+      // a README bonus alone is not evidence for an unrelated code question.
+      if (options.requireRelevance && !mentioned.includes(entry.relativePath)
+        && overlap(entry.relativePath + " " + prefix) < Math.min(2, terms.size || 2)) continue;
+      const score = pathScore(entry.relativePath) + overlap(lines.find(line => /^#\s/.test(line)) ?? "") * 4 + overlap(headings) + overlap(lines.slice(0, 30).join("\n")) + (options.requireRelevance ? overlap(prefix) : 0);
       if (score > 0) ranked.push({ file: entry.relativePath, score, words: new Set(searchTerms(entry.relativePath + " " + headings)) });
     } catch { /* Deleted or unreadable files do not block other candidates. */ }
     finally { await handle?.close(); }
