@@ -1,0 +1,662 @@
+{
+  "entry": "<workspace>/build/index.js",
+  "conditions": "Two sessions, one root, TS references, two counterbalanced process repetitions. Round 0 is compiler-cold, rounds 1–3 compiler-warm; disk cache is not cleared. RSS includes observed descendants and service, sampled after calls, not peak. Index cache is shared on disk in both modes. This tiny fixture cannot establish general resource or latency gains.",
+  "results": [
+    {
+      "repeat": 0,
+      "shared": false,
+      "samples": [
+        {
+          "round": 0,
+          "calls": [
+            {
+              "elapsedMs": 772.7071669999998,
+              "outputBytes": 1544,
+              "correct": true
+            },
+            {
+              "elapsedMs": 809.5872089999998,
+              "outputBytes": 1544,
+              "correct": true
+            }
+          ],
+          "processes": [
+            {
+              "pid": 93649,
+              "ppid": 93640,
+              "rssKiB": 133440
+            },
+            {
+              "pid": 93749,
+              "ppid": 93640,
+              "rssKiB": 149584
+            },
+            {
+              "pid": 93983,
+              "ppid": 93649,
+              "rssKiB": 68304
+            },
+            {
+              "pid": 94130,
+              "ppid": 93649,
+              "rssKiB": 221536
+            },
+            {
+              "pid": 94161,
+              "ppid": 93749,
+              "rssKiB": 221488
+            }
+          ],
+          "totalRssKiB": 794352
+        },
+        {
+          "round": 1,
+          "calls": [
+            {
+              "elapsedMs": 106.18179099999998,
+              "outputBytes": 1544,
+              "correct": true
+            },
+            {
+              "elapsedMs": 104.77308300000004,
+              "outputBytes": 1544,
+              "correct": true
+            }
+          ],
+          "processes": [
+            {
+              "pid": 93649,
+              "ppid": 93640,
+              "rssKiB": 134128
+            },
+            {
+              "pid": 93749,
+              "ppid": 93640,
+              "rssKiB": 146096
+            },
+            {
+              "pid": 93983,
+              "ppid": 93649,
+              "rssKiB": 68304
+            },
+            {
+              "pid": 94130,
+              "ppid": 93649,
+              "rssKiB": 221584
+            },
+            {
+              "pid": 94161,
+              "ppid": 93749,
+              "rssKiB": 221568
+            }
+          ],
+          "totalRssKiB": 791680
+        },
+        {
+          "round": 2,
+          "calls": [
+            {
+              "elapsedMs": 40.59291600000006,
+              "outputBytes": 1544,
+              "correct": true
+            },
+            {
+              "elapsedMs": 41.704041999999845,
+              "outputBytes": 1544,
+              "correct": true
+            }
+          ],
+          "processes": [
+            {
+              "pid": 93649,
+              "ppid": 93640,
+              "rssKiB": 137488
+            },
+            {
+              "pid": 93749,
+              "ppid": 93640,
+              "rssKiB": 146192
+            },
+            {
+              "pid": 93983,
+              "ppid": 93649,
+              "rssKiB": 68304
+            },
+            {
+              "pid": 94130,
+              "ppid": 93649,
+              "rssKiB": 221680
+            },
+            {
+              "pid": 94161,
+              "ppid": 93749,
+              "rssKiB": 221664
+            }
+          ],
+          "totalRssKiB": 795328
+        },
+        {
+          "round": 3,
+          "calls": [
+            {
+              "elapsedMs": 42.919124999999894,
+              "outputBytes": 1544,
+              "correct": true
+            },
+            {
+              "elapsedMs": 43.973791999999776,
+              "outputBytes": 1544,
+              "correct": true
+            }
+          ],
+          "processes": [
+            {
+              "pid": 93649,
+              "ppid": 93640,
+              "rssKiB": 137552
+            },
+            {
+              "pid": 93749,
+              "ppid": 93640,
+              "rssKiB": 146288
+            },
+            {
+              "pid": 93983,
+              "ppid": 93649,
+              "rssKiB": 68304
+            },
+            {
+              "pid": 94130,
+              "ppid": 93649,
+              "rssKiB": 221728
+            },
+            {
+              "pid": 94161,
+              "ppid": 93749,
+              "rssKiB": 221664
+            }
+          ],
+          "totalRssKiB": 795536
+        }
+      ],
+      "fallbackWarnings": []
+    },
+    {
+      "repeat": 0,
+      "shared": true,
+      "samples": [
+        {
+          "round": 0,
+          "calls": [
+            {
+              "elapsedMs": 593.523459,
+              "outputBytes": 1544,
+              "correct": true
+            },
+            {
+              "elapsedMs": 596.4280410000001,
+              "outputBytes": 1544,
+              "correct": true
+            }
+          ],
+          "processes": [
+            {
+              "pid": 94659,
+              "ppid": 1,
+              "rssKiB": 132528
+            },
+            {
+              "pid": 94662,
+              "ppid": 93640,
+              "rssKiB": 165168
+            },
+            {
+              "pid": 94765,
+              "ppid": 93640,
+              "rssKiB": 165264
+            },
+            {
+              "pid": 95141,
+              "ppid": 94659,
+              "rssKiB": 222080
+            }
+          ],
+          "totalRssKiB": 685040
+        },
+        {
+          "round": 1,
+          "calls": [
+            {
+              "elapsedMs": 45.203708000000006,
+              "outputBytes": 1544,
+              "correct": true
+            },
+            {
+              "elapsedMs": 46.514250000000175,
+              "outputBytes": 1544,
+              "correct": true
+            }
+          ],
+          "processes": [
+            {
+              "pid": 94659,
+              "ppid": 1,
+              "rssKiB": 132688
+            },
+            {
+              "pid": 94662,
+              "ppid": 93640,
+              "rssKiB": 165888
+            },
+            {
+              "pid": 94765,
+              "ppid": 93640,
+              "rssKiB": 166080
+            },
+            {
+              "pid": 95141,
+              "ppid": 94659,
+              "rssKiB": 222048
+            }
+          ],
+          "totalRssKiB": 686704
+        },
+        {
+          "round": 2,
+          "calls": [
+            {
+              "elapsedMs": 48.15208299999995,
+              "outputBytes": 1544,
+              "correct": true
+            },
+            {
+              "elapsedMs": 50.04516599999988,
+              "outputBytes": 1544,
+              "correct": true
+            }
+          ],
+          "processes": [
+            {
+              "pid": 94659,
+              "ppid": 1,
+              "rssKiB": 132688
+            },
+            {
+              "pid": 94662,
+              "ppid": 93640,
+              "rssKiB": 164656
+            },
+            {
+              "pid": 94765,
+              "ppid": 93640,
+              "rssKiB": 166752
+            },
+            {
+              "pid": 95141,
+              "ppid": 94659,
+              "rssKiB": 222064
+            }
+          ],
+          "totalRssKiB": 686160
+        },
+        {
+          "round": 3,
+          "calls": [
+            {
+              "elapsedMs": 71.83795799999916,
+              "outputBytes": 1544,
+              "correct": true
+            },
+            {
+              "elapsedMs": 58.87475000000086,
+              "outputBytes": 1544,
+              "correct": true
+            }
+          ],
+          "processes": [
+            {
+              "pid": 94659,
+              "ppid": 1,
+              "rssKiB": 132752
+            },
+            {
+              "pid": 94662,
+              "ppid": 93640,
+              "rssKiB": 145056
+            },
+            {
+              "pid": 94765,
+              "ppid": 93640,
+              "rssKiB": 165280
+            },
+            {
+              "pid": 95141,
+              "ppid": 94659,
+              "rssKiB": 222080
+            }
+          ],
+          "totalRssKiB": 665168
+        }
+      ],
+      "fallbackWarnings": []
+    },
+    {
+      "repeat": 1,
+      "shared": true,
+      "samples": [
+        {
+          "round": 0,
+          "calls": [
+            {
+              "elapsedMs": 740.2404580000002,
+              "outputBytes": 1544,
+              "correct": true
+            },
+            {
+              "elapsedMs": 744.1113750000004,
+              "outputBytes": 1544,
+              "correct": true
+            }
+          ],
+          "processes": [
+            {
+              "pid": 95717,
+              "ppid": 1,
+              "rssKiB": 112784
+            },
+            {
+              "pid": 95719,
+              "ppid": 93640,
+              "rssKiB": 140480
+            },
+            {
+              "pid": 95827,
+              "ppid": 93640,
+              "rssKiB": 140112
+            },
+            {
+              "pid": 96196,
+              "ppid": 95717,
+              "rssKiB": 218320
+            }
+          ],
+          "totalRssKiB": 611696
+        },
+        {
+          "round": 1,
+          "calls": [
+            {
+              "elapsedMs": 81.86058299999968,
+              "outputBytes": 1544,
+              "correct": true
+            },
+            {
+              "elapsedMs": 79.12012500000128,
+              "outputBytes": 1544,
+              "correct": true
+            }
+          ],
+          "processes": [
+            {
+              "pid": 95717,
+              "ppid": 1,
+              "rssKiB": 115568
+            },
+            {
+              "pid": 95719,
+              "ppid": 93640,
+              "rssKiB": 141312
+            },
+            {
+              "pid": 95827,
+              "ppid": 93640,
+              "rssKiB": 140400
+            },
+            {
+              "pid": 96196,
+              "ppid": 95717,
+              "rssKiB": 218560
+            }
+          ],
+          "totalRssKiB": 615840
+        },
+        {
+          "round": 2,
+          "calls": [
+            {
+              "elapsedMs": 83.94804099999965,
+              "outputBytes": 1544,
+              "correct": true
+            },
+            {
+              "elapsedMs": 82.41537499999868,
+              "outputBytes": 1544,
+              "correct": true
+            }
+          ],
+          "processes": [
+            {
+              "pid": 95717,
+              "ppid": 1,
+              "rssKiB": 115600
+            },
+            {
+              "pid": 95719,
+              "ppid": 93640,
+              "rssKiB": 142016
+            },
+            {
+              "pid": 95827,
+              "ppid": 93640,
+              "rssKiB": 140528
+            },
+            {
+              "pid": 96196,
+              "ppid": 95717,
+              "rssKiB": 218608
+            }
+          ],
+          "totalRssKiB": 616752
+        },
+        {
+          "round": 3,
+          "calls": [
+            {
+              "elapsedMs": 42.550750000000335,
+              "outputBytes": 1544,
+              "correct": true
+            },
+            {
+              "elapsedMs": 41.33787499999926,
+              "outputBytes": 1544,
+              "correct": true
+            }
+          ],
+          "processes": [
+            {
+              "pid": 95717,
+              "ppid": 1,
+              "rssKiB": 115808
+            },
+            {
+              "pid": 95719,
+              "ppid": 93640,
+              "rssKiB": 142752
+            },
+            {
+              "pid": 95827,
+              "ppid": 93640,
+              "rssKiB": 140640
+            },
+            {
+              "pid": 96196,
+              "ppid": 95717,
+              "rssKiB": 218608
+            }
+          ],
+          "totalRssKiB": 617808
+        }
+      ],
+      "fallbackWarnings": []
+    },
+    {
+      "repeat": 1,
+      "shared": false,
+      "samples": [
+        {
+          "round": 0,
+          "calls": [
+            {
+              "elapsedMs": 736.2750420000011,
+              "outputBytes": 1544,
+              "correct": true
+            },
+            {
+              "elapsedMs": 813.6865000000016,
+              "outputBytes": 1544,
+              "correct": true
+            }
+          ],
+          "processes": [
+            {
+              "pid": 96724,
+              "ppid": 93640,
+              "rssKiB": 114784
+            },
+            {
+              "pid": 96827,
+              "ppid": 93640,
+              "rssKiB": 127872
+            },
+            {
+              "pid": 97184,
+              "ppid": 96724,
+              "rssKiB": 216112
+            },
+            {
+              "pid": 97218,
+              "ppid": 96827,
+              "rssKiB": 215216
+            }
+          ],
+          "totalRssKiB": 673984
+        },
+        {
+          "round": 1,
+          "calls": [
+            {
+              "elapsedMs": 148.16029200000048,
+              "outputBytes": 1544,
+              "correct": true
+            },
+            {
+              "elapsedMs": 148.47312499999862,
+              "outputBytes": 1544,
+              "correct": true
+            }
+          ],
+          "processes": [
+            {
+              "pid": 96724,
+              "ppid": 93640,
+              "rssKiB": 115824
+            },
+            {
+              "pid": 96827,
+              "ppid": 93640,
+              "rssKiB": 129440
+            },
+            {
+              "pid": 97184,
+              "ppid": 96724,
+              "rssKiB": 199120
+            },
+            {
+              "pid": 97218,
+              "ppid": 96827,
+              "rssKiB": 203648
+            }
+          ],
+          "totalRssKiB": 648032
+        },
+        {
+          "round": 2,
+          "calls": [
+            {
+              "elapsedMs": 74.9537079999991,
+              "outputBytes": 1544,
+              "correct": true
+            },
+            {
+              "elapsedMs": 73.79991599999994,
+              "outputBytes": 1544,
+              "correct": true
+            }
+          ],
+          "processes": [
+            {
+              "pid": 96724,
+              "ppid": 93640,
+              "rssKiB": 116608
+            },
+            {
+              "pid": 96827,
+              "ppid": 93640,
+              "rssKiB": 130224
+            },
+            {
+              "pid": 97184,
+              "ppid": 96724,
+              "rssKiB": 198720
+            },
+            {
+              "pid": 97218,
+              "ppid": 96827,
+              "rssKiB": 203344
+            }
+          ],
+          "totalRssKiB": 648896
+        },
+        {
+          "round": 3,
+          "calls": [
+            {
+              "elapsedMs": 56.32737499999894,
+              "outputBytes": 1544,
+              "correct": true
+            },
+            {
+              "elapsedMs": 56.39241700000093,
+              "outputBytes": 1544,
+              "correct": true
+            }
+          ],
+          "processes": [
+            {
+              "pid": 96724,
+              "ppid": 93640,
+              "rssKiB": 117392
+            },
+            {
+              "pid": 96827,
+              "ppid": 93640,
+              "rssKiB": 134352
+            },
+            {
+              "pid": 97184,
+              "ppid": 96724,
+              "rssKiB": 198752
+            },
+            {
+              "pid": 97218,
+              "ppid": 96827,
+              "rssKiB": 203392
+            }
+          ],
+          "totalRssKiB": 653888
+        }
+      ],
+      "fallbackWarnings": []
+    }
+  ]
+}

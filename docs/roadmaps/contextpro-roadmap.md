@@ -5,11 +5,11 @@
 Baseline: `2448966b055e9d9b929e0596aabcaa528bc7aedf`. Preserve the earlier coding pilot and its unsuccessful rollout result.
 
 1. Adaptive change context and document discovery: implemented behind explicit `context.intent` or `CONTEXTPRO_ADAPTIVE_CONTEXT=true`; default promotion awaits matched coding trials.
-2. Shared local compute: request freshness reuse and opt-in daemon implemented; two-root refresh and crash/restart fallback tests pass. Multi-session resource measurements and default enablement remain pending.
+2. Shared local compute: request freshness reuse and opt-in daemon implemented; two-root refresh and crash/restart fallback tests pass. Two counterbalanced two-session measurements reduce sampled RSS by about 8–14% but increase paired warm median latency by8–13%; default remains off. Configured Python analysis also routes through the shared service.
 3. Source-bound memory and immutable handoffs: implemented with lexical fallback, explicit supersession, configuration invalidation and historical validation receipts; targeted tests pass locally.
 4. Local task ownership, dependencies and advisory leases: implemented; competing-process, linked-worktree overlap, dependency-cycle and lease-expiry regressions pass locally.
 5. Validation receipts, TS/JS and Python diagnostics, compiler rename: implemented; real Pyright tests cover imports, aliases, shadowing, virtual environments and cross-file edits; stale TS previews reject newly added callers. No runtime downloads.
-6. Frozen native/current/candidate campaign and external retrieval comparison: pending.
+6. Frozen native/current/candidate campaign: ten validators qualified; 12-attempt smoke running with bundled Codex0.160.0 before expanding to 60. External bounded retrieval comparison completed; raw evidence and limits are retained under docs/benchmarks.
 
 No speed or provider-usage improvement is established by unit-test success. Each phase records its local gates, review and release state separately. Rollback for adaptive retrieval is to omit `intent` and unset `CONTEXTPRO_ADAPTIVE_CONTEXT`; exact reads and the existing selector remain available.
 

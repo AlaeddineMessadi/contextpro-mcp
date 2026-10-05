@@ -4,7 +4,7 @@ All notable changes to this project are recorded here. The project follows [Sema
 
 ## [Unreleased]
 
-- Updated transitive `fast-uri` to3.1.8, `hono` to4.13.12 and `ip-address` to10.7.3, clearing the three moderate dependency advisories found during delivery.
+- Updated transitive `fast-uri` to 3.1.8, `hono` to 4.13.12 and `ip-address` to 10.7.3, clearing the three moderate dependency advisories found during delivery.
 
 - Discoverable TS/JS and optional Pyright diagnostics and compiler rename preview/apply reuse bounded workers, source hashes and restore points. Configured Python exact references use LSP evidence; unsupported/stale rename operations reject without textual fallback.
 - Shared compute now supports compiler operations, canonical root isolation, serialized startup recovery and bounded idle database retention. Compiler/parser package identities participate in compatibility checks.

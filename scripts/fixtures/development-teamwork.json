@@ -1,0 +1,131 @@
+{
+  "version": 2,
+  "baselineServerCommit": "2448966b055e9d9b929e0596aabcaa528bc7aedf",
+  "agentTimeoutMs": 600000,
+  "tasks": [
+    {
+      "id": "contextpro-worktree-routing",
+      "repository": "contextpro",
+      "fix": "69ea95572b8737a91c1684e77041e680b4ffa318",
+      "prompt": "Fix shared MCP worktree routing. When the connection root has linked worktrees, calls without an explicit root must reject ambiguous routing, including health and reindex. Explicit roots must route reads, search, reindex and health to that worktree, including edited working-tree bytes and concurrent calls. Health must still report diagnostics for the requested root when project configuration is invalid. Preserve standalone-repository default-root behavior.",
+      "validator": "node",
+      "tests": [
+        "test/main/worktree-routing-stdio.test.mjs"
+      ]
+    },
+    {
+      "id": "contextpro-grep-context",
+      "repository": "contextpro",
+      "fix": "3b9eec9b219c296a2d720259be5bbcd7ba0b67b7",
+      "prompt": "Improve grep source context. Add optional context_lines (0\u201310, default 0) and context_chars (40\u20131000, default 300) to the MCP grep schema and corresponding contextLines/contextChars handler options. Include bounded, deduplicated neighboring lines while preserving exact match counts and marking matching versus surrounding lines. Preserve literal matching, regex opt-in and existing glob behavior.",
+      "validator": "node",
+      "tests": [
+        "test/main/grep-glob.test.mjs"
+      ]
+    },
+    {
+      "id": "app-d-offline-contact",
+      "repository": "app-d",
+      "fix": "private-rev",
+      "prompt": "Fix stale privacy contact information in the public offline shell. After a successful online page navigation returns a changed public privacy contact, later offline navigation must display the current contact. Preserve the existing service-worker caching restrictions and safe behavior for failed or unsuitable network responses.",
+      "validator": "app-d-browser",
+      "tests": [
+        "tests/e2e/offline-contact-refresh.spec.ts"
+      ]
+    },
+    {
+      "id": "app-d-reporting-withdrawal",
+      "repository": "app-d",
+      "fix": "private-rev",
+      "prompt": "Preserve withdrawal of optional usage reporting when an invitation expires or becomes unavailable. A guest who previously enabled reporting must still be able to turn it off from the unavailable invitation page, with consent withdrawn and queued reporting stopped. Do not enable a new opt-in without a valid invitation, and preserve guest access restrictions.",
+      "validator": "app-d-browser",
+      "tests": [
+        "tests/e2e/observations.spec.ts"
+      ],
+      "testPattern": "unavailable|withdraw|expired"
+    },
+    {
+      "id": "app-d-video-export",
+      "repository": "app-d",
+      "fix": "private-rev",
+      "prompt": "Enforce the video feature kill switch throughout host exports. When video is disabled, video content and pending video jobs must not enter new exports, and previously prepared exports containing video must not be downloadable. Preserve photo-only export behavior and authorize every export operation normally.",
+      "validator": "vitest",
+      "tests": [
+        "tests/export.test.ts"
+      ]
+    },
+    {
+      "id": "app-c-country-normalization",
+      "repository": "app-c",
+      "fix": "private-rev",
+      "prompt": "Normalize Austrian procurement notice country values to the canonical ISO alpha-2 country code AT. Cover the country spellings and codes used by source notices without inventing a country for unknown values or changing valid codes. Preserve parser behavior for other countries and source provenance.",
+      "validator": "vitest",
+      "tests": [
+        "tests/parsers.test.ts"
+      ]
+    },
+    {
+      "id": "app-c-empty-comparison",
+      "repository": "app-c",
+      "fix": "private-rev",
+      "prompt": "Repair AI matching comparisons for empty company-profile fields. Empty or whitespace-only arrays/strings must remain missing information, not supported matching evidence. Repair unsupported company evidence only for genuinely empty compared fields while retaining the tender citations. Do not weaken evidence validation for populated fields or fabricate capabilities.",
+      "validator": "vitest",
+      "tests": [
+        "tests/ai-provider.test.ts"
+      ]
+    },
+    {
+      "id": "app-c-plain-text",
+      "repository": "app-c",
+      "fix": "private-rev",
+      "prompt": "Add complete verified reading of plain-text source documents in the source panel. Fetch the original through the existing authorized preview URL, verify its expected byte length and SHA-256, and render the full text literally with whitespace preserved, without interpreting HTML or Markdown. Retain excerpt mode and original download. Handle loading, retryable errors, empty text and files over 512 KiB safely. Keep reading position across preview expansion, and preserve existing Markdown preview behavior.",
+      "validator": "text-preview",
+      "tests": []
+    },
+    {
+      "id": "python-api-rename",
+      "repository": "python",
+      "fix": "after",
+      "validator": "python",
+      "tests": [
+        "tests/test_contract.py"
+      ],
+      "prompt": "Rename the public service function parse_event to decode_event and update its consumers. Preserve existing import aliases, behavior, unrelated same-name parameters, and literal text. Validate the package after the rename.",
+      "fixture": {
+        "before": {
+          "service.py": "def parse_event(value: str) -> str:\n    return value.strip().lower()\n",
+          "consumer.py": "from service import parse_event as parse\n\ndef process(value):\n    return parse(value)\n\ndef unrelated(parse_event):\n    return parse_event + 1\n\nLABEL = \"parse_event\"\n"
+        },
+        "after": {
+          "service.py": "def decode_event(value: str) -> str:\n    return value.strip().lower()\n",
+          "consumer.py": "from service import decode_event as parse\n\ndef process(value):\n    return parse(value)\n\ndef unrelated(parse_event):\n    return parse_event + 1\n\nLABEL = \"parse_event\"\n"
+        },
+        "tests": {
+          "tests/test_contract.py": "import unittest\nimport service, consumer\n\nclass Contract(unittest.TestCase):\n    def test_api(self):\n        self.assertEqual(service.decode_event(\" Hello \"), \"hello\")\n        self.assertFalse(hasattr(service,\"parse_event\"))\n        self.assertEqual(consumer.process(\" A \"), \"a\")\n        self.assertEqual(consumer.unrelated(3),4)\n        self.assertEqual(consumer.LABEL,\"parse_event\")\n        self.assertIs(consumer.parse,service.decode_event)\n"
+        }
+      }
+    },
+    {
+      "id": "python-config-freshness",
+      "repository": "python",
+      "fix": "after",
+      "validator": "python",
+      "tests": [
+        "tests/test_contract.py"
+      ],
+      "prompt": "Fix stale results in load_config. Repeated reads must reflect current file contents, including edits that keep the same file size and restored modification time. Keep different file paths isolated. Deleted or invalid files must report their real errors rather than return cached successful data; subsequent valid content must recover.",
+      "fixture": {
+        "before": {
+          "config.py": "import json\nfrom pathlib import Path\n_cache = {}\n\ndef load_config(path):\n    key = str(Path(path).resolve())\n    if key not in _cache:\n        _cache[key] = json.loads(Path(key).read_text())\n    return _cache[key]\n"
+        },
+        "after": {
+          "config.py": "import json\nfrom pathlib import Path\n_cache = {}\n\ndef load_config(path):\n    key = str(Path(path).resolve())\n    content = Path(key).read_bytes()\n    cached = _cache.get(key)\n    if cached is None or cached[0] != content:\n        _cache[key] = (content, json.loads(content))\n    return _cache[key][1]\n"
+        },
+        "tests": {
+          "tests/test_contract.py": "import unittest, tempfile, os\nfrom pathlib import Path\nfrom config import load_config\n\nclass Contract(unittest.TestCase):\n    def test_changes(self):\n        with tempfile.TemporaryDirectory() as directory:\n            file=Path(directory)/\"config.json\"\n            other=Path(directory)/\"other.json\"\n            file.write_text('{\"value\":1}')\n            other.write_text('{\"value\":3}')\n            stat=file.stat()\n            self.assertEqual(load_config(file)[\"value\"],1)\n            file.write_text('{\"value\":2}')\n            os.utime(file,ns=(stat.st_atime_ns,stat.st_mtime_ns))\n            self.assertEqual(load_config(file)[\"value\"],2)\n            self.assertEqual(load_config(other)[\"value\"],3)\n            file.unlink()\n            with self.assertRaises(FileNotFoundError):load_config(file)\n            file.write_text(\"invalid\")\n            with self.assertRaises(ValueError):load_config(file)\n            file.write_text('{\"value\":4}')\n            self.assertEqual(load_config(file)[\"value\"],4)\n"
+        }
+      }
+    }
+  ],
+  "adaptive": true
+}

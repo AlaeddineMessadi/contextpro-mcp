@@ -1,6 +1,6 @@
 # ContextPro status
 
-Updated 2026-09-29. This describes the current source checkout, including the scoped-discovery repair, not a published release. Package metadata remains `1.3.0`; supported Node range is `>=20 <27`.
+Updated 2026-10-05. This describes the current source checkout, including the development/teamwork phases, not a published release. Package metadata remains `1.3.0`; supported Node range is `>=20 <27`.
 
 | Area | Current behavior | Remaining limit |
 | --- | --- | --- |
@@ -9,15 +9,20 @@ Updated 2026-09-29. This describes the current source checkout, including the sc
 | Background updates | Watcher plus periodic reconciliation; polling survives watcher failure | Large backlogs take time; inspect freshness |
 | Parser | Isolated WASM worker with bounded requests and fallback | Fallback reduces precision; syntax validation can fail closed |
 | TS/JS references | Reused compiler projects, aliases/project refs/indexed tests, categorized counts and per-file call totals | Indexed scope only; 500 displayed results; cold initialization cost |
-| Other reference evidence | SCIP import and Python import/call candidates | SCIP revision verification and stronger Python resolution remain open |
+| Other reference evidence | Configured Pyright LSP; explicit Python heuristic fallback when unconfigured; SCIP import | Optional language server must be installed; SCIP revision verification remains open |
 | Retrieval | Bounded exact reads, path/identifier-guided source, UI/document orientation; opt-in connected graph retrieval | Broad lexical recall remains incomplete; hints are not hard filters |
 | Embeddings | Independent optional provider; bounded query requests | Reindex needed for changed model/corpus vectors |
 | Context reuse | Source-hash-bound query deltas and cached cited feature briefs; model summaries opt-in | Omit previous context IDs after context loss; caches are regenerable |
-| Memory | Project/session scopes, durable notes and graph traversal | Source/config evidence validation and robust offline retrieval remain work |
-| Source edits | Revision checks, serialized writes, restore points and preview | Multi-file publication is not transactional; rename is textual |
+| Memory | Source/config hash evidence, explicit supersession, lexical fallback and immutable handoffs | Legacy records are unverified; ignored inputs and unsaved buffers are outside scope |
+| Source edits | Compiler rename previews for TS/JS and configured Python; revision/hash checks and restore points | Multi-file publication is not transactional; legacy rename_symbol remains textual |
+| Teamwork | Shared local task/dependency ledger, atomic claims and five-minute file leases | Explicit and advisory; ContextPro does not launch agents or messages |
+| Validation | Pre-check snapshots and host-reported command receipts | Recommendations are not executed checks; changed inputs invalidate applicability |
+| Shared compute | Optional private per-user service for indexing and TS/Python compiler work | Defaults off; resource/latency evidence remains limited |
 | Efficiency | Session estimates plus separately recorded provider-usage trials | No automatic billing access or universal savings claim |
 
 ## Verification and measurements
+
+The October 5 development/teamwork phases pass **819 main tests** on Node 26, plus the previously run 33 parser demos. Build, documentation, package-content and release-metadata checks pass locally; the package audit reports zero vulnerabilities. Fresh stdio verifies the unchanged three-tool lean catalog and the complete claim/check/record/handoff/rename flow. The [implementation and measurement report](docs/benchmarks/2026-10-05-development-teamwork.md) separates these results from the running frozen coding campaign, opt-in runtime measurements, hosted CI, publication and desktop activation.
 
 The September 29 repair reproduces the three app-b source-location reports
 on frozen revision `private-rev` and adds scoped directory/named-usage candidates to

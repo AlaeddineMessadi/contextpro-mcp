@@ -1,0 +1,686 @@
+{
+  "fixtureHash": "0a96d7c8f6d176b0f603d5fa0c44ce467a1e0aaf9eacb8baf58a73161775677b",
+  "files": {
+    "src/service.ts": "export function charge(amount: number) { return amount * 100; }\n",
+    "src/caller.ts": "import {charge} from \"./service\";\nexport const total = charge(3);\n",
+    "python/config.py": "def load_config(path: str):\n    return {\"path\": path}\n",
+    "humanpending.md": "# Owner dependencies\n\nGitHub Actions is blocked because account payments failed or the spending limit was reached. The owner must resolve billing before hosted CI can run.\n",
+    ".gitignore": ".codanna/\n.contextpro/\n.codebase-memory/\n.fastembed_cache\n"
+  },
+  "queries": [
+    {
+      "id": "ts-definition",
+      "query": "charge",
+      "path": "src/service.ts",
+      "body": "return amount * 100"
+    },
+    {
+      "id": "python-definition",
+      "query": "load_config",
+      "path": "python/config.py",
+      "body": "return {\"path\": path}"
+    },
+    {
+      "id": "ci-billing",
+      "query": "billing",
+      "path": "humanpending.md",
+      "body": "owner must resolve billing"
+    },
+    {
+      "id": "no-answer",
+      "query": "nonexistent_zebra_468291",
+      "path": null,
+      "body": null
+    }
+  ],
+  "conditions": "Same bounded local corpus; structural/text only, no corpus embeddings. First/warm are first/second requests in one session, not OS-cache-cold. Codanna document search requires a separately embedded collection and is reported unavailable in this provider-free comparison. RSS is server process only, sampled after requests, not peak or process-tree usage. Location/source checks are simple fixture assertions, not coding outcomes. No billing estimates.",
+  "results": [
+    {
+      "engine": "contextpro",
+      "startupMs": 1668.6362500000002,
+      "indexMs": 243.7234169999997,
+      "rows": [
+        {
+          "query": "ts-definition",
+          "repeat": 0,
+          "call": {
+            "name": "context",
+            "arguments": {
+              "root": "<fixture>",
+              "query": "charge",
+              "intent": "lookup",
+              "max_tokens": 1200
+            }
+          },
+          "elapsedMs": 63.90070800000012,
+          "outputBytes": 710,
+          "serverRssKiB": 169456,
+          "locationFound": true,
+          "sourceFound": true,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "Context ID: source_context-ce99732e7203fd\nOmit previous_context_id after context loss; artifact_read recovers this snapshot.\n\nSource evidence (only the indicated ranges are included):\n\nRetrieval: lookup; exact/lexical + configured semantic. Relations are structural/textual, not compiler-resolved.\nEvidence: implementation=unavailable, caller=unavailable, dependency=unavailable, contract=unavailable, configuration=unavailable, test=unavailable. Unavailable is not proof of absence.\n\nsrc/service.ts:1-2\nexport function charge(amount: number) { return amount * 100; }\n\n\nsrc/caller.ts:1-3\nimport {charge} from \"./service\";\nexport const total = charge(3);\n"
+              }
+            ]
+          }
+        },
+        {
+          "query": "python-definition",
+          "repeat": 0,
+          "call": {
+            "name": "context",
+            "arguments": {
+              "root": "<fixture>",
+              "query": "load_config",
+              "intent": "lookup",
+              "max_tokens": 1200
+            }
+          },
+          "elapsedMs": 52.66145800000004,
+          "outputBytes": 609,
+          "serverRssKiB": 169648,
+          "locationFound": true,
+          "sourceFound": true,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "Context ID: source_context-a8ee9f34b5c518\nOmit previous_context_id after context loss; artifact_read recovers this snapshot.\n\nSource evidence (only the indicated ranges are included):\n\nRetrieval: lookup; exact/lexical + configured semantic. Relations are structural/textual, not compiler-resolved.\nEvidence: implementation=unavailable, caller=unavailable, dependency=unavailable, contract=unavailable, configuration=returned, test=unavailable. Unavailable is not proof of absence.\n\npython/config.py:1-3\ndef load_config(path: str):\n    return {\"path\": path}\n"
+              }
+            ]
+          }
+        },
+        {
+          "query": "ci-billing",
+          "repeat": 0,
+          "call": {
+            "name": "context",
+            "arguments": {
+              "root": "<fixture>",
+              "query": "billing",
+              "intent": "lookup",
+              "max_tokens": 1200
+            }
+          },
+          "elapsedMs": 49.51958400000012,
+          "outputBytes": 603,
+          "serverRssKiB": 169840,
+          "locationFound": false,
+          "sourceFound": false,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "Context ID: source_context-8f0723f1d7d2b6\nOmit previous_context_id after context loss; artifact_read recovers this snapshot.\n\nSource evidence (only the indicated ranges are included):\n\nRetrieval: lookup; exact/lexical + configured semantic. Relations are structural/textual, not compiler-resolved.\nEvidence: implementation=unavailable, caller=unavailable, dependency=unavailable, contract=unavailable, configuration=unavailable, test=unavailable. Unavailable is not proof of absence.\n\nNo source fit or matched. Try exact file/line targets or native search."
+              }
+            ]
+          }
+        },
+        {
+          "query": "no-answer",
+          "repeat": 0,
+          "call": {
+            "name": "context",
+            "arguments": {
+              "root": "<fixture>",
+              "query": "nonexistent_zebra_468291",
+              "intent": "lookup",
+              "max_tokens": 1200
+            }
+          },
+          "elapsedMs": 55.513540999999805,
+          "outputBytes": 603,
+          "serverRssKiB": 171376,
+          "locationFound": null,
+          "sourceFound": null,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "Context ID: source_context-abda8a7f9ed9d7\nOmit previous_context_id after context loss; artifact_read recovers this snapshot.\n\nSource evidence (only the indicated ranges are included):\n\nRetrieval: lookup; exact/lexical + configured semantic. Relations are structural/textual, not compiler-resolved.\nEvidence: implementation=unavailable, caller=unavailable, dependency=unavailable, contract=unavailable, configuration=unavailable, test=unavailable. Unavailable is not proof of absence.\n\nNo source fit or matched. Try exact file/line targets or native search."
+              }
+            ]
+          }
+        },
+        {
+          "query": "ts-definition",
+          "repeat": 1,
+          "call": {
+            "name": "context",
+            "arguments": {
+              "root": "<fixture>",
+              "query": "charge",
+              "intent": "lookup",
+              "max_tokens": 1200
+            }
+          },
+          "elapsedMs": 45.04208299999982,
+          "outputBytes": 710,
+          "serverRssKiB": 173760,
+          "locationFound": true,
+          "sourceFound": true,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "Context ID: source_context-ce99732e7203fd\nOmit previous_context_id after context loss; artifact_read recovers this snapshot.\n\nSource evidence (only the indicated ranges are included):\n\nRetrieval: lookup; exact/lexical + configured semantic. Relations are structural/textual, not compiler-resolved.\nEvidence: implementation=unavailable, caller=unavailable, dependency=unavailable, contract=unavailable, configuration=unavailable, test=unavailable. Unavailable is not proof of absence.\n\nsrc/service.ts:1-2\nexport function charge(amount: number) { return amount * 100; }\n\n\nsrc/caller.ts:1-3\nimport {charge} from \"./service\";\nexport const total = charge(3);\n"
+              }
+            ]
+          }
+        },
+        {
+          "query": "python-definition",
+          "repeat": 1,
+          "call": {
+            "name": "context",
+            "arguments": {
+              "root": "<fixture>",
+              "query": "load_config",
+              "intent": "lookup",
+              "max_tokens": 1200
+            }
+          },
+          "elapsedMs": 37.438874999999825,
+          "outputBytes": 609,
+          "serverRssKiB": 175616,
+          "locationFound": true,
+          "sourceFound": true,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "Context ID: source_context-a8ee9f34b5c518\nOmit previous_context_id after context loss; artifact_read recovers this snapshot.\n\nSource evidence (only the indicated ranges are included):\n\nRetrieval: lookup; exact/lexical + configured semantic. Relations are structural/textual, not compiler-resolved.\nEvidence: implementation=unavailable, caller=unavailable, dependency=unavailable, contract=unavailable, configuration=returned, test=unavailable. Unavailable is not proof of absence.\n\npython/config.py:1-3\ndef load_config(path: str):\n    return {\"path\": path}\n"
+              }
+            ]
+          }
+        },
+        {
+          "query": "ci-billing",
+          "repeat": 1,
+          "call": {
+            "name": "context",
+            "arguments": {
+              "root": "<fixture>",
+              "query": "billing",
+              "intent": "lookup",
+              "max_tokens": 1200
+            }
+          },
+          "elapsedMs": 36.96733399999994,
+          "outputBytes": 603,
+          "serverRssKiB": 177328,
+          "locationFound": false,
+          "sourceFound": false,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "Context ID: source_context-8f0723f1d7d2b6\nOmit previous_context_id after context loss; artifact_read recovers this snapshot.\n\nSource evidence (only the indicated ranges are included):\n\nRetrieval: lookup; exact/lexical + configured semantic. Relations are structural/textual, not compiler-resolved.\nEvidence: implementation=unavailable, caller=unavailable, dependency=unavailable, contract=unavailable, configuration=unavailable, test=unavailable. Unavailable is not proof of absence.\n\nNo source fit or matched. Try exact file/line targets or native search."
+              }
+            ]
+          }
+        },
+        {
+          "query": "no-answer",
+          "repeat": 1,
+          "call": {
+            "name": "context",
+            "arguments": {
+              "root": "<fixture>",
+              "query": "nonexistent_zebra_468291",
+              "intent": "lookup",
+              "max_tokens": 1200
+            }
+          },
+          "elapsedMs": 39.59995899999967,
+          "outputBytes": 603,
+          "serverRssKiB": 179728,
+          "locationFound": null,
+          "sourceFound": null,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "Context ID: source_context-abda8a7f9ed9d7\nOmit previous_context_id after context loss; artifact_read recovers this snapshot.\n\nSource evidence (only the indicated ranges are included):\n\nRetrieval: lookup; exact/lexical + configured semantic. Relations are structural/textual, not compiler-resolved.\nEvidence: implementation=unavailable, caller=unavailable, dependency=unavailable, contract=unavailable, configuration=unavailable, test=unavailable. Unavailable is not proof of absence.\n\nNo source fit or matched. Try exact file/line targets or native search."
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "engine": "codebase-memory",
+      "startupMs": 8444.789083,
+      "indexMs": 2776.6249590000007,
+      "rows": [
+        {
+          "query": "ts-definition",
+          "repeat": 0,
+          "call": {
+            "name": "search_code",
+            "arguments": {
+              "project": "contextpro-comparison-ee203f333f25",
+              "pattern": "charge",
+              "mode": "full",
+              "limit": 5,
+              "max_output_tokens": 1200
+            }
+          },
+          "elapsedMs": 59.72345799999857,
+          "outputBytes": 1600,
+          "serverRssKiB": 2400,
+          "locationFound": true,
+          "sourceFound": true,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "cols: 9\n  - qn\n  - label\n  - file\n  - lines\n  - matches\n  - matches_omitted\n  - in\n  - out\n  - source\nrows: 3\n  \"-\": 9\n    - contextpro-comparison-ee203f333f25.src.service.charge\n    - Function\n    - src/service.ts\n    - 1-1\n    \"-\": 1\n      - 1\n    - 0\n    - 1\n    - 0\n    -\n      source: |\n        export function charge(amount: number) { return amount * 100; }\n  \"-\": 9\n    - contextpro-comparison-ee203f333f25.src.caller\n    - Module\n    - src/caller.ts\n    - 1-3\n    \"-\": 1\n      - 1\n    - 0\n    - 0\n    - 1\n    -\n      source: |\n        import {charge} from \"./service\";\n        export const total = charge(3);\n  \"-\": 9\n    - contextpro-comparison-ee203f333f25.src.caller.total\n    - Variable\n    - src/caller.ts\n    - 2-2\n    \"-\": 1\n      - 2\n    - 0\n    - 0\n    - 0\n    -\n      source: |\n        export const total = charge(3);\nraw_matches:\n  cols: 11\n    - file\n    - line\n    - content\n    - content_start_byte\n    - content_returned_bytes\n    - content_total_bytes\n    - match_start_byte\n    - match_end_byte\n    - content_has_more\n    - content_next_offset\n    - match_fully_returned\n  rows: 0\ndirectories:\n  src/: 3\ntotal_grep_matches: 3\ntotal_results: 3\nraw_match_count: 0\ntotal_relation: eq\nresult_offset: 0\nresults_returned: 3\nhas_more: false\nraw_returned: 0\nraw_has_more: false\ndirectories_total: 1\ndirectories_returned: 1\ndirectories_has_more: false\ntruncated: false\nsource_max_lines_returned: 20\nelapsed_ms: 49\ndedup_ratio: 1.0x\n"
+              }
+            ],
+            "isError": false
+          }
+        },
+        {
+          "query": "python-definition",
+          "repeat": 0,
+          "call": {
+            "name": "search_code",
+            "arguments": {
+              "project": "contextpro-comparison-ee203f333f25",
+              "pattern": "load_config",
+              "mode": "full",
+              "limit": 5,
+              "max_output_tokens": 1200
+            }
+          },
+          "elapsedMs": 48.93399999999929,
+          "outputBytes": 1104,
+          "serverRssKiB": 2400,
+          "locationFound": true,
+          "sourceFound": true,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "cols: 9\n  - qn\n  - label\n  - file\n  - lines\n  - matches\n  - matches_omitted\n  - in\n  - out\n  - source\nrows: 1\n  \"-\": 9\n    - contextpro-comparison-ee203f333f25.python.config.load_config\n    - Function\n    - python/config.py\n    - 1-2\n    \"-\": 1\n      - 1\n    - 0\n    - 0\n    - 0\n    -\n      source: |\n        def load_config(path: str):\n            return {\"path\": path}\nraw_matches:\n  cols: 11\n    - file\n    - line\n    - content\n    - content_start_byte\n    - content_returned_bytes\n    - content_total_bytes\n    - match_start_byte\n    - match_end_byte\n    - content_has_more\n    - content_next_offset\n    - match_fully_returned\n  rows: 0\ndirectories:\n  python/: 1\ntotal_grep_matches: 1\ntotal_results: 1\nraw_match_count: 0\ntotal_relation: eq\nresult_offset: 0\nresults_returned: 1\nhas_more: false\nraw_returned: 0\nraw_has_more: false\ndirectories_total: 1\ndirectories_returned: 1\ndirectories_has_more: false\ntruncated: false\nsource_max_lines_returned: 20\nelapsed_ms: 42\ndedup_ratio: 1.0x\n"
+              }
+            ],
+            "isError": false
+          }
+        },
+        {
+          "query": "ci-billing",
+          "repeat": 0,
+          "call": {
+            "name": "search_code",
+            "arguments": {
+              "project": "contextpro-comparison-ee203f333f25",
+              "pattern": "billing",
+              "mode": "full",
+              "limit": 5,
+              "max_output_tokens": 1200
+            }
+          },
+          "elapsedMs": 38.320332999999664,
+          "outputBytes": 1221,
+          "serverRssKiB": 2416,
+          "locationFound": true,
+          "sourceFound": true,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "cols: 9\n  - qn\n  - label\n  - file\n  - lines\n  - matches\n  - matches_omitted\n  - in\n  - out\n  - source\nrows: 1\n  \"-\": 9\n    - contextpro-comparison-ee203f333f25.humanpending\n    - Module\n    - humanpending.md\n    - 1-4\n    \"-\": 1\n      - 3\n    - 0\n    - 0\n    - 0\n    -\n      source: |\n        # Owner dependencies\n        \n        GitHub Actions is blocked because account payments failed or the spending limit was reached. The owner must resolve billing before hosted CI can run.\nraw_matches:\n  cols: 11\n    - file\n    - line\n    - content\n    - content_start_byte\n    - content_returned_bytes\n    - content_total_bytes\n    - match_start_byte\n    - match_end_byte\n    - content_has_more\n    - content_next_offset\n    - match_fully_returned\n  rows: 0\ndirectories:\n  humanpending.md: 1\ntotal_grep_matches: 1\ntotal_results: 1\nraw_match_count: 0\ntotal_relation: eq\nresult_offset: 0\nresults_returned: 1\nhas_more: false\nraw_returned: 0\nraw_has_more: false\ndirectories_total: 1\ndirectories_returned: 1\ndirectories_has_more: false\ntruncated: false\nsource_max_lines_returned: 20\nelapsed_ms: 33\ndedup_ratio: 1.0x\n"
+              }
+            ],
+            "isError": false
+          }
+        },
+        {
+          "query": "no-answer",
+          "repeat": 0,
+          "call": {
+            "name": "search_code",
+            "arguments": {
+              "project": "contextpro-comparison-ee203f333f25",
+              "pattern": "nonexistent_zebra_468291",
+              "mode": "full",
+              "limit": 5,
+              "max_output_tokens": 1200
+            }
+          },
+          "elapsedMs": 46.46574999999939,
+          "outputBytes": 790,
+          "serverRssKiB": 2416,
+          "locationFound": null,
+          "sourceFound": null,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "cols: 9\n  - qn\n  - label\n  - file\n  - lines\n  - matches\n  - matches_omitted\n  - in\n  - out\n  - source\nrows: 0\nraw_matches:\n  cols: 11\n    - file\n    - line\n    - content\n    - content_start_byte\n    - content_returned_bytes\n    - content_total_bytes\n    - match_start_byte\n    - match_end_byte\n    - content_has_more\n    - content_next_offset\n    - match_fully_returned\n  rows: 0\ndirectories:\ntotal_grep_matches: 0\ntotal_results: 0\nraw_match_count: 0\ntotal_relation: eq\nresult_offset: 0\nresults_returned: 0\nhas_more: false\nraw_returned: 0\nraw_has_more: false\ndirectories_total: 0\ndirectories_returned: 0\ndirectories_has_more: false\ntruncated: false\nsource_max_lines_returned: 20\nelapsed_ms: 39\n"
+              }
+            ],
+            "isError": false
+          }
+        },
+        {
+          "query": "ts-definition",
+          "repeat": 1,
+          "call": {
+            "name": "search_code",
+            "arguments": {
+              "project": "contextpro-comparison-ee203f333f25",
+              "pattern": "charge",
+              "mode": "full",
+              "limit": 5,
+              "max_output_tokens": 1200
+            }
+          },
+          "elapsedMs": 46.156041999998706,
+          "outputBytes": 1600,
+          "serverRssKiB": 2464,
+          "locationFound": true,
+          "sourceFound": true,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "cols: 9\n  - qn\n  - label\n  - file\n  - lines\n  - matches\n  - matches_omitted\n  - in\n  - out\n  - source\nrows: 3\n  \"-\": 9\n    - contextpro-comparison-ee203f333f25.src.service.charge\n    - Function\n    - src/service.ts\n    - 1-1\n    \"-\": 1\n      - 1\n    - 0\n    - 1\n    - 0\n    -\n      source: |\n        export function charge(amount: number) { return amount * 100; }\n  \"-\": 9\n    - contextpro-comparison-ee203f333f25.src.caller\n    - Module\n    - src/caller.ts\n    - 1-3\n    \"-\": 1\n      - 1\n    - 0\n    - 0\n    - 1\n    -\n      source: |\n        import {charge} from \"./service\";\n        export const total = charge(3);\n  \"-\": 9\n    - contextpro-comparison-ee203f333f25.src.caller.total\n    - Variable\n    - src/caller.ts\n    - 2-2\n    \"-\": 1\n      - 2\n    - 0\n    - 0\n    - 0\n    -\n      source: |\n        export const total = charge(3);\nraw_matches:\n  cols: 11\n    - file\n    - line\n    - content\n    - content_start_byte\n    - content_returned_bytes\n    - content_total_bytes\n    - match_start_byte\n    - match_end_byte\n    - content_has_more\n    - content_next_offset\n    - match_fully_returned\n  rows: 0\ndirectories:\n  src/: 3\ntotal_grep_matches: 3\ntotal_results: 3\nraw_match_count: 0\ntotal_relation: eq\nresult_offset: 0\nresults_returned: 3\nhas_more: false\nraw_returned: 0\nraw_has_more: false\ndirectories_total: 1\ndirectories_returned: 1\ndirectories_has_more: false\ntruncated: false\nsource_max_lines_returned: 20\nelapsed_ms: 41\ndedup_ratio: 1.0x\n"
+              }
+            ],
+            "isError": false
+          }
+        },
+        {
+          "query": "python-definition",
+          "repeat": 1,
+          "call": {
+            "name": "search_code",
+            "arguments": {
+              "project": "contextpro-comparison-ee203f333f25",
+              "pattern": "load_config",
+              "mode": "full",
+              "limit": 5,
+              "max_output_tokens": 1200
+            }
+          },
+          "elapsedMs": 169.1073749999996,
+          "outputBytes": 1105,
+          "serverRssKiB": 2480,
+          "locationFound": true,
+          "sourceFound": true,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "cols: 9\n  - qn\n  - label\n  - file\n  - lines\n  - matches\n  - matches_omitted\n  - in\n  - out\n  - source\nrows: 1\n  \"-\": 9\n    - contextpro-comparison-ee203f333f25.python.config.load_config\n    - Function\n    - python/config.py\n    - 1-2\n    \"-\": 1\n      - 1\n    - 0\n    - 0\n    - 0\n    -\n      source: |\n        def load_config(path: str):\n            return {\"path\": path}\nraw_matches:\n  cols: 11\n    - file\n    - line\n    - content\n    - content_start_byte\n    - content_returned_bytes\n    - content_total_bytes\n    - match_start_byte\n    - match_end_byte\n    - content_has_more\n    - content_next_offset\n    - match_fully_returned\n  rows: 0\ndirectories:\n  python/: 1\ntotal_grep_matches: 1\ntotal_results: 1\nraw_match_count: 0\ntotal_relation: eq\nresult_offset: 0\nresults_returned: 1\nhas_more: false\nraw_returned: 0\nraw_has_more: false\ndirectories_total: 1\ndirectories_returned: 1\ndirectories_has_more: false\ntruncated: false\nsource_max_lines_returned: 20\nelapsed_ms: 161\ndedup_ratio: 1.0x\n"
+              }
+            ],
+            "isError": false
+          }
+        },
+        {
+          "query": "ci-billing",
+          "repeat": 1,
+          "call": {
+            "name": "search_code",
+            "arguments": {
+              "project": "contextpro-comparison-ee203f333f25",
+              "pattern": "billing",
+              "mode": "full",
+              "limit": 5,
+              "max_output_tokens": 1200
+            }
+          },
+          "elapsedMs": 47.80658299999959,
+          "outputBytes": 1221,
+          "serverRssKiB": 2512,
+          "locationFound": true,
+          "sourceFound": true,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "cols: 9\n  - qn\n  - label\n  - file\n  - lines\n  - matches\n  - matches_omitted\n  - in\n  - out\n  - source\nrows: 1\n  \"-\": 9\n    - contextpro-comparison-ee203f333f25.humanpending\n    - Module\n    - humanpending.md\n    - 1-4\n    \"-\": 1\n      - 3\n    - 0\n    - 0\n    - 0\n    -\n      source: |\n        # Owner dependencies\n        \n        GitHub Actions is blocked because account payments failed or the spending limit was reached. The owner must resolve billing before hosted CI can run.\nraw_matches:\n  cols: 11\n    - file\n    - line\n    - content\n    - content_start_byte\n    - content_returned_bytes\n    - content_total_bytes\n    - match_start_byte\n    - match_end_byte\n    - content_has_more\n    - content_next_offset\n    - match_fully_returned\n  rows: 0\ndirectories:\n  humanpending.md: 1\ntotal_grep_matches: 1\ntotal_results: 1\nraw_match_count: 0\ntotal_relation: eq\nresult_offset: 0\nresults_returned: 1\nhas_more: false\nraw_returned: 0\nraw_has_more: false\ndirectories_total: 1\ndirectories_returned: 1\ndirectories_has_more: false\ntruncated: false\nsource_max_lines_returned: 20\nelapsed_ms: 41\ndedup_ratio: 1.0x\n"
+              }
+            ],
+            "isError": false
+          }
+        },
+        {
+          "query": "no-answer",
+          "repeat": 1,
+          "call": {
+            "name": "search_code",
+            "arguments": {
+              "project": "contextpro-comparison-ee203f333f25",
+              "pattern": "nonexistent_zebra_468291",
+              "mode": "full",
+              "limit": 5,
+              "max_output_tokens": 1200
+            }
+          },
+          "elapsedMs": 45.713041999999405,
+          "outputBytes": 790,
+          "serverRssKiB": 2512,
+          "locationFound": null,
+          "sourceFound": null,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "cols: 9\n  - qn\n  - label\n  - file\n  - lines\n  - matches\n  - matches_omitted\n  - in\n  - out\n  - source\nrows: 0\nraw_matches:\n  cols: 11\n    - file\n    - line\n    - content\n    - content_start_byte\n    - content_returned_bytes\n    - content_total_bytes\n    - match_start_byte\n    - match_end_byte\n    - content_has_more\n    - content_next_offset\n    - match_fully_returned\n  rows: 0\ndirectories:\ntotal_grep_matches: 0\ntotal_results: 0\nraw_match_count: 0\ntotal_relation: eq\nresult_offset: 0\nresults_returned: 0\nhas_more: false\nraw_returned: 0\nraw_has_more: false\ndirectories_total: 0\ndirectories_returned: 0\ndirectories_has_more: false\ntruncated: false\nsource_max_lines_returned: 20\nelapsed_ms: 42\n"
+              }
+            ],
+            "isError": false
+          }
+        }
+      ]
+    },
+    {
+      "engine": "codanna",
+      "startupMs": 100.7365839999984,
+      "indexMs": 322.3872080000001,
+      "rows": [
+        {
+          "query": "ts-definition",
+          "repeat": 0,
+          "call": {
+            "name": "find_symbol",
+            "arguments": {
+              "name": "charge"
+            }
+          },
+          "elapsedMs": 5.509665999999925,
+          "outputBytes": 388,
+          "serverRssKiB": 21104,
+          "locationFound": true,
+          "sourceFound": false,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "Found 1 symbol(s) named 'charge':\n\nFunction charge at src/service.ts:1 [symbol_id:1]\nSignature: function charge(amount: number)\nNo direct callers found\n\n---\nGuidance: Symbol found with full context. Explore 'get_calls' to see what it calls, 'find_callers' to see usage, or 'analyze_impact' to understand change implications.\n"
+              }
+            ],
+            "isError": false
+          }
+        },
+        {
+          "query": "python-definition",
+          "repeat": 0,
+          "call": {
+            "name": "find_symbol",
+            "arguments": {
+              "name": "load_config"
+            }
+          },
+          "elapsedMs": 0.7457919999997102,
+          "outputBytes": 398,
+          "serverRssKiB": 21136,
+          "locationFound": true,
+          "sourceFound": false,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "Found 1 symbol(s) named 'load_config':\n\nFunction load_config at python/config.py:1-2 [symbol_id:4]\nModule: config\nSignature: (path: str)\nNo direct callers found\n\n---\nGuidance: Symbol found with full context. Explore 'get_calls' to see what it calls, 'find_callers' to see usage, or 'analyze_impact' to understand change implications.\n"
+              }
+            ],
+            "isError": false
+          }
+        },
+        {
+          "query": "ci-billing",
+          "repeat": 0,
+          "call": {
+            "name": "search_documents",
+            "arguments": {
+              "query": "billing",
+              "limit": 5
+            }
+          },
+          "elapsedMs": 0.5662499999998545,
+          "outputBytes": 266,
+          "serverRssKiB": 21168,
+          "locationFound": false,
+          "sourceFound": false,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "Document search not available. No document collections are indexed.\n\nTo enable:\n1. Add a collection: codanna documents add-collection docs docs/\n2. Index it: codanna documents index\n3. Restart the MCP server"
+              }
+            ],
+            "isError": true
+          }
+        },
+        {
+          "query": "no-answer",
+          "repeat": 0,
+          "call": {
+            "name": "find_symbol",
+            "arguments": {
+              "name": "nonexistent_zebra_468291"
+            }
+          },
+          "elapsedMs": 1.7483749999992142,
+          "outputBytes": 232,
+          "serverRssKiB": 21200,
+          "locationFound": null,
+          "sourceFound": null,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "No symbols found with name: nonexistent_zebra_468291\n\n---\nGuidance: Symbol not found. Use 'search_symbols' with fuzzy matching or 'semantic_search_docs' for broader search.\n"
+              }
+            ],
+            "isError": false
+          }
+        },
+        {
+          "query": "ts-definition",
+          "repeat": 1,
+          "call": {
+            "name": "find_symbol",
+            "arguments": {
+              "name": "charge"
+            }
+          },
+          "elapsedMs": 0.746832999999242,
+          "outputBytes": 388,
+          "serverRssKiB": 21200,
+          "locationFound": true,
+          "sourceFound": false,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "Found 1 symbol(s) named 'charge':\n\nFunction charge at src/service.ts:1 [symbol_id:1]\nSignature: function charge(amount: number)\nNo direct callers found\n\n---\nGuidance: Symbol found with full context. Explore 'get_calls' to see what it calls, 'find_callers' to see usage, or 'analyze_impact' to understand change implications.\n"
+              }
+            ],
+            "isError": false
+          }
+        },
+        {
+          "query": "python-definition",
+          "repeat": 1,
+          "call": {
+            "name": "find_symbol",
+            "arguments": {
+              "name": "load_config"
+            }
+          },
+          "elapsedMs": 1.6008330000004207,
+          "outputBytes": 398,
+          "serverRssKiB": 21200,
+          "locationFound": true,
+          "sourceFound": false,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "Found 1 symbol(s) named 'load_config':\n\nFunction load_config at python/config.py:1-2 [symbol_id:4]\nModule: config\nSignature: (path: str)\nNo direct callers found\n\n---\nGuidance: Symbol found with full context. Explore 'get_calls' to see what it calls, 'find_callers' to see usage, or 'analyze_impact' to understand change implications.\n"
+              }
+            ],
+            "isError": false
+          }
+        },
+        {
+          "query": "ci-billing",
+          "repeat": 1,
+          "call": {
+            "name": "search_documents",
+            "arguments": {
+              "query": "billing",
+              "limit": 5
+            }
+          },
+          "elapsedMs": 0.6097499999996217,
+          "outputBytes": 266,
+          "serverRssKiB": 21200,
+          "locationFound": false,
+          "sourceFound": false,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "Document search not available. No document collections are indexed.\n\nTo enable:\n1. Add a collection: codanna documents add-collection docs docs/\n2. Index it: codanna documents index\n3. Restart the MCP server"
+              }
+            ],
+            "isError": true
+          }
+        },
+        {
+          "query": "no-answer",
+          "repeat": 1,
+          "call": {
+            "name": "find_symbol",
+            "arguments": {
+              "name": "nonexistent_zebra_468291"
+            }
+          },
+          "elapsedMs": 0.46929199999976845,
+          "outputBytes": 232,
+          "serverRssKiB": 21200,
+          "locationFound": null,
+          "sourceFound": null,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "No symbols found with name: nonexistent_zebra_468291\n\n---\nGuidance: Symbol not found. Use 'search_symbols' with fuzzy matching or 'semantic_search_docs' for broader search.\n"
+              }
+            ],
+            "isError": false
+          }
+        }
+      ]
+    }
+  ]
+}

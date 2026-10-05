@@ -56,6 +56,9 @@ Replace every placeholder, add `.contextpro/` to the target project's `.gitignor
 | Inspect an exported API | Discover `skeleton`, then use `exported_only:true` | Signatures do not prove behavior |
 | Assess a change | Discover `blast_radius` or `validate_scope` | Text matches are candidates; recommended checks still need to run |
 | Preserve a decision | Discover `memory_record_task` | Keep supporting evidence and revisit stale assumptions |
+| Coordinate local agents | Discover `team_status` / `team_task` | Explicit ownership and advisory file leases; renew every five minutes |
+| Inspect compiler errors or rename a binding | Discover `compiler_diagnostics` / `rename_preview` | TS/JS compiler or configured Pyright; inspect before `rename_apply` |
+| Record executed checks | `validate_scope`, then discover `validation_record` | Run checks in the coding host; receipts become stale when inputs change |
 
 Tool schemas are the argument reference. See the [agent guide](agent-guide.md) for examples, batching and context reuse.
 
@@ -69,6 +72,8 @@ Tool schemas are the argument reference. See the [agent guide](agent-guide.md) f
 Set `CONTEXTPRO_TOOL_PROFILE` in the server environment. `discover_tools(enable:[...])` enables tools without executing them. If the client cannot refresh its catalog, use the supported `discover_tools({root,call:{name,arguments}})` dispatcher with the returned expert schema.
 
 Experimental connected retrieval (`CONTEXTPRO_CONNECTED_CONTEXT=true`) combines ranked source, one-hop imports/callers and relevant tests in `context` and `task_pack`. It remains opt-in while task-level performance is evaluated. Discover `feature_brief` for a cached, source-cited feature map; model-written interpretations require a separate opt-in. Query-based `context` packets accept `previous_context_id` while the agent still holds that packet; omit it after context loss. Exact target reads remain stateless. See [configuration and freshness rules](docs/configuration.md).
+
+The optional `context.intent` hint (`lookup`, `change`, `debug`, `review`, `overview`, or `auto`) enables question-aware source and document retrieval for one query. Shared indexing/compiler work is also opt-in through `contextpro daemon start` and `CONTEXTPRO_DAEMON=true`. Evidence-backed memory, immutable handoffs and local task coordination build on the existing SQLite/artifact architecture. [Configuration](docs/configuration.md#experimental-development-context) explains setup, limits and rollback; these features do not establish a measured coding-speed improvement.
 
 ## Ask for the source you need
 
@@ -101,7 +106,7 @@ when needed rather than repeating the same broad query.
 
 ContextPro distinguishes source evidence, compiler-resolved references, textual candidates and heuristic fallbacks. Parser and TypeScript workers run in bounded child processes so a worker failure can be reported and recovered from without inherently terminating the MCP server.
 
-Freshness checks cover saved files, not unsaved editor buffers. Per-file reconciliation is not an atomic snapshot of a repository being edited concurrently. Reference precision depends on language and scope; imported SCIP data and Python heuristics have different provenance from live TS/JS compiler results.
+Freshness checks cover saved files, not unsaved editor buffers. Per-file reconciliation is not an atomic snapshot of a repository being edited concurrently. Reference precision depends on language and scope; configured Python uses Pyright LSP, while unconfigured Python heuristics and imported SCIP data retain their distinct provenance.
 
 Local-first does not mean sandboxed. Tools run with your user permissions. Hosted embedding or chat providers receive the inputs sent to them, and chat-assisted operations are optional. Read the [security model](SECURITY.md) and [provider configuration](docs/configuration.md) before using sensitive repositories.
 
