@@ -11,6 +11,7 @@ import { compilerDiagnostics, previewRename, applyRename } from '../../build/too
 import { closeTypeScriptReferenceProcess } from '../../build/core/typescript-reference-process.js';
 import { closePythonLanguageServers } from '../../build/core/python-language-server.js';
 import { exactReferencesTool } from '../../build/tools/exact-references.js';
+import { readArtifact } from '../../build/core/artifacts.js';
 
 it('compiler previews preserve aliases and shadowed bindings, reject stale inputs and apply only previewed edits',async()=>{
   const root=await mkdtemp(join(tmpdir(),'cp-compiler-'));
@@ -33,6 +34,23 @@ it('compiler previews preserve aliases and shadowed bindings, reject stale input
     assert.match(caller,/bill as alias/);assert.match(caller,/local\(charge: number\) \{ return charge/);
     assert.match(await readFile(join(root,'new-caller.ts'),'utf8'),/bill\(3\)/);
   }finally{closeTypeScriptReferenceProcess();closeDB(root);await rm(root,{recursive:true,force:true});}
+});
+
+it('bounds rename preview path summaries while retaining every edit in the immutable artifact', async () => {
+  const root=await mkdtemp(join(tmpdir(),'cp-rename-budget-'));
+  try {
+    await writeFile(join(root,'service.ts'),'export function charge(n: number) { return n + 1; }\n');
+    for(let index=0;index<24;index++)await writeFile(join(root,`caller-${index}-${'x'.repeat(180)}.ts`),'import { charge } from "./service";\nexport const result = charge(1);\n');
+    await reindex({rootDir:root,noEmbed:true,autoHubs:false});
+    const text=await previewRename({rootDir:root,file:'service.ts',line:1,column:17,newName:'bill',maxTokens:512});
+    assert.ok(Buffer.byteLength(text)<=2048);
+    const summary=JSON.parse(text);
+    assert.equal(summary.fileCount,25);assert.ok(summary.omittedFileCount>0);
+    assert.equal(summary.files.length+summary.omittedFileCount,25);
+    const artifact=await readArtifact(root,summary.artifact.id);
+    assert.equal(artifact.payload.files.length,25);
+    assert.ok(artifact.payload.files.every(file=>file.edits.length && file.hash));
+  } finally {closeTypeScriptReferenceProcess();closeDB(root);await rm(root,{recursive:true,force:true});}
 });
 
 it('configured Pyright supplies references, diagnostics and cross-file rename with aliases and shadowing',async()=>{

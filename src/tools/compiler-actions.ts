@@ -65,7 +65,16 @@ export async function previewRename(options: { rootDir: string; file: string; li
   const artifact=await persistArtifact({rootDir:root,kind:"rename_preview",key:digest(payload),payload,immutable:true});
   const summary={artifact,engine:result.engine,warnings:result.warnings,files:files.map(({file,hash,edits})=>({file,hash,edits}))};
   const text=JSON.stringify(summary);
-  return Buffer.byteLength(text)<=(options.maxTokens??4000)*4 ? text : JSON.stringify({artifact,engine:result.engine,files:files.map(({file})=>file),omitted:"Edit details exceed response budget; inspect artifact before applying."});
+  const budget=(options.maxTokens??4000)*4;
+  if(Buffer.byteLength(text)<=budget) return text;
+  const compact={artifact:{id:artifact.id},engine:result.engine,fileCount:files.length,files:[] as string[],omittedFileCount:files.length,
+    omitted:"Edit details and additional paths may exceed the response budget; inspect artifact_read before applying."};
+  for(const {file} of files) {
+    const next={...compact,files:[...compact.files,file],omittedFileCount:compact.omittedFileCount-1};
+    if(Buffer.byteLength(JSON.stringify(next))>budget) break;
+    Object.assign(compact,next);
+  }
+  return JSON.stringify(compact);
 }
 export async function applyRename(options: { rootDir: string; previewId: string }) {
   const root=await realpath(options.rootDir);
