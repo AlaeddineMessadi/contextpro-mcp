@@ -789,6 +789,29 @@ it('discovers hidden Maestro and GitHub workflow source while honoring exclusion
   });
 });
 
+it('discovers public well-known association JSON while honoring exclusions', async () => {
+  await fixture({
+    'apps/web/public/.well-known/assetlinks.json': '[{"relation":["delegate_permission/common.handle_all_urls"],"target":{"namespace":"android_app","package_name":"example.app","sha256_cert_fingerprints":["CERTIFICATE_PLACEHOLDER"]}}]\n',
+    'apps/web/public/.well-known/.env': 'PRIVATE_SENTINEL=never-index\n',
+    'apps/web/public/.well-known/.gitignore': 'ignored.json\n',
+    'apps/web/public/.well-known/ignored.json': '{"PRIVATE_SENTINEL":"gitignored"}\n',
+    'apps/web/public/.well-known/.contextproignore': 'private.json\n',
+    'apps/web/public/.well-known/private.json': '{"PRIVATE_SENTINEL":"contextproignored"}\n',
+    '.private/.well-known/config.json': '{"PRIVATE_SENTINEL":"hidden parent"}\n',
+    'node_modules/.well-known/config.json': '{"PRIVATE_SENTINEL":"dependency"}\n',
+  }, async root => {
+    const paths=(await getDB(root)).getAllFiles().map(file=>file.path);
+    assert.deepEqual(paths,['apps/web/public/.well-known/assetlinks.json']);
+    for(const connected of [false,true]) {
+      const text=await getContext({rootDir:root,query:'Android assetlinks well-known signing certificate fingerprint environment configuration',maxTokens:2000,connected,retrievalPreset:'keyword_only'});
+      assert.match(text,/apps\/web\/public\/\.well-known\/assetlinks\.json:\d/);
+      assert.match(text,/CERTIFICATE_PLACEHOLDER/);
+      assert.doesNotMatch(text,/PRIVATE_SENTINEL/);
+      assert.ok(Buffer.byteLength(text)<=8000);
+    }
+  });
+});
+
 
 it('counts documents from topic search outside the heading shortlist against the mixed budget', async () => {
   const topics = ['retention','privacy','consent','erasure','backups','security','limits','sessions','billing','notices'];

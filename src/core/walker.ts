@@ -26,9 +26,9 @@ interface IgnoreLayer {
   dir: string;
 }
 
-// These dot-directories contain authored workflows/test source, not runtime
+// These dot-directories contain authored workflows, tests and public web metadata, not runtime
 // state. Keep other hidden entries excluded and honor ordinary ignore layers.
-const SOURCE_DOT_DIRECTORIES = new Set([".github", ".maestro"]);
+const SOURCE_DOT_DIRECTORIES = new Set([".github", ".maestro", ".well-known"]);
 
 /** Recognize Graft's generated wiring cards, rather than excluding every
  * authored package/directory named graft. Never follow a marker symlink. */
