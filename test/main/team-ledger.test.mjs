@@ -1,6 +1,6 @@
 import { it } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm, writeFile, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { teamStatus, teamTask } from '../../build/core/team-ledger.js';
@@ -22,6 +22,9 @@ it('atomically claims tasks and file leases, enforces dependencies, and recovers
     assert.equal(claims.filter(result=>result.status==='fulfilled').length,1);
     const owner = claims.find(result=>result.status==='fulfilled').value.task.owner;
     await assert.rejects(claim('parallel','c'), /conflict/);
+    await writeFile(join(root,'src.ts'),'export const value = 1;\n');
+    await symlink(join(root,'src.ts'),join(root,'alias.ts'));
+    await assert.rejects(claim('parallel','c',['alias.ts']), /conflict/);
     await assert.rejects(teamTask({rootDir:root,action:'update',taskId:'base',owner,dependencies:['dependent']},1002),/cycle/);
     await teamTask({rootDir:root,action:'complete',taskId:'base',owner},1003);
     assert.equal((await teamStatus(root,1004)).tasks.find(task=>task.id==='dependent').ready,true);

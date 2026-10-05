@@ -6,7 +6,7 @@ import { mkdir, realpath } from "node:fs/promises";
 import { statSync } from "node:fs";
 import { join, relative } from "node:path";
 import { detectWorktreeInfo } from "./project-config.js";
-import { resolveProjectPath } from "./path-guard.js";
+import { resolveProjectPath, canonicalProjectPath } from "./path-guard.js";
 import { readArtifact } from "./artifacts.js";
 
 const LEASE_MS = 300_000;
@@ -60,7 +60,7 @@ export async function teamTask(options: TeamTaskOptions, now = Date.now()) {
   const { db, root } = await ledger(options.rootDir);
   try {
     const files = [...new Set((options.files ?? []).map(file => {
-      const path = relative(root, resolveProjectPath(root, file, "advisory lease")).split("\\").join("/");
+      const path = relative(root, canonicalProjectPath(resolveProjectPath(root, file, "advisory lease"))).split("\\").join("/");
       if (!path || path === ".") throw new Error("Lease individual files, not an entire root.");
       try { if (statSync(resolveProjectPath(root, path)).isDirectory()) throw new Error("Lease individual files, not directories."); }
       catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
