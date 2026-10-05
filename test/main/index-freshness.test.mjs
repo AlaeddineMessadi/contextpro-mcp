@@ -51,6 +51,20 @@ describe("automatic index freshness", () => {
     assert.ok(!graph.nodes.some((node) => node.type === "symbol" && node.label === "alpha"));
   });
 
+  it("reuses sequential freshness work only within the current request", async () => {
+    const { runWithRequestRoot } = await import('../../build/core/request-context.js');
+    const { ensureFreshIndex } = await import('../../build/core/index-freshness.js');
+    let first;
+    await runWithRequestRoot(root, async () => {
+      first = await ensureFreshIndex(root);
+      assert.equal(await ensureFreshIndex(root), first);
+    });
+    await writeFile(join(root, 'src/value.ts'), 'export const afterRequest = 4;\n');
+    const next = await runWithRequestRoot(root, () => ensureFreshIndex(root));
+    assert.notEqual(next, first);
+    assert.equal(next.refreshed, true);
+  });
+
   it("hash mode catches a same-size edit whose mtime was restored", async () => {
     const source = join(root, "src", "value.ts");
     const originalStats = await stat(source);

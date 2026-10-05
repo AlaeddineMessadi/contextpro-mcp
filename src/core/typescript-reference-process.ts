@@ -1,5 +1,6 @@
 import { fork, type ChildProcess } from "node:child_process";
 import type { findTypeScriptReferences } from "./typescript-references.js";
+import { sharedCompute } from "./local-daemon.js";
 
 type Input = Parameters<typeof findTypeScriptReferences>[0];
 type Result = ReturnType<typeof findTypeScriptReferences>;
@@ -89,5 +90,8 @@ export class TypeScriptReferenceProcess {
 }
 
 const referenceProcess = new TypeScriptReferenceProcess();
-export const queryTypeScriptReferences = (input: Input): Promise<Result> => referenceProcess.query(input);
+export const queryTypeScriptReferences = async (input: Input): Promise<Result> => {
+  const shared = await sharedCompute<Result>("references", input);
+  return shared ? shared.value : referenceProcess.query(input);
+};
 export const closeTypeScriptReferenceProcess = (): void => referenceProcess.close();

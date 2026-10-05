@@ -14,6 +14,7 @@ import { resolveProjectPath } from "../core/path-guard.js";
 import { getEmbedProvider, getEmbedModel } from "../core/embeddings.js";
 import { matchesFileFingerprint, maxSourceFileSize, readSourceSnapshot } from "../core/file-fingerprint.js";
 import { getExtractorStamp } from "../core/extractor-stamp.js";
+import { sharedCompute } from "../core/local-daemon.js";
 
 export interface ReindexOptions {
   rootDir: string;
@@ -306,6 +307,8 @@ export async function waitForIndexingCompletion(
 }
 
 export async function reindex(options: ReindexOptions): Promise<string> {
+  const shared = await sharedCompute<string>("reindex", options);
+  if (shared) return shared.value;
   const start = Date.now();
   const db = await getDB(options.rootDir);
   // Atomic check-and-set so two parallel reindex calls don't race past the guard.
@@ -571,6 +574,8 @@ export interface QuickRefreshResult {
 }
 
 export async function quickRefresh(rootDir: string, options: QuickRefreshOptions = {}): Promise<QuickRefreshResult> {
+  const shared = await sharedCompute<QuickRefreshResult>("quickRefresh", { rootDir, options });
+  if (shared) return shared.value;
   return quickRefreshAttempt(rootDir, options, 0);
 }
 

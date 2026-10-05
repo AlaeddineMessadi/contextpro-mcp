@@ -5,7 +5,7 @@
 Baseline: `2448966b055e9d9b929e0596aabcaa528bc7aedf`. Preserve the earlier coding pilot and its unsuccessful rollout result.
 
 1. Adaptive change context and document discovery: implemented behind explicit `context.intent` or `CONTEXTPRO_ADAPTIVE_CONTEXT=true`; default promotion awaits matched coding trials.
-2. Shared local compute: request freshness reuse and opt-in daemon in implementation; concurrency and fallback checks pending.
+2. Shared local compute: request freshness reuse and opt-in daemon implemented; two-root refresh and crash/restart fallback tests pass. Multi-session resource measurements and default enablement remain pending.
 3. Source-bound memory and immutable handoffs: pending.
 4. Local task ownership, dependencies and advisory leases: pending.
 5. Validation receipts, TS/JS and Python diagnostics, safe rename: pending.

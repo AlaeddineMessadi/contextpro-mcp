@@ -5,17 +5,21 @@
 // request context is active (CLI paths, tests, direct calls).
 
 import { AsyncLocalStorage } from "async_hooks";
+import type { IndexFreshnessResult } from "./index-freshness.js";
 
 interface RequestContext {
   rootDir: string;
+  freshness: Map<string, Promise<IndexFreshnessResult>>;
 }
 
 const storage = new AsyncLocalStorage<RequestContext>();
 
 /** Run `fn` with `rootDir` as the active request root. */
 export function runWithRequestRoot<T>(rootDir: string, fn: () => Promise<T>): Promise<T> {
-  return storage.run({ rootDir }, fn);
+  return storage.run({ rootDir, freshness: new Map() }, fn);
 }
+
+export const requestFreshness = (): Map<string, Promise<IndexFreshnessResult>> | undefined => storage.getStore()?.freshness;
 
 /** The active request root, or `fallback` when no request context is established. */
 export function currentRoot(fallback: string): string {
