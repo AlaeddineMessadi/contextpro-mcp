@@ -2,7 +2,7 @@
 // snapshot per file. Query packets can persist regenerable evidence artifacts;
 // exact targets remain stateless and never request model enrichment.
 import { readFile, stat } from "node:fs/promises";
-import { relative } from "node:path";
+import { relative, dirname } from "node:path";
 import { createHash } from "node:crypto";
 import ts from "typescript";
 import { analyzeContent, flattenSymbols, type FileAnalysis } from "../core/parser.js";
@@ -21,6 +21,7 @@ import { finishSourceContext } from "../core/source-context.js";
 import { lookupFeatureBrief } from "../core/feature-brief-cache.js";
 import { chatModelIdentity } from "../core/chat-model.js";
 import { getProvider, getEmbedModelName } from "../core/provider-config.js";
+import { getProjectRiskEvidence } from "./retrieval-helpers.js";
 
 export interface ContextTarget {
   file: string;
@@ -34,6 +35,7 @@ export interface ContextOptions {
   targets?: ContextTarget[];
   maxTokens?: number;
   previousContextId?: string;
+  intent?: "auto" | "lookup" | "change" | "debug" | "review" | "overview";
   /** Internal evaluation override; the MCP surface uses configured defaults. */
   retrievalPreset?: "balanced" | "keyword_only" | "semantic_only";
   connected?: boolean;
@@ -72,6 +74,13 @@ export async function getContext(options: ContextOptions): Promise<string> {
 
 export async function collectSourceEvidence(options: ContextOptions): Promise<SourceEvidence> {
   const query = options.query?.trim() ?? "";
+  if (options.targets?.length && options.intent) throw new Error("intent is for query discovery only.");
+  const adaptive = !options.targets?.length && (options.intent !== undefined || process.env.CONTEXTPRO_ADAPTIVE_CONTEXT === "true");
+  const intent = options.intent && options.intent !== "auto" ? options.intent
+    : isOrientationQuery(query) ? "overview" : /\b(?:fix|debug|failure|error|broken)\b/i.test(query) ? "debug"
+    : /\b(?:review|impact|regression)\b/i.test(query) ? "review"
+    : /\b(?:change|implement|add|update|refactor|remove)\b/i.test(query) ? "change" : "lookup";
+  const changeContext = adaptive && ["change", "debug", "review"].includes(intent);
   const literals = [...new Set([...queryLiterals(query), query.replace(/^(["'`])([\s\S]*)\1$/, "$2").normalize("NFC").toLowerCase()])];
   if (!query && !options.targets?.length) throw new Error("Provide query or targets.");
   if (query.length > 2000 || (options.targets?.length ?? 0) > 6) throw new Error("Use a query up to 2000 characters and at most six targets.");
@@ -85,8 +94,8 @@ export async function collectSourceEvidence(options: ContextOptions): Promise<So
   // Subjects such as authentication/frontend and output wording such as "source
   // ranges" do not request code. Only explicit code/implementation intent
   // authorizes a restricted document allowance.
-  const mixedDocuments = !options.targets?.length && /\b(?:code|implementation)\b/i.test(query);
-  const orientation = options.retrievalPreset !== "semantic_only" && isOrientationQuery(query);
+  const mixedDocuments = changeContext || (!options.targets?.length && /\b(?:code|implementation)\b/i.test(query));
+  const orientation = options.retrievalPreset !== "semantic_only" && (isOrientationQuery(query) || (adaptive && intent === "overview"));
   // File mentions within an overview supplement the requested architecture;
   // they must not switch discovery into a restricted whole-file read.
   const readRequestedFiles = !orientation && (/\b(?:read|show|open|whole|entire|full)\b/i.test(positiveDiscoveryQuery(query))
@@ -97,12 +106,12 @@ export async function collectSourceEvidence(options: ContextOptions): Promise<So
   const scopedFiles = new Set<string>();
   const coverageFiles = new Set<string>();
   let connectedCandidates: EvidenceCandidate[] = [];
-  const connected = options.connected ?? connectedRetrievalEnabled();
+  const connected = options.connected ?? (changeContext || connectedRetrievalEnabled());
   if (!targets.length) {
     // Exact identifiers need no embedding round trip. Natural language keeps the
     // hybrid retriever: no unvalidated lexical confidence gate discards recall.
     const exact = /^[A-Za-z_$][\w$]*$/.test(query);
-    const packet = options.retrieved ?? (connected && !exact ? await retrieveEvidence({ rootDir: options.rootDir, query, preset: options.retrievalPreset }) : undefined);
+    const packet = options.retrieved ?? (connected && (!exact || changeContext) ? await retrieveEvidence({ rootDir: options.rootDir, query, preset: options.retrievalPreset }) : undefined);
     // Gather beyond the first few hits before packing; incidental callers can
     // rank ahead of the implementation. The source/output budget stays fixed.
     const found = packet?.search ?? await unifiedSearchData({ rootDir: options.rootDir, query,
@@ -170,7 +179,8 @@ export async function collectSourceEvidence(options: ContextOptions): Promise<So
     const definitions = [...definingFiles].sort((a, b) => Number(query.includes(b)) - Number(query.includes(a)) || a.localeCompare(b));
     if (definitions.length > 6 || hints.length > 16) notices.push("Some named definitions omitted; narrow the query or use exact file/symbol targets.");
     targets = [...definitions.slice(0, 6).map(file => ({ file })), ...targets.filter(target => !definitions.slice(0, 6).includes(target.file))];
-    const documents = options.retrievalPreset !== "semantic_only" && wantsDocuments(query) ? await discoverDocuments(options.rootDir, query) : undefined;
+    const documents = options.retrievalPreset !== "semantic_only" && (wantsDocuments(query) || (adaptive && (!exact || definitions.length === 0)))
+      ? await discoverDocuments(options.rootDir, query, { requireRelevance: adaptive && !wantsDocuments(query) }) : undefined;
     // Strict multi-topic candidates can include controls without saying "code";
     // discovering them does not itself authorize capping documentation.
     if (documents && !orientation && options.retrievalPreset !== "semantic_only") {
@@ -210,12 +220,31 @@ export async function collectSourceEvidence(options: ContextOptions): Promise<So
     if (!wantsLockfile(query) && targets.some(target => !isLockfile(target.file))) {
       targets = targets.filter(target => !isLockfile(target.file) || requestedFiles.has(target.file));
     }
+    if (changeContext) {
+      const configurations = (await walkDirectory({rootDir:options.rootDir})).filter(entry => !entry.isDirectory
+        && /(?:^|\/)(?:package\.json|(?:ts|js|pyright)config[^/]*\.json|pyproject\.toml|[^/]+\.config\.[^/]+)$/.test(entry.relativePath)
+        && targets.some(target => dirname(entry.relativePath)==="." || target.file.startsWith(dirname(entry.relativePath)+"/")))
+        .sort((a,b)=>b.depth-a.depth || a.relativePath.localeCompare(b.relativePath));
+      targets.push(...configurations.slice(0,8).map(entry=>({file:entry.relativePath,helper:true})));
+      if(configurations.length>8) notices.push("Additional configuration candidates omitted at the eight-file bound.");
+    }
     if (packet) {
       targets = [...new Map(targets.map(target => [target.file, target])).values()];
       if (targets.length > 32) { targets = targets.slice(0, 32); notices.push("Additional discovery targets omitted at the 32-file bound."); }
     }
   }
   const terms = new Set(searchTerms(query));
+  if (adaptive && !orientation && /\b(?:routes?|endpoints?|handlers?)\b/i.test(positiveDiscoveryQuery(query))) {
+    // A named endpoint topic is stronger than an incidental prose match in a
+    // client or workflow. This stays a soft lexical prior: callers, contracts
+    // and tests still compete for the same bounded packet.
+    const generic = new Set("api app apps src source web native server route routes endpoint endpoints handler handlers code file files implementation locate find show".split(" "));
+    for (const target of targets) {
+      if (!/(?:^|\/)(?:api|routes?|endpoints?|handlers?)(?:\/|[.-])/i.test(target.file)) continue;
+      const topics = new Set(searchTerms(target.file).filter(term => terms.has(term) && !generic.has(term)));
+      if (topics.size) filePriors.set(target.file, (filePriors.get(target.file) ?? .5) * (1 + Math.min(2, topics.size)));
+    }
+  }
   const candidates: Excerpt[] = [];
   const omitted: string[] = [];
   const snapshots = new Map<string, string>();
@@ -226,13 +255,31 @@ export async function collectSourceEvidence(options: ContextOptions): Promise<So
   const literalParts: Excerpt[] = [];
   const identifierParts: Excerpt[] = [];
   const priorityParts: Excerpt[] = [];
+  const documentPassages: Excerpt[] = [];
   const scopedParts: Excerpt[] = [];
   const smallDependencies: Excerpt[] = [];
   const seen = new Set<string>();
   const limit = budget * 4;
+  const risks = changeContext ? await getProjectRiskEvidence(options.rootDir, query) : [];
+  let riskNotice: string | undefined;
+  if (changeContext) {
+    riskNotice = "Known risks: unavailable in bounded current task memory; not proof of absence.";
+    if (risks.length) {
+      riskNotice = "Known risks (textual task notes; source evidence current):";
+      const riskBudget = Math.min(480, Math.floor(limit * .15));
+      riskEntries: for (const note of risks) for (const risk of note.risks) {
+        const entry = `\n${note.id}: ${risk}`;
+        if (bytes(riskNotice + entry) + 30 <= riskBudget) riskNotice += entry;
+        else {
+          riskNotice += "\nOmitted: more risk text.";
+          break riskEntries;
+        }
+      }
+    }
+  }
   // Explicit targets are admitted whole. Discovery may select labelled interior
   // ranges, always copied verbatim from the snapshot rather than synthesized.
-  let available = limit - 768 - (options.targets?.length ? 0 : 384);
+  let available = limit - 768 - (options.targets?.length ? 0 : 384) - (adaptive ? 480 : 0) - (riskNotice ? bytes(riskNotice) + 2 : 0);
   for (const target of targets) {
     const fullPath = resolveProjectPath(options.rootDir, target.file, "context target");
     const file = relative(options.rootDir, fullPath).split("\\").join("/");
@@ -291,6 +338,15 @@ export async function collectSourceEvidence(options: ContextOptions): Promise<So
     seen.add(key);
     const excerpt = { file, start, end, text: lines.slice(start - 1, end).join("\n") };
     const discovery = !options.targets?.length;
+    if (adaptive && documentFiles.has(file)) {
+      // Operational notes often use long paragraphs or table rows. Rank the
+      // actual matching line before generic heading previews and large windows.
+      const hits = lines.map((text, index) => ({part:{file,start:index+1,end:index+1,text},
+        score:[...new Set(searchTerms(text))].filter(term=>terms.has(term)).length}))
+        .filter(item=>item.score>=Math.min(2,terms.size) && bytes(render(item.part))<=Math.min(1600,available))
+        .sort((a,b)=>b.score-a.score || a.part.start-b.part.start);
+      documentPassages.push(...hits.slice(0,2).map(item=>item.part));
+    }
     if (target.symbol && !target.helper && end - start < 10 && bytes(excerpt.text) < 600) {
       const executable = maskSourceText(excerpt.text, file);
       const calls = new Set([...executable.matchAll(/(?<![.\w$])([A-Za-z_$][\w$]*)\s*\(/g)].map(match => match[1]));
@@ -439,6 +495,7 @@ export async function collectSourceEvidence(options: ContextOptions): Promise<So
   // covering the rest of the question over the first incidental occurrence.
   const literalRank = (part: Excerpt) => literals.findIndex(literal => part.text.normalize("NFC").toLowerCase().includes(literal));
   const coverage = (part: Excerpt) => [...new Set(searchTerms(part.text))].filter(term => terms.has(term)).length;
+  documentPassages.sort((a,b)=>coverage(b)-coverage(a) || Number(requestedFiles.has(b.file))-Number(requestedFiles.has(a.file)) || a.file.localeCompare(b.file));
   literalParts.sort((a,b)=>literalRank(a)-literalRank(b) || coverage(b)-coverage(a));
   identifierParts.sort((a,b)=>Number(coverageFiles.has(b.file))-Number(coverageFiles.has(a.file)) || coverage(b)-coverage(a));
   let documentBytes = 0;
@@ -446,7 +503,7 @@ export async function collectSourceEvidence(options: ContextOptions): Promise<So
   const isDocument = (part: Excerpt) => (documentFiles.has(part.file) || /\.(?:md|mdx|rst|txt)$/i.test(part.file))
     && !requestedFiles.has(part.file);
   // Preserve the existing exact-name priority before adding scoped usage windows.
-  for (const definition of [...priorityParts, ...definitions, ...literalParts, ...identifierParts, ...scopedParts]) {
+  for (const definition of [...documentPassages, ...priorityParts, ...definitions, ...literalParts, ...identifierParts, ...scopedParts]) {
     for (const part of uncoveredRanges(definition, candidates)) {
       const size = bytes(render(part)) + 2;
       if (size <= available && (!isDocument(part) || documentBytes + size <= documentLimit)) {
@@ -462,7 +519,11 @@ export async function collectSourceEvidence(options: ContextOptions): Promise<So
   const covered = new Set(candidates.flatMap(part => searchTerms(part.text)));
   const selectedBytes = new Map<string, number>();
   const coveredRoles = new Set<string>();
-  const roles = (part: Excerpt) => connectedCandidates.find(item => item.path === part.file)?.roles ?? [];
+  const roles = (part: Pick<Excerpt, "file">): string[] => [...new Set([
+    ...connectedCandidates.find(item => item.path === part.file)?.roles ?? [],
+    ...(/(?:^|\/)(?:[^/]*config[^/]*|package\.json|pyproject\.toml)$|\.(?:ya?ml|toml)$/i.test(part.file) ? ["configuration"] : []),
+    ...(/(?:^|\/)(?:types|schemas?|contracts?)(?:[./-]|$)/i.test(part.file) ? ["contract"] : []),
+  ])];
   for (const part of candidates) for (const role of roles(part)) coveredRoles.add(role);
   for (const part of candidates) selectedBytes.set(part.file, (selectedBytes.get(part.file) ?? 0) + bytes(render(part)));
   while (remaining.length && available > 0) {
@@ -543,10 +604,11 @@ export async function collectSourceEvidence(options: ContextOptions): Promise<So
     if (missing.length) notices.push(`Evidence not returned for: ${missing.join(", ")}; this is not proof of absence.`);
   }
   const summary = notices.at(-1)?.startsWith("Evidence not returned") ? notices.at(-1) : undefined;
-  const text = ["Source evidence (only the indicated ranges are included):", ...merged.map(render), footer, summary,
+  const coverageNotice = adaptive ? `Retrieval: ${intent}; ${connected ? "hybrid + structural relations" : "exact/lexical + configured semantic"}. Relations are structural/textual, not compiler-resolved.\nEvidence: ${["implementation", "caller", "dependency", "contract", "configuration", "test"].map(role => `${role}=${merged.some(part => roles(part).includes(role)) ? "returned" : targets.some(target => roles(target).includes(role)) ? "omitted" : "unavailable"}`).join(", ")}. Unavailable is not proof of absence.` : undefined;
+  const text = ["Source evidence (only the indicated ranges are included):", coverageNotice, ...merged.map(render), riskNotice, footer, summary,
     !merged.length ? "No source fit or matched. Try exact file/line targets or native search." : ""].filter(Boolean).join("\n\n");
   return { text, ranges: merged, hashes: Object.fromEntries([...snapshots].map(([file, source]) => [file, createHash("sha256").update(source).digest("hex")])),
-    notices: [footer, summary].filter((value): value is string => !!value), complete: true,
-    settings: JSON.stringify({ version: 28, connected, preset: options.retrievalPreset ?? "balanced", rerank: process.env.CONTEXTPRO_CHAT_RERANK === "true",
+    notices: [coverageNotice, riskNotice, footer, summary].filter((value): value is string => !!value), complete: true,
+    settings: JSON.stringify({ version: 32, adaptive, intent, connected, risks, preset: options.retrievalPreset ?? "balanced", rerank: process.env.CONTEXTPRO_CHAT_RERANK === "true",
       embedding: `${getProvider()}:${getEmbedModelName()}`, chat: options.targets?.length ? "unused" : await chatModelIdentity(options.rootDir) }) };
 }

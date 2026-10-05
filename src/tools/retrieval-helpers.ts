@@ -2,6 +2,7 @@
 // FEATURE: Helper layer for agentic-context — query-independent data fetching functions
 
 import { execFile } from "child_process";
+import { memoryEvidenceStatus } from "../core/evidence-state.js";
 import { promisify } from "util";
 import { readFile } from "fs/promises";
 import { basename, join } from "path";
@@ -158,6 +159,8 @@ export async function getProjectMemoryHits(rootDir: string, query: string, topK:
   const hits = [...semanticHits, ...lexicalHits.filter((hit) => !semanticHits.some((candidate) => candidate.node.id === hit.node.id))];
   const filtered: Array<{ id: string; kind: string; summary: string }> = [];
   for (const hit of hits) {
+    const evidenceStatus = await memoryEvidenceStatus(rootDir, hit.node);
+    if (evidenceStatus === "stale" || evidenceStatus === "superseded") continue;
     const metadata = parseMetadata(hit.node.metadata);
     const scope = metadata.scope ?? "project";
     if (scope === "global") {
@@ -172,11 +175,36 @@ export async function getProjectMemoryHits(rootDir: string, query: string, topK:
     filtered.push({
       id: hit.node.id,
       kind: metadata.record_kind ?? "memory",
-      summary: hit.node.content.slice(0, 220),
+      summary: `[${evidenceStatus}] ${hit.node.content.slice(0, 220)}`,
     });
     if (filtered.length >= topK) break;
   }
   return filtered;
+}
+
+/** Bounded lexical risk lookup; never pay for embeddings on the context path. */
+export async function getProjectRiskEvidence(rootDir: string, query: string): Promise<Array<{ id: string; risks: string[] }>> {
+  const db = await getDB(rootDir), config = await loadProjectConfig(rootDir);
+  const terms = [...new Set(query.toLowerCase().match(/[\p{L}\p{N}_]+/gu) ?? [])];
+  const candidates = db.listMemoryNodes().flatMap(node => {
+    const metadata = parseMetadata(node.metadata);
+    if (metadata.record_kind !== "task" || metadata.scope !== "project" || metadata.project_id !== (config?.projectId ?? "")) return [];
+    // Older task records used a labelled content line. Preserve inspection and
+    // compatibility, but still require current bound evidence below.
+    const risks = metadata.open_risks !== undefined ? parseJsonArray(metadata.open_risks)
+      : (node.content.match(/^Open Risks: (.+)$/m)?.[1].split(" | ") ?? []);
+    if (!risks.length) return [];
+    const text = `${node.label} ${node.content}`.toLowerCase();
+    const score = terms.reduce((sum, term) => sum + Number(text.includes(term)), 0);
+    return score ? [{ node, risks, score }] : [];
+  }).sort((a, b) => b.score - a.score || a.node.id.localeCompare(b.node.id));
+  const result: Array<{ id: string; risks: string[] }> = [];
+  for (const { node, risks } of candidates.slice(0, 12)) {
+    if (await memoryEvidenceStatus(rootDir, node) !== "current") continue;
+    result.push({ id: node.id, risks: risks.slice(0, 2) });
+    if (result.length === 2) break;
+  }
+  return result;
 }
 
 export async function resolveFilesFromSymbols(rootDir: string, symbols: string[] | undefined): Promise<string[]> {

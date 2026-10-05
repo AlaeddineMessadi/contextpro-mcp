@@ -7,6 +7,7 @@ import ts from "typescript";
 import { getDB } from "../core/db.js";
 import { resolveProjectPath, toProjectRelativePath } from "../core/path-guard.js";
 import { findScipReferences } from "../core/scip-index.js";
+import { pythonLanguageServerConfigured, pythonOperation } from "../core/python-language-server.js";
 
 export interface ExactReferencesOptions {
   rootDir: string;
@@ -95,7 +96,8 @@ async function resolveTarget(options: ExactReferencesOptions): Promise<ResolvedT
         .filter((symbol) => symbol.file_id === dbFile.id)
         .sort((a, b) => a.line_start - b.line_start);
       if (inFile.length > 0) {
-        return { file: relativeFile, line: inFile[0].line_start };
+        return { file: relativeFile, line: inFile[0].line_start,
+          ...(inFile.length > 1 ? { ambiguousCandidates: inFile.slice(0,5).map(symbol=>({file:relativeFile,line:symbol.line_start,kind:symbol.kind})) } : {}) };
       }
     }
     return null;
@@ -337,6 +339,19 @@ export async function exactReferencesTool(options: ExactReferencesOptions): Prom
     return `No indexed definition found for symbol "${options.symbolName}". Run reindex, import a SCIP JSON index, or provide file and line.`;
   }
   if (!isTypeScriptLike(target.file)) {
+    if (isPython(target.file) && pythonLanguageServerConfigured()) {
+      const source = await readFile(resolveProjectPath(options.rootDir,target.file),"utf8");
+      const line = source.split("\n")[target.line-1] ?? "";
+      const escaped = options.symbolName.replace(/[.*+?^${}()|[\]\\]/g,"\\$&");
+      const matches = [...line.matchAll(new RegExp(`(?<![\\p{ID_Continue}])${escaped}(?![\\p{ID_Continue}])`,"gu"))];
+      if(matches.length!==1) throw new Error("Python reference target is absent or ambiguous on the supplied line.");
+      const db = await getDB(options.rootDir);
+      const found = await pythonOperation({rootDir:options.rootDir,files:db.getAllFiles().filter(file=>isPython(file.path)).map(file=>file.path),
+        operation:"references",file:target.file,line:target.line,column:matches[0].index!+1});
+      const references: ExactReference[]=(found.references??[]).map(ref=>({...ref,confidence:"LSP_RESOLVED"}));
+      return formatReferencePayload({symbolName:options.symbolName,target,confidence:"LSP_RESOLVED",references:references.slice(0,Math.max(1,Math.min(options.limit??100,500))),total:references.length,
+        warnings:found.warnings,scope:{kind:"python_pyright",completeness:"language_server_workspace"},format:options.format});
+    }
     const scipResult = await formatScipFallback(options, target);
     if (scipResult) return scipResult;
     if (isPython(target.file)) {

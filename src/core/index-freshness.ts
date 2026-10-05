@@ -4,6 +4,8 @@
 import { resolve } from "path";
 import { getDB } from "./db.js";
 import { quickRefresh, reindex } from "../tools/reindex.js";
+import { requestFreshness } from "./request-context.js";
+import { sharedCompute } from "./local-daemon.js";
 
 export interface IndexFreshnessResult {
   checked: boolean;
@@ -23,6 +25,8 @@ function autoRefreshDisabled(): boolean {
 }
 
 async function runFreshnessCheck(rootDir: string): Promise<IndexFreshnessResult> {
+  const shared = await sharedCompute<IndexFreshnessResult>("freshness", { rootDir });
+  if (shared) return shared.value;
   const startedAt = Date.now();
   if (autoRefreshDisabled()) {
     return {
@@ -88,10 +92,12 @@ async function runFreshnessCheck(rootDir: string): Promise<IndexFreshnessResult>
  */
 export async function ensureFreshIndex(rootDir: string): Promise<IndexFreshnessResult> {
   const normalizedRoot = resolve(rootDir);
-  const existing = refreshes.get(normalizedRoot);
-  if (existing) return existing;
+  const request = requestFreshness();
+  const existing = request?.get(normalizedRoot) ?? refreshes.get(normalizedRoot);
+  if (existing) { request?.set(normalizedRoot, existing); return existing; }
   const pending = runFreshnessCheck(normalizedRoot);
   refreshes.set(normalizedRoot, pending);
+  request?.set(normalizedRoot, pending);
   try {
     return await pending;
   } finally {

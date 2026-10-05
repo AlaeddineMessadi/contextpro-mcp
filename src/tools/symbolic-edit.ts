@@ -549,7 +549,7 @@ async function renameSymbolLocked(options: RenameSymbolOptions): Promise<string>
 
 // Structural grammars sometimes accept keywords in identifier positions. Reject reserved
 // names separately; syntax validation of every staged file remains necessary as well.
-function assertRenameName(name: string, filePath: string): void {
+export function assertRenameName(name: string, filePath: string): void {
   const language = getGrammarName(extname(filePath).toLowerCase()) ?? "unknown";
   const js = ["typescript", "tsx", "javascript"].includes(language);
   if (!(js ? /^[A-Za-z_$][A-Za-z0-9_$]*$/ : /^[A-Za-z_][A-Za-z0-9_]*$/).test(name)) {

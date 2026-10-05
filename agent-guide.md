@@ -246,10 +246,38 @@ with `callFileCount` and `callFilesTruncated` exposing omissions. These summarie
 exist only for compiler-classified evidence. A direct-call count differs from all
 identifier occurrences or matching lines.
 The current maximum display is 500; verify omitted results separately. Dynamic and
-unindexed references are outside this declared scope. Python candidates are heuristic;
-imported SCIP evidence still needs source-revision verification.
+unindexed references are outside this declared scope. Python uses Pyright LSP when
+`CONTEXTPRO_PYRIGHT_COMMAND` is configured; otherwise candidates remain heuristic.
+Imported SCIP evidence still needs source-revision verification.
 
 Normal source checks use size/mtime/ctime, then hashes for suspicious files. Background
 reconciliation continues after watcher failure. These checks do not include unsaved
 editor buffers or promise an atomic repository snapshot. An incomplete response is a
 reason to expand or verify evidence, not to label a rename safe.
+
+## Optional teamwork and verification
+
+Use `context(query:...,intent:"change")` for supporting implementation, caller,
+contract, configuration and test evidence. `debug`, `review`, `overview`, `lookup`
+and `auto` are also supported. The hint opts that query into adaptive retrieval;
+check unavailable versus budget-omitted roles. Ordinary exact reads remain fast.
+
+Discover `team_status` / `team_task` only when coordinating local work. Claim a
+task with an explicit owner and individual files, then renew five-minute leases.
+Same-worktree file conflicts reject; other-worktree overlap warns. These are
+advisory claims, not an agent launcher or a lock on outside editors.
+
+After editing, obtain a `validate_scope` snapshot before running checks in the
+host. Submit actual exit status, runtime identity and bounded output through
+`validation_record`. Source changes invalidate applicability. Record durable
+conclusions with `memory_record_task(source_evidence:[...],validation_refs:[...])`,
+and `supersedes` when replacing an earlier conclusion. Inspect the returned
+handoff through `artifact_read`; do not treat historical validation as current.
+
+For TS/JS and configured Python use `rename_preview`, inspect its edits, then
+`rename_apply` with the preview ID. Stale source/configuration or unsupported
+operations reject; there is no textual fallback. The separate `rename_symbol`
+compatibility tool remains textual. Run appropriate checks after applying.
+Enable specialists in batches of at most six; writes are excluded from the
+read-compatible discovery dispatcher. See [configuration](docs/configuration.md)
+for Python setup, shared compute, resource limits and rollback.

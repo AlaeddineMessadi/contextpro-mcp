@@ -4,6 +4,19 @@ All notable changes to this project are recorded here. The project follows [Sema
 
 ## [Unreleased]
 
+- Updated transitive `fast-uri` to 3.1.8, `hono` to 4.13.12 and `ip-address` to 10.7.3, clearing the three moderate dependency advisories found during delivery.
+
+- Discoverable TS/JS and optional Pyright diagnostics and compiler rename preview/apply reuse bounded workers, source hashes and restore points. Configured Python exact references use LSP evidence; unsupported/stale rename operations reject without textual fallback.
+- Shared compute now supports compiler operations, canonical root isolation, serialized startup recovery and bounded idle database retention. Compiler/parser package identities participate in compatibility checks.
+
+- Discoverable `team_status` / `team_task` share an advisory SQLite task ledger across local worktrees, with atomic ownership, dependency readiness, renewable five-minute file leases and retained handoffs. The lean catalog remains three tools.
+
+- Task memory captures source/configuration evidence and explicit supersession without overwriting history. Retrieval labels stale/unverified records, excludes stale conclusions from recommendations, and works lexically without embeddings. Immutable handoffs reuse `artifact_read`.
+- `validate_scope` issues a pre-check workspace snapshot; `validation_record` stores bounded host-reported results and detects changed inputs. ContextPro does not execute recommended checks.
+
+- Opt-in `context.intent` selects bounded change/debug/review evidence and reports structural/textual provenance and missing roles. Adaptive discovery considers relevant documents without requiring document-specific wording. Enable per query or with `CONTEXTPRO_ADAPTIVE_CONTEXT=true`; default promotion awaits coding trials.
+
+- `status` reports an active rebuild without waiting for indexing to finish, including through the expert dispatcher. Initial rebuilds report `indexing` even before the first source file is indexed.
 - Landing/dashboard pin Next.js 16.3.6 (and matching landing lint config), with refreshed browser-mapping locks, clearing the production dependency advisories surfaced by CI.
 - Literal discovery retains up to eight source candidates per key and matching identifier windows after named definitions, recovering command schemas and object-property values behind incidental callers. Unambiguous indexed path suffixes return bounded whole-file source when it fits. Source/task/brief caches invalidate older packets. See the [October 1 replay](docs/benchmarks/2026-10-01-log-fixes.json) for evidence and remaining limits.
 - Reference timeouts restart the worker for queued requests instead of rejecting unstarted work with the active request's timeout; crash and shutdown rejection remain unchanged.

@@ -190,6 +190,11 @@ function parseCliArgs(args: string[]): ParsedCliArgs {
   return parsed;
 }
 
+if (process.argv[2] === "daemon") {
+  try { console.log(JSON.stringify(await (await import("./core/local-daemon.js")).daemonCommand(process.argv[3] ?? "status"), null, 2)); }
+  catch (error) { console.error((error as Error).message); process.exit(1); }
+  process.exit(0);
+}
 const parsedCliArgs = parseCliArgs(process.argv.slice(2));
 const ROOT_DIR = validateSelectedRoot({ rootDir: parsedCliArgs.rootDir, source: parsedCliArgs.rootSource }).rootDir;
 

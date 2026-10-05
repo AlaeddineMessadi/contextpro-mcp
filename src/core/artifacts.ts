@@ -4,7 +4,7 @@
 import { createHash } from "crypto";
 import { mkdir, open, readFile, readdir, rename, stat, unlink, writeFile } from "fs/promises";
 import { join, resolve } from "path";
-import { resolveProjectPath } from "./path-guard.js";
+import { resolveProjectPath, canonicalProjectPath } from "./path-guard.js";
 
 /**
  * Atomic file write: write to a unique temp file then rename over the target. A crash mid-write
@@ -323,22 +323,29 @@ function migrateReference(ref: ArtifactReference): ArtifactReference {
   return migrated === ref.path ? ref : { ...ref, path: migrated };
 }
 
+function resolveStoredArtifactPath(rootDir: string, path: string): string {
+  // Manifests can outlive a client's root spelling (/var versus /private/var,
+  // or an explicitly selected root alias). Require physical containment after
+  // resolving both, rather than rejecting the same file under another spelling.
+  return resolveProjectPath(canonicalProjectPath(resolve(rootDir)), canonicalProjectPath(resolve(rootDir, path)), "artifact path");
+}
+
 export async function readArtifact<T = unknown>(rootDir: string, artifactId: string): Promise<StoredArtifact<T> | null> {
   const manifest = await loadManifestWithRepair(rootDir);
   const ref = manifest.artifacts.find((artifact) => artifact.id === artifactId);
   if (ref) {
-    const migratedPath = resolveProjectPath(rootDir, migrateLegacyArtifactPath(ref.path));
+    const migratedPath = resolveStoredArtifactPath(rootDir, migrateLegacyArtifactPath(ref.path));
     const record = await readJsonFile<StoredArtifact<T> | null>(migratedPath, null);
     if (record) return record;
     if (migratedPath !== ref.path) {
-      const original = await readJsonFile<StoredArtifact<T> | null>(resolveProjectPath(rootDir, ref.path), null);
+      const original = await readJsonFile<StoredArtifact<T> | null>(resolveStoredArtifactPath(rootDir, ref.path), null);
       if (original) return original;
     }
   }
 
   const fallback = (await scanArtifactsOnDisk(rootDir)).find((artifact) => artifact.id === artifactId);
   if (!fallback) return null;
-  return readJsonFile<StoredArtifact<T> | null>(resolveProjectPath(rootDir, fallback.path), null);
+  return readJsonFile<StoredArtifact<T> | null>(resolveStoredArtifactPath(rootDir, fallback.path), null);
 }
 
 export async function listArtifacts(rootDir: string, kind?: string, limit: number = 20): Promise<ArtifactReference[]> {
@@ -349,7 +356,7 @@ export async function listArtifacts(rootDir: string, kind?: string, limit: numbe
     .slice(0, Math.max(1, limit));
   // Stat each selected artifact's payload for its on-disk size (best-effort; missing files report 0).
   return Promise.all(selected.map(async (artifact) => {
-    const sizeBytes = await stat(resolveProjectPath(rootDir, artifact.path)).then((s) => s.size).catch(() => 0);
+    const sizeBytes = await stat(resolveStoredArtifactPath(rootDir, artifact.path)).then((s) => s.size).catch(() => 0);
     return { ...artifact, sizeBytes };
   }));
 }

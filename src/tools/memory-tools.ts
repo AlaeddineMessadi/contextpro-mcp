@@ -2,6 +2,7 @@
 // FEATURE: Agent memory operations over project-scoped persistent storage
 
 import { fetchEmbedding } from "../core/embeddings.js";
+import { memoryEvidenceStatus } from "../core/evidence-state.js";
 import { createMemoryEdgeId, createMemoryNodeId } from "../core/memory-graph.js";
 import { getDB, type MemoryNodeInput, type MemoryNodeRow, type TraversalResult } from "../core/db.js";
 import { type ContextScope, loadProjectConfig } from "../core/project-config.js";
@@ -233,7 +234,12 @@ export async function toolSearchMemoryGraph(options: SearchMemoryGraphOptions): 
   }
   const requestedScope = options.scope ?? "project";
   const resolved = await resolveProjectConfig(options.rootDir);
-  const directHits = db.searchMemoryNodes(queryVector, Math.max((options.topK ?? 5) * 8, 20));
+  const semanticHits = queryVector.length ? db.searchMemoryNodes(queryVector, Math.max((options.topK ?? 5) * 8, 20)) : [];
+  const terms = options.query.toLowerCase().match(/[\p{L}\p{N}_]+/gu) ?? [];
+  const lexicalHits = db.listMemoryNodes().map(node => ({ node, distance: 1,
+    score: terms.reduce((score, term) => score + Number(`${node.label} ${node.content}`.toLowerCase().includes(term)), 0) }))
+    .filter(hit => hit.score > 0).sort((a, b) => b.score - a.score);
+  const directHits = [...semanticHits, ...lexicalHits.filter(hit => !semanticHits.some(candidate => candidate.node.id === hit.node.id))];
   const filteredDirect: TraversalResult[] = [];
 
   for (const hit of directHits) {
@@ -270,11 +276,11 @@ export async function toolSearchMemoryGraph(options: SearchMemoryGraphOptions): 
     `Graph: ${db.getGraphStats().totalNodes} nodes, ${db.getGraphStats().totalEdges} edges\n`,
     "Direct Matches:",
   ];
-  for (const hit of filteredDirect) sections.push(formatTraversalResult(hit));
+  for (const hit of filteredDirect) sections.push(`${formatTraversalResult(hit)}\n    Evidence: ${await memoryEvidenceStatus(options.rootDir, hit.node)}`);
   if (neighborResults.length > 0) {
     sections.push("\nLinked Neighbors:");
     for (const result of neighborResults.slice(0, Math.max((options.topK ?? 5) * 2, 6))) {
-      sections.push(formatTraversalResult(result));
+      sections.push(`${formatTraversalResult(result)}\n    Evidence: ${await memoryEvidenceStatus(options.rootDir, result.node)}`);
     }
   }
   return sections.join("\n");
@@ -385,7 +391,7 @@ export async function toolRetrieveWithTraversal(options: RetrieveWithTraversalOp
   const results = db.getNeighbors(options.startNodeId, options.maxDepth ?? 2, options.edgeFilter);
   if (results.length === 0) return `❌ Node not found: ${options.startNodeId}`;
   const sections = [`Traversal from: ${results[0].node.label} (depth limit: ${options.maxDepth ?? 2})\n`];
-  for (const result of results) sections.push(formatTraversalResult(result));
+  for (const result of results) sections.push(`${formatTraversalResult(result)}\n    Evidence: ${await memoryEvidenceStatus(options.rootDir, result.node)}`);
   return sections.join("\n");
 }
 
@@ -421,6 +427,7 @@ export async function toolListMemoryNodes(options: ListMemoryNodesOptions): Prom
     const recordKind = metadata.record_kind ?? node.type;
     const age = Math.round((Date.now() - node.created_at) / (1000 * 60 * 60 * 24));
     lines.push(`  [${recordKind}] ${node.label}`);
+    lines.push(`    Evidence: ${await memoryEvidenceStatus(options.rootDir, node)}`);
     lines.push(`    ID: ${node.id} | Accessed: ${node.access_count}x | Age: ${age}d`);
     lines.push(`    ${node.content.slice(0, 100)}${node.content.length > 100 ? "..." : ""}`);
   }

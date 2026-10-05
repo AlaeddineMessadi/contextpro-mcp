@@ -1,0 +1,358 @@
+{
+  "baselineCommit": "2448966",
+  "candidateCommit": "2ccb186",
+  "client": "Codex CLI 0.160.0",
+  "model": "gpt-6.1-sol",
+  "reasoning": "xhigh",
+  "conditions": "First 12 of the frozen 60-attempt plan. Sequential arms; structurally seeded, no corpus embeddings. Agent time includes model and tools; total adds held-out validation. Concurrent host activity was not controlled. Missing usage remains null; cached inputs are a subset, not added again. Later source correctness follow-ups are not substituted into the frozen candidate.",
+  "summary": {
+    "samples": 12,
+    "plannedAttempts": 60,
+    "complete": false,
+    "success": {
+      "native": 2,
+      "baseline": 2,
+      "candidate": 2
+    },
+    "correctnessRegressions": [],
+    "jointlyPassing": 2,
+    "ratios": [
+      {
+        "taskId": "python-api-rename",
+        "repeat": 0,
+        "time": 1.235158330972791,
+        "tokens": 1.3433291832479128,
+        "inputTokens": 1.344965019811788
+      },
+      {
+        "taskId": "python-config-freshness",
+        "repeat": 0,
+        "time": 1.1859939146108518,
+        "tokens": 1.2356576170026932,
+        "inputTokens": 1.2369005725873792
+      }
+    ],
+    "medianTimeRatio": 1.2105761227918213,
+    "medianTokenRatio": 1.289493400125303,
+    "medianInputTokenRatio": 1.2909327961995836,
+    "note": "2 counterbalanced repetitions; no confidence intervals or universal savings claim. Costs unavailable; provider tokens include cached inputs once."
+  },
+  "trials": [
+    {
+      "taskId": "contextpro-worktree-routing",
+      "variant": "native",
+      "repeat": 0,
+      "contractHash": "4e0f04b07f999c7e5a6d9fec2713bc5ada6f2dc6522296c7a82b63f7d5f354b4",
+      "preparationMs": 36473.779624999996,
+      "agentMs": 600025.461667,
+      "validation": {
+        "passed": false,
+        "code": 1,
+        "timedOut": false,
+        "durationMs": 5012.682792000007
+      },
+      "wallTimeMs": 605038.144459,
+      "exitCode": null,
+      "timedOut": true,
+      "success": false,
+      "usage": null,
+      "nativeCommandCalls": 27,
+      "nativeReadCommandCandidates": 20,
+      "toolCallCount": 27,
+      "providerUsageAvailable": false
+    },
+    {
+      "taskId": "contextpro-worktree-routing",
+      "variant": "baseline",
+      "repeat": 0,
+      "contractHash": "4e0f04b07f999c7e5a6d9fec2713bc5ada6f2dc6522296c7a82b63f7d5f354b4",
+      "preparationMs": 30510.86054200004,
+      "agentMs": 590881.0725,
+      "validation": {
+        "passed": false,
+        "code": 1,
+        "timedOut": false,
+        "durationMs": 6594.580667000031
+      },
+      "wallTimeMs": 597475.653167,
+      "exitCode": 0,
+      "timedOut": false,
+      "success": false,
+      "usage": {
+        "input_tokens": 1077696,
+        "cached_input_tokens": 995840,
+        "output_tokens": 14362
+      },
+      "nativeCommandCalls": 15,
+      "nativeReadCommandCandidates": 11,
+      "toolCallCount": 21,
+      "providerUsageAvailable": false
+    },
+    {
+      "taskId": "contextpro-worktree-routing",
+      "variant": "candidate",
+      "repeat": 0,
+      "contractHash": "4e0f04b07f999c7e5a6d9fec2713bc5ada6f2dc6522296c7a82b63f7d5f354b4",
+      "preparationMs": 32709.556083000032,
+      "agentMs": 600034.2081250001,
+      "validation": {
+        "passed": false,
+        "code": 1,
+        "timedOut": false,
+        "durationMs": 4093.8491670000367
+      },
+      "wallTimeMs": 604128.0572920002,
+      "exitCode": null,
+      "timedOut": true,
+      "success": false,
+      "usage": null,
+      "nativeCommandCalls": 15,
+      "nativeReadCommandCandidates": 7,
+      "toolCallCount": 23,
+      "providerUsageAvailable": false
+    },
+    {
+      "taskId": "python-api-rename",
+      "variant": "candidate",
+      "repeat": 0,
+      "contractHash": "4e0f04b07f999c7e5a6d9fec2713bc5ada6f2dc6522296c7a82b63f7d5f354b4",
+      "preparationMs": 986.2803330000024,
+      "agentMs": 108662.56166699994,
+      "validation": {
+        "passed": true,
+        "code": 0,
+        "timedOut": false,
+        "durationMs": 1251.5539580001496
+      },
+      "wallTimeMs": 109914.1156250001,
+      "exitCode": 0,
+      "timedOut": false,
+      "success": true,
+      "usage": {
+        "input_tokens": 173791,
+        "cached_input_tokens": 153088,
+        "output_tokens": 2079
+      },
+      "nativeCommandCalls": 6,
+      "nativeReadCommandCandidates": 5,
+      "toolCallCount": 9,
+      "providerUsageAvailable": false
+    },
+    {
+      "taskId": "python-api-rename",
+      "variant": "baseline",
+      "repeat": 0,
+      "contractHash": "4e0f04b07f999c7e5a6d9fec2713bc5ada6f2dc6522296c7a82b63f7d5f354b4",
+      "preparationMs": 7444.936207999941,
+      "agentMs": 88911.87304100022,
+      "validation": {
+        "passed": true,
+        "code": 0,
+        "timedOut": false,
+        "durationMs": 76.0023340000771
+      },
+      "wallTimeMs": 88987.8753750003,
+      "exitCode": 0,
+      "timedOut": false,
+      "success": true,
+      "usage": {
+        "input_tokens": 129216,
+        "cached_input_tokens": 117376,
+        "output_tokens": 1705
+      },
+      "nativeCommandCalls": 4,
+      "nativeReadCommandCandidates": 4,
+      "toolCallCount": 7,
+      "providerUsageAvailable": false
+    },
+    {
+      "taskId": "python-api-rename",
+      "variant": "native",
+      "repeat": 0,
+      "contractHash": "4e0f04b07f999c7e5a6d9fec2713bc5ada6f2dc6522296c7a82b63f7d5f354b4",
+      "preparationMs": 103.0537919998169,
+      "agentMs": 61211.400458000135,
+      "validation": {
+        "passed": true,
+        "code": 0,
+        "timedOut": false,
+        "durationMs": 186.892417000141
+      },
+      "wallTimeMs": 61398.292875000276,
+      "exitCode": 0,
+      "timedOut": false,
+      "success": true,
+      "usage": {
+        "input_tokens": 101107,
+        "cached_input_tokens": 84224,
+        "output_tokens": 892
+      },
+      "nativeCommandCalls": 3,
+      "nativeReadCommandCandidates": 3,
+      "toolCallCount": 3,
+      "providerUsageAvailable": false
+    },
+    {
+      "taskId": "contextpro-grep-context",
+      "variant": "native",
+      "repeat": 0,
+      "contractHash": "4e0f04b07f999c7e5a6d9fec2713bc5ada6f2dc6522296c7a82b63f7d5f354b4",
+      "preparationMs": 32471.3081670003,
+      "agentMs": 424494.8625830002,
+      "validation": {
+        "passed": false,
+        "code": 1,
+        "timedOut": false,
+        "durationMs": 2811.992833000142
+      },
+      "wallTimeMs": 427306.85541600036,
+      "exitCode": 0,
+      "timedOut": false,
+      "success": false,
+      "usage": {
+        "input_tokens": 474691,
+        "cached_input_tokens": 425728,
+        "output_tokens": 10077
+      },
+      "nativeCommandCalls": 13,
+      "nativeReadCommandCandidates": 12,
+      "toolCallCount": 13,
+      "providerUsageAvailable": false
+    },
+    {
+      "taskId": "contextpro-grep-context",
+      "variant": "baseline",
+      "repeat": 0,
+      "contractHash": "4e0f04b07f999c7e5a6d9fec2713bc5ada6f2dc6522296c7a82b63f7d5f354b4",
+      "preparationMs": 32239.470708000008,
+      "agentMs": 420247.85870900005,
+      "validation": {
+        "passed": false,
+        "code": 1,
+        "timedOut": false,
+        "durationMs": 2592.769040999934
+      },
+      "wallTimeMs": 422840.62775,
+      "exitCode": 0,
+      "timedOut": false,
+      "success": false,
+      "usage": {
+        "input_tokens": 399265,
+        "cached_input_tokens": 348928,
+        "output_tokens": 10144
+      },
+      "nativeCommandCalls": 13,
+      "nativeReadCommandCandidates": 6,
+      "toolCallCount": 17,
+      "providerUsageAvailable": false
+    },
+    {
+      "taskId": "contextpro-grep-context",
+      "variant": "candidate",
+      "repeat": 0,
+      "contractHash": "4e0f04b07f999c7e5a6d9fec2713bc5ada6f2dc6522296c7a82b63f7d5f354b4",
+      "preparationMs": 30310.951207999606,
+      "agentMs": 520567.4567499999,
+      "validation": {
+        "passed": false,
+        "code": 1,
+        "timedOut": false,
+        "durationMs": 6909.430958000012
+      },
+      "wallTimeMs": 527476.8877079999,
+      "exitCode": 0,
+      "timedOut": false,
+      "success": false,
+      "usage": {
+        "input_tokens": 452965,
+        "cached_input_tokens": 408704,
+        "output_tokens": 13110
+      },
+      "nativeCommandCalls": 9,
+      "nativeReadCommandCandidates": 7,
+      "toolCallCount": 12,
+      "providerUsageAvailable": false
+    },
+    {
+      "taskId": "python-config-freshness",
+      "variant": "candidate",
+      "repeat": 0,
+      "contractHash": "4e0f04b07f999c7e5a6d9fec2713bc5ada6f2dc6522296c7a82b63f7d5f354b4",
+      "preparationMs": 3076.3586659999564,
+      "agentMs": 172355.3326249998,
+      "validation": {
+        "passed": true,
+        "code": 0,
+        "timedOut": false,
+        "durationMs": 112.3332499996759
+      },
+      "wallTimeMs": 172467.66587499948,
+      "exitCode": 0,
+      "timedOut": false,
+      "success": true,
+      "usage": {
+        "input_tokens": 165903,
+        "cached_input_tokens": 149120,
+        "output_tokens": 3864
+      },
+      "nativeCommandCalls": 8,
+      "nativeReadCommandCandidates": 3,
+      "toolCallCount": 10,
+      "providerUsageAvailable": false
+    },
+    {
+      "taskId": "python-config-freshness",
+      "variant": "baseline",
+      "repeat": 0,
+      "contractHash": "4e0f04b07f999c7e5a6d9fec2713bc5ada6f2dc6522296c7a82b63f7d5f354b4",
+      "preparationMs": 3043.870041999966,
+      "agentMs": 145198.9606250003,
+      "validation": {
+        "passed": true,
+        "code": 0,
+        "timedOut": false,
+        "durationMs": 221.40262499963865
+      },
+      "wallTimeMs": 145420.36324999994,
+      "exitCode": 0,
+      "timedOut": false,
+      "success": true,
+      "usage": {
+        "input_tokens": 134128,
+        "cached_input_tokens": 119808,
+        "output_tokens": 3262
+      },
+      "nativeCommandCalls": 9,
+      "nativeReadCommandCandidates": 2,
+      "toolCallCount": 12,
+      "providerUsageAvailable": false
+    },
+    {
+      "taskId": "python-config-freshness",
+      "variant": "native",
+      "repeat": 0,
+      "contractHash": "4e0f04b07f999c7e5a6d9fec2713bc5ada6f2dc6522296c7a82b63f7d5f354b4",
+      "preparationMs": 118.50029099965468,
+      "agentMs": 129118.2090830002,
+      "validation": {
+        "passed": true,
+        "code": 0,
+        "timedOut": false,
+        "durationMs": 86.43000000016764
+      },
+      "wallTimeMs": 129204.63908300037,
+      "exitCode": 0,
+      "timedOut": false,
+      "success": true,
+      "usage": {
+        "input_tokens": 106520,
+        "cached_input_tokens": 93952,
+        "output_tokens": 2803
+      },
+      "nativeCommandCalls": 8,
+      "nativeReadCommandCandidates": 6,
+      "toolCallCount": 8,
+      "providerUsageAvailable": false
+    }
+  ]
+}

@@ -62,7 +62,8 @@ The discoverable `feature_brief` expert accepts `query`, optional `refresh`, and
 `max_tokens` (512–12000, default 2000; UTF-8 bytes/4). Its deterministic facts cite
 source ranges. Optional model interpretations are labeled separately; citation
 validation does not verify the claims themselves. Cached briefs validate source
-hashes, dependency membership and generator/model identity before reuse. Neither
+hashes, dependency membership, generator/model identity and retrieval settings
+(adaptive mode, reranking and embedding identity) before reuse. Neither
 briefs nor deltas imply exhaustive repository coverage. Use `artifact_read` for
 full stored packets. Both experts support compatibility dispatch through
 `discover_tools`; the lean catalog remains three tools.
@@ -132,3 +133,46 @@ events are separate from the coding agent's usage and are not billing estimates.
 Set `CONTEXTPRO_TOOL_TRACE_PATH` to an absolute local JSONL path before starting the server. Tracing is off by default and adds no MCP response text. Each event records tool arguments, status, a session/request ID, total server duration, preparation (root verification/freshness/waits), handler execution and postprocessing. Spans can overlap; their sum is not elapsed agent time.
 
 The trace caps each argument payload at 8 KiB and the file at 64 MiB, redacts common credential/content keys and requires a private regular destination file (created with mode 0600). Query strings and paths can still contain private information; keep raw traces local. Write failures are best-effort and produce a stderr warning. A missing or partial trace is unavailable evidence, not zero execution time. See the [benchmark procedure](https://github.com/AlaeddineMessadi/contextpro-mcp/blob/main/docs/benchmarks/methodology.md).
+## Experimental development context
+
+`contextpro daemon start|status|stop` manages an optional private local compute service. Set `CONTEXTPRO_DAEMON=true` in each MCP process to share freshness/indexing, TypeScript compiler work and configured Python analysis. Build, Node ABI and provider/runtime configuration must match. Incompatibility, crashes and unavailable services fall back to local computation. The service expires after five idle minutes; Windows currently uses local compute because a private Unix socket is required. `CONTEXTPRO_RUNTIME_DIR` overrides the default `~/.contextpro/runtime` directory for isolated installations. Stop a running service using its original build/configuration before upgrading it.
+
+`context` accepts a query-only `intent` hint: `auto`, `lookup`, `change`, `debug`, `review`, or `overview`. Supplying it enables adaptive retrieval for that call. `CONTEXTPRO_ADAPTIVE_CONTEXT=true` enables inferred intent for query calls. Omit both to retain the existing selector. Exact targets remain stateless and reject an intent hint.
+
+Change/debug/review requests reuse the connected evidence retriever for implementations, callers, dependencies and tests. Configuration and contract candidates are labelled by path; these are structural/textual hints, not compiler proof. Missing evidence and output omissions do not establish absence. Response budgets and source delta IDs retain their existing contracts.
+
+These intents also inspect at most twelve matching task-risk candidates lexically and return up to two current records within the existing output budget. Notes cite their memory IDs and remain textual claims. Stale, unverified and superseded risk notes are excluded; unavailable and omitted risk evidence are explicit. Changed notes invalidate context reuse. Ordinary lookup requests do not perform this memory search.
+
+## Verifiable memory and host checks
+
+`memory_record_task` accepts `source_evidence: [{file, hash?, start?, end?}]`, `supersedes: [memory_id]` and `validation_refs: [artifact_id]`. Source references capture whole-file SHA-256 hashes, the canonical worktree root and Git revision, plus configuration and dependency-manifest evidence. Existing `files` also bind source evidence; deleted legacy file references remain recordable as explicitly unverified. Explicit structured references reject unavailable files and invalid line ranges. Each task record is immutable history: recording the same task again creates another record. Explicit supersession preserves the old record and its evidence.
+
+Retrieval labels records `current`, `stale`, `unverified` or `superseded`. Stale and superseded conclusions do not enter automatic task recommendations. Manual memory search/listing retains them, with lexical fallback when embeddings are unavailable. Legacy records migrate logically as `unverified`; no destructive migration is required. A returned `handoff` artifact contains completed work, remaining risks, assumptions, source references and validation state. Read it through `artifact_read`; current source/supersession and validation applicability are rechecked alongside the historical payload.
+
+Referenced validation receipts also affect task-memory applicability: a stale receipt makes its conclusion stale, and an unavailable receipt makes it unverified. A current source hash alone does not renew an old validation conclusion.
+
+Call `validate_scope` after edits and before running checks. Its snapshot covers ignore-aware workspace files, configuration and manifests; ignored dependencies, build outputs and unsaved buffers are outside that snapshot. Run checks in the coding host, then call `validation_record({root, snapshot_id, command, exit_code, runtime, evidence?})`. Results are explicitly host-reported. Source/configuration/membership/revision changes invalidate applicability; recommended commands never count as executed checks. Snapshots cap at 20,000 files and fail rather than silently truncate evidence.
+
+Evidence snapshots include authored hidden files and directories, including `.eslintrc.json` and `.babelrc`, while honoring nested ignore rules, dependency/cache exclusions and symlink protections. Their contents are hashed, not copied into the evidence record. Configuration-bound memory and rename previews use the same policy. Older snapshots that omitted these inputs become stale when compared with the expanded inventory; take a new snapshot and rerun the checks.
+
+Rollback: previous builds ignore the additive metadata/artifacts. Retain records for inspection; do not infer that an older build validates them. Writes require an enabled specialist tool or the full profile; the discovery dispatcher does not execute memory/validation writes.
+
+## Local teamwork
+
+Discover `team_status` and `team_task` when coordination is needed. The three-tool lean catalog is unchanged. `team_status` shows dependencies, ready task IDs, ownership, expiry and recent history. `team_task` supports `create`, `update`, `claim`, `renew`, `release`, `block`, `complete` and `handoff`. Claims require an explicit `owner`; individual-file leases expire after five minutes and must be renewed while working. Dependency cycles and incomplete prerequisites reject claims. A same-worktree file conflict fails atomically; overlap in another worktree returns a warning. Leases are advisory and do not prevent external editors from writing.
+
+The SQLite ledger lives under `~/.contextpro/teams`, keyed by canonical Git common directory (canonical root outside Git). `CONTEXTPRO_TEAM_DIR` permits isolated test installations. Expired ownership is reclaimable, with tasks, events and handoff links retained. `handoff_id` links an existing handoff artifact from that worktree. ContextPro never spawns agents or sends messages. To roll back, stop invoking the tools and retain the independent ledger; existing source indexes are unchanged.
+
+Each event retains its task/lease/handoff snapshot in `details`, so a later handoff does not erase earlier references. Inspect a task with `team_status({task_id})`; paginate with `before_event_id: olderEventsBefore` and optional `event_limit` (1–50, default 20). Existing ledgers receive an additive `details` column; old events have empty details and remain readable by previous builds.
+
+## Compiler diagnostics and rename
+
+Discover `compiler_diagnostics({root,files})` for TypeScript/JavaScript or configured Python diagnostics. TypeScript reuses the bounded compiler worker. For Python, set `CONTEXTPRO_PYRIGHT_COMMAND` to an installed `pyright-langserver` executable; ContextPro invokes it with `--stdio`, without shell execution or runtime downloads. Integration tests pin MIT-licensed Pyright `1.1.414`. `CONTEXTPRO_PYTHON_PATH` optionally specifies an interpreter; normal `pyrightconfig.json` / `pyproject.toml` settings, including virtual environments, apply. Python sessions cap at two canonical roots, serialize a bounded queue, use a 1 GiB JavaScript heap limit and expire after 60 idle seconds. Unconfigured Python exact references retain explicitly labelled heuristic/SCIP evidence; configured LSP errors do not silently turn into heuristic success.
+
+For compiler-backed edits, request `rename_preview({root,file,line,column,new_name,max_tokens?})` using one-based positions. Inspect its immutable artifact and then invoke `rename_apply({root,preview_id})`. TS/JS uses compiler rename locations (including alias prefix/suffix edits); Python uses Pyright's prepare/rename operations. Unsupported operations reject. Apply verifies workspace membership, revision and every affected file hash, creates a restore point, and publishes only the previewed edits. Limits are 100 files, 5,000 edits and an 8 MiB artifact. A concurrent outside writer can still cause partial publication; the error identifies completed files and the restore point. Run diagnostics/tests after application: a compiler-generated rename is not proof of behavioral correctness.
+
+The older `rename_symbol` remains an explicitly textual compatibility tool. It is never a silent fallback for `rename_apply`. Rollback: unset Python configuration and stop using the added specialist tools; source restoration uses the returned restore point. Stop the shared service before rebuilding, then restart it with matching build, parser/compiler dependencies, Node ABI and environment. Shared compute remains opt-in.
+
+Python cache identity includes the configured executable, npm Pyright package/server content and version, interpreter setting, relevant configuration and dependency manifests. Installation or manifest changes restart the session. Shared-service compatibility also includes the configured Python installation identity.
+
+Each Python operation checks the hashes and membership of ignore-aware workspace `.py` and `.pyi` files, not only the requested files. Changes notify Pyright and advance requested document versions so diagnostics must reflect refreshed imports; deleted imports also lose any old open-document overlay. The freshness inventory caps at 20,000 files, requested open files at 1,000, and existing operation deadlines still apply. Ignored dependency installations and external source trees remain outside this inventory.

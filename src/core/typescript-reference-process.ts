@@ -1,9 +1,10 @@
 import { fork, type ChildProcess } from "node:child_process";
-import type { findTypeScriptReferences } from "./typescript-references.js";
+import type { findTypeScriptReferences, CompilerInput, CompilerResult } from "./typescript-references.js";
+import { sharedCompute } from "./local-daemon.js";
 
 type Input = Parameters<typeof findTypeScriptReferences>[0];
 type Result = ReturnType<typeof findTypeScriptReferences>;
-interface Pending { id: number; input: Input; resolve: (value: Result) => void; reject: (error: Error) => void }
+interface Pending { id: number; input: Input | CompilerInput; resolve: (value: any) => void; reject: (error: Error) => void }
 // Full compiler graphs for ordinary monorepos exceed 512 MB even when projects
 // are disposed sequentially. This is a ceiling, not an up-front allocation.
 const DEFAULT_HEAP_MB = 1024;
@@ -19,6 +20,14 @@ export class TypeScriptReferenceProcess {
   constructor(private options: { worker?: URL; timeoutMs?: number; idleMs?: number; heapMb?: number } = {}) {}
 
   query(input: Input): Promise<Result> {
+    return this.enqueue(input);
+  }
+
+  compiler(input: CompilerInput): Promise<CompilerResult> {
+    return this.enqueue(input);
+  }
+
+  private enqueue(input: Input | CompilerInput): Promise<any> {
     if (this.queue.length >= 16 || input.files.length > 20_000) return Promise.reject(new Error("Reference lookup exceeds queue or file capacity; narrow the workspace."));
     return new Promise((resolve, reject) => { this.queue.push({ id: ++this.sequence, input, resolve, reject }); this.dispatch(); });
   }
@@ -89,5 +98,12 @@ export class TypeScriptReferenceProcess {
 }
 
 const referenceProcess = new TypeScriptReferenceProcess();
-export const queryTypeScriptReferences = (input: Input): Promise<Result> => referenceProcess.query(input);
+export const queryTypeScriptReferences = async (input: Input): Promise<Result> => {
+  const shared = await sharedCompute<Result>("references", input);
+  return shared ? shared.value : referenceProcess.query(input);
+};
 export const closeTypeScriptReferenceProcess = (): void => referenceProcess.close();
+export const queryTypeScriptCompiler = async (input: CompilerInput): Promise<CompilerResult> => {
+  const shared = await sharedCompute<CompilerResult>("compiler", input);
+  return shared ? shared.value : referenceProcess.compiler(input);
+};

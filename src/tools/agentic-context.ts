@@ -1,8 +1,10 @@
 // Task-oriented retrieval and memory tools for multi-project agent workflows
 // FEATURE: High-leverage agent context assembly over project intelligence data
 
-import { readFile } from "fs/promises";
-import { createHash } from "node:crypto";
+import { readFile, stat } from "fs/promises";
+import { resolveProjectPath } from "../core/path-guard.js";
+import { createHash, randomUUID } from "node:crypto";
+import { bindEvidence, createValidationSnapshot, validationState, memoryEvidenceStatus, evidenceConfigurationFiles, type EvidenceFile } from "../core/evidence-state.js";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { fetchEmbedding, withQueryEmbeddingCache } from "../core/embeddings.js";
@@ -97,7 +99,8 @@ async function taskPackArtifactKey(task: string, maxFiles: number, opts: TaskPac
   return createHash("sha256").update(JSON.stringify({
     task,
     connected,
-    retrievalVersion: 27,
+    retrievalVersion: 29,
+    adaptive: process.env.CONTEXTPRO_ADAPTIVE_CONTEXT === "true",
     rerank: process.env.CONTEXTPRO_CHAT_RERANK === "true",
     chatModel: process.env.CONTEXTPRO_CHAT_RERANK === "true" ? await chatModelIdentity(opts.rootDir) : null,
     embeddingModel: `${getProvider()}:${getEmbedModelName()}`,
@@ -292,6 +295,9 @@ export interface MemoryRecordTaskOptions {
   files?: string[];
   assumptions?: string[];
   evidence?: string[];
+  sourceEvidence?: EvidenceFile[];
+  supersedes?: string[];
+  validationRefs?: string[];
   openRisks?: string[];
   format?: OutputFormat;
 }
@@ -556,7 +562,13 @@ async function buildTaskPackUncached(options: TaskPackOptions): Promise<string> 
       config?.repoFingerprint ?? null,
       indexState.generation,
     );
-    if (cached?.payload?.files) {
+    const memoryUsable = cached?.payload?.memory ? (await Promise.all(cached.payload.memory.map(async hit => {
+      const node = db.getMemoryNode(hit.id);
+      if (!node) return false;
+      const status = await memoryEvidenceStatus(options.rootDir, node);
+      return status !== "stale" && status !== "superseded";
+    }))).every(Boolean) : true;
+    if (cached?.payload?.files && memoryUsable) {
       const trust = buildTrustMetadata({
         baseConfidence: cached.payload.files.length > 0 ? 0.79 : 0.34,
         freshness: buildFreshnessMetadata(indexState, { staleCount: 0, refreshed: false, warning: null }),
@@ -1361,7 +1373,7 @@ export async function buildValidateScope(options: ValidateScopeOptions): Promise
   const pyProfile = await detectPythonProfile(options.rootDir);
   const inferredSources = editScopeRaw.recommendedScope.filter((item) => isSourcePath(item.path) && !isTestPath(item.path)).map((item) => item.path);
   const explicitSources = explicitFiles.filter((path) => isSourcePath(path) && !isTestPath(path));
-  const sourceFiles = unique([...explicitSources, ...inferredSources]).slice(0, Math.max(maxFiles, explicitSources.length));
+  const sourceFiles = unique(explicitFiles.length ? explicitSources : inferredSources).slice(0, Math.max(maxFiles, explicitSources.length));
   const inferredTests = await findTestsForFiles(options.rootDir, sourceFiles);
   const explicitTests = explicitFiles
     .filter((path) => isTestPath(path))
@@ -1442,7 +1454,10 @@ export async function buildValidateScope(options: ValidateScopeOptions): Promise
     });
   }
 
+  const snapshot = await createValidationSnapshot(options.rootDir);
   const payload = {
+    snapshot,
+    execution: "recommendations only; run checks in the host and submit validation_record",
     repo: editScopeRaw.repo,
     freshness: editScopeRaw.freshness,
     trust: editScopeRaw.trust,
@@ -1457,6 +1472,7 @@ export async function buildValidateScope(options: ValidateScopeOptions): Promise
   return formatMaybeJson(options.format, payload, () => {
     const lines = [
       `Validate Scope: ${options.task}`,
+      `Validation snapshot: ${snapshot.id} (checks have not been executed)`,
       "",
       `Source files: ${sourceFiles.join(", ") || "(none)"}`,
       `Tests: ${testPaths.join(", ") || "(none)"}`,
@@ -1474,6 +1490,18 @@ export async function buildValidateScope(options: ValidateScopeOptions): Promise
 export async function recordTaskMemory(options: MemoryRecordTaskOptions): Promise<string> {
   const db = await getDB(options.rootDir);
   const config = await loadProjectConfig(options.rootDir);
+  const requestedEvidence: EvidenceFile[] = [], unavailableEvidence: string[] = [];
+  if(options.sourceEvidence) requestedEvidence.push(...options.sourceEvidence);
+  else for(const file of options.files ?? []) {
+    const path=resolveProjectPath(options.rootDir,file);
+    try { if((await stat(path)).isFile()) requestedEvidence.push({file}); else unavailableEvidence.push(file); }
+    catch(error) { if((error as NodeJS.ErrnoException).code!=="ENOENT") throw error; unavailableEvidence.push(file); }
+  }
+  const configuration = requestedEvidence.length ? (await evidenceConfigurationFiles(options.rootDir)).map(file=>({file})) : [];
+  const sourceEvidence = await bindEvidence(options.rootDir, [...requestedEvidence,...configuration.filter(item=>!requestedEvidence.some(ref=>ref.file===item.file))]);
+  const supersedes = [...new Set(options.supersedes ?? [])];
+  for (const id of supersedes) if (!db.getMemoryNode(id)) throw new Error(`Unknown superseded memory: ${id}`);
+  const validation = await Promise.all((options.validationRefs ?? []).map(async id => ({ id, state: await validationState(options.rootDir, id) })));
   const contentParts = [
     `Task: ${options.task}`,
     `Summary: ${options.summary}`,
@@ -1488,6 +1516,11 @@ export async function recordTaskMemory(options: MemoryRecordTaskOptions): Promis
     client_id: config?.clientId ?? "",
     record_kind: "task",
     task: options.task,
+    source_evidence: JSON.stringify(sourceEvidence),
+    configuration_paths: JSON.stringify(configuration.map(item=>item.file)),
+    validation_refs: JSON.stringify(options.validationRefs ?? []),
+    unavailable_evidence: JSON.stringify(unavailableEvidence),
+    open_risks: JSON.stringify(options.openRisks ?? []),
   };
   let embedding: number[] = [];
   try {
@@ -1497,13 +1530,18 @@ export async function recordTaskMemory(options: MemoryRecordTaskOptions): Promis
   }
   const node = {
     type: "note",
-    label: `task:${options.task}`,
+    label: `task:${options.task}:${randomUUID()}`,
     content: contentParts.join("\n"),
     metadata,
   } satisfies MemoryNodeInput;
   // Pre-check whether the task node already exists so we can report "Created N nodes" accurately.
   const taskWasNew = !db.findMemoryNodeByLabel("note", node.label);
-  const taskMemoryId = db.upsertMemoryNode(node, embedding.length > 0 ? embedding : undefined);
+  const taskMemoryId = db.transaction(() => {
+    for(const id of supersedes) if(!db.getMemoryNode(id)) throw new Error(`Superseded memory disappeared: ${id}`);
+    const id = db.upsertMemoryNode(node, embedding.length > 0 ? embedding : undefined);
+    for (const previous of supersedes) db.upsertMemoryEdge({ source: previous, target: id, relation: "resolved_by", metadata: { relation_kind: "supersedes" } });
+    return id;
+  });
   const linkedNodes: string[] = [];
   const newlyCreatedNodes: string[] = [];
   for (const file of options.files ?? []) {
@@ -1528,8 +1566,12 @@ export async function recordTaskMemory(options: MemoryRecordTaskOptions): Promis
     });
     linkedNodes.push(fileNodeId);
   }
+  const handoff = await persistArtifact({ rootDir: options.rootDir, kind: "handoff", key: taskMemoryId, immutable: true,
+    payload: { task: options.task, completed: options.summary, remaining: options.openRisks ?? [], assumptions: options.assumptions ?? [], sourceEvidence, unavailableEvidence, validation, taskMemoryId } });
   const payload = {
     taskMemoryId,
+    handoff,
+    evidenceState: await memoryEvidenceStatus(options.rootDir, db.getMemoryNode(taskMemoryId)!),
     linkedNodes,
     newlyCreatedNodes,
     createdCount: newlyCreatedNodes.length + (taskWasNew ? 1 : 0),
@@ -1538,6 +1580,7 @@ export async function recordTaskMemory(options: MemoryRecordTaskOptions): Promis
   return formatMaybeJson(options.format, payload, () => {
     const lines = [
       `Task memory recorded: ${taskMemoryId}`,
+      `Handoff: ${handoff.id}`,
       `Summary: ${options.summary}`,
       `Created: ${payload.createdCount} new node(s), ${linkedNodes.length} edge(s)`,
     ];

@@ -14,7 +14,7 @@ import { createEventCollector, providerUsage, fingerprintLauncher, latencyDistri
 const exec = promisify(execFile), here = dirname(fileURLToPath(import.meta.url));
 const flags = new Set(process.argv.slice(2));
 const output = resolve(process.env.CONTEXTPRO_PILOT_OUTPUT ?? '.contextpro/productivity-pilot');
-const manifestText = await readFile(join(here, 'fixtures/coding-pilot.json'), 'utf8');
+const manifestText = await readFile(process.env.CONTEXTPRO_PILOT_MANIFEST ?? join(here, 'fixtures/coding-pilot.json'), 'utf8');
 const validatorVersion = process.env.CONTEXTPRO_PILOT_VALIDATOR_VERSION ?? '2';
 if (!['1', '2'].includes(validatorVersion)) throw Error('Validator version must be 1 or 2');
 const validatorScript = validatorVersion === '1' ? 'pilot-text-preview.mjs' : 'pilot-text-preview-v2.mjs';
@@ -28,7 +28,13 @@ const repeats = Number(process.env.CONTEXTPRO_PILOT_REPEATS ?? 1);
 if (!Number.isInteger(repeats) || repeats < 1 || repeats > 10) throw Error('repeats must be 1–10');
 const variants = (process.env.CONTEXTPRO_PILOT_VARIANTS ?? 'baseline,candidate').split(',');
 if (variants.some(v => !['baseline', 'candidate', 'native'].includes(v)) || new Set(variants).size !== variants.length) throw Error('Invalid variants');
-const plan = Array.from({ length: repeats }, (_, repeat) => tasks.flatMap((task, index) => ((repeat + index) % 2 ? [...variants].reverse() : variants).map(variant => ({ taskId: task.id, variant, repeat })))).flat();
+// Interleave added inline-language tasks so the first 12 trials exercise both languages.
+// Historical manifests without inline fixtures retain their original order.
+const historical=tasks.filter(task=>!task.fixture), inline=tasks.filter(task=>task.fixture), ordered=[];
+for(let i=0;i<Math.max(historical.length,inline.length);i++){if(historical[i])ordered.push(historical[i]);if(inline[i])ordered.push(inline[i]);}
+const plan = Array.from({ length: repeats }, (_, repeat) => ordered.flatMap((task, index) => ((repeat + index) % 2 ? [...variants].reverse() : variants).map(variant => ({ taskId: task.id, variant, repeat })))).flat();
+const maxTrials = Number(process.env.CONTEXTPRO_PILOT_MAX_TRIALS ?? plan.length);
+if(!Number.isInteger(maxTrials) || maxTrials<0) throw Error('max trials must be a nonnegative integer');
 const existing = async path => access(path).then(() => true, () => false);
 const save = (path, value) => writeFile(path, JSON.stringify(value, null, 2), { mode: 0o600 });
 await mkdir(output, { recursive: true });
@@ -61,6 +67,12 @@ async function cloneDirectory(from, to) {
 }
 async function archive(task, revision, target) {
   await mkdir(target, { recursive: true });
+  if(task.fixture) {
+    for(const [path,source] of Object.entries(task.fixture[revision==='after'?'after':'before'])) {
+      await mkdir(dirname(join(target,path)),{recursive:true});await writeFile(join(target,path),source);
+    }
+    return;
+  }
   const tar = join(target, 'fixture.tar');
   await exec('git', ['archive', `--output=${tar}`, revision], { cwd: repos[task.repository] });
   await exec('tar', ['-xf', tar, '-C', target]); await rm(tar);
@@ -77,6 +89,10 @@ async function archive(task, revision, target) {
   await dependencies(repos[task.repository], target);
 }
 async function injectValidation(task, root) {
+  if(task.fixture) {
+    for(const [path,source] of Object.entries(task.fixture.tests)) {await mkdir(dirname(join(root,path)),{recursive:true});await writeFile(join(root,path),source);}
+    return;
+  }
   for (const path of task.tests) {
     const { stdout } = await exec('git', ['show', `${task.fix}:${path}`], { cwd: repos[task.repository], maxBuffer: 10 * 1024 * 1024 });
     // The benchmark strips instruction documents to prevent tool-preference
@@ -106,6 +122,8 @@ async function validate(task, root, label) {
         { APP_D_E2E_PORT: '3219', NEXT_TELEMETRY_DISABLED: '1' });
     } else if (task.validator === 'text-preview') {
       result = await run(process.execPath, [join(here, validatorScript), root], root, log, 120000);
+    } else if(task.validator === 'python') {
+      result = await run(process.env.CONTEXTPRO_PILOT_PYTHON ?? 'python3',['-m','unittest','discover','-s','tests','-v'],root,log,120000);
     } else throw Error('Unknown validator');
     return { passed: result.code === 0 && !result.timedOut, ...result, durationMs: performance.now() - started };
   } catch (error) { await writeFile(log, error.stack ?? error.message); return { passed: false, error: error.message, durationMs: performance.now() - started }; }
@@ -116,7 +134,7 @@ if (flags.has('--prepare') || flags.has('--recheck')) {
   for (const task of tasks) {
     const before = join(output, 'corpus', `${task.id}-before`), after = join(output, 'corpus', `${task.id}-after`);
     if (!flags.has('--recheck') && (await existing(before) || await existing(after))) throw Error(`Fixture already exists: ${task.id}; choose a fresh output directory.`);
-    const parent = (await exec('git', ['rev-parse', `${task.fix}^`], { cwd: repos[task.repository] })).stdout.trim();
+    const parent = task.fixture ? 'before' : (await exec('git', ['rev-parse', `${task.fix}^`], { cwd: repos[task.repository] })).stdout.trim();
     console.log(`PREPARE ${task.id}`);
     if (!await existing(before)) await archive(task, parent, before);
     if (!await existing(after)) await archive(task, task.fix, after);
@@ -148,7 +166,7 @@ if (flags.has('--prepare') || flags.has('--recheck')) {
   const rows = resuming ? JSON.parse(await readFile(join(output, 'runs.json'), 'utf8')) : [];
   if (resuming) validatePilotResume(JSON.parse(await readFile(join(output, 'plan.json'), 'utf8')), campaign, rows);
   else await save(join(output, 'plan.json'), campaign);
-  for (const trial of plan.slice(rows.length)) {
+  for (const trial of plan.slice(rows.length,maxTrials)) {
     const task = tasks.find(task => task.id === trial.taskId), label = `${task.id}-${trial.repeat}-${trial.variant}`;
     const root = join(output, 'runs', label), launcher = launchers[trial.variant];
     // A residual trial after an interrupted process is retained as a failure,
@@ -187,7 +205,8 @@ if (flags.has('--prepare') || flags.has('--recheck')) {
     if (config.model_reasoning_effort) overrides.push('model_reasoning_effort=' + JSON.stringify(config.model_reasoning_effort));
     if (launcher) {
       overrides.push('mcp_servers.contextpro.command=' + JSON.stringify(launcher.command), 'mcp_servers.contextpro.args=' + JSON.stringify([...launcher.args, '--root', root]));
-      const env = { CONTEXTPRO_TOOL_PROFILE: 'lean', CONTEXTPRO_REINDEX_NO_EMBED: 'true', CONTEXTPRO_EMBED_TRACKER: 'lazy', CONTEXTPRO_CHAT_RERANK: 'false', CONTEXTPRO_FEATURE_SUMMARIES: 'false', CONTEXTPRO_CONNECTED_CONTEXT: String(trial.variant === 'candidate'), CONTEXTPRO_TOOL_TRACE_PATH: serverTrace, CONTEXTPRO_PROVIDER_TRACE_PATH: providerTrace };
+      const env = { CONTEXTPRO_TOOL_PROFILE: 'lean', CONTEXTPRO_REINDEX_NO_EMBED: 'true', CONTEXTPRO_EMBED_TRACKER: 'lazy', CONTEXTPRO_CHAT_RERANK: 'false', CONTEXTPRO_FEATURE_SUMMARIES: 'false', CONTEXTPRO_CONNECTED_CONTEXT: String(trial.variant === 'candidate'), CONTEXTPRO_TOOL_TRACE_PATH: serverTrace, CONTEXTPRO_PROVIDER_TRACE_PATH: providerTrace,
+        ...(manifest.adaptive ? {CONTEXTPRO_ADAPTIVE_CONTEXT:String(trial.variant==='candidate'),CONTEXTPRO_DAEMON:'false',CONTEXTPRO_PYRIGHT_COMMAND:process.env.CONTEXTPRO_PYRIGHT_COMMAND??''} : {}) };
       for (const [key, value] of Object.entries(env)) overrides.push(`mcp_servers.contextpro.env.${key}=${JSON.stringify(value)}`);
     }
     const prompt = `${task.prompt}\n\nImplement and validate the change in this isolated repository. Do not browse, delegate, inspect files outside this repository, or access another checkout or git history. Do not alter dependency installations. Preserve unrelated behavior and stop when done. ${launcher ? 'Use ContextPro first for unfamiliar code, bounded outputs and batched reads. Native search and reads are available when needed. Pass this absolute repository root to every MCP call.' : 'Use ordinary native search and file reads.'}`;
@@ -220,9 +239,12 @@ if (flags.has('--prepare') || flags.has('--recheck')) {
   const pairs = Array.from({ length: repeats }, (_, repeat) => tasks.map(task => ({ taskId: task.id, repeat, baseline: rows.find(row => row.taskId === task.id && row.repeat === repeat && row.variant === 'baseline'), candidate: rows.find(row => row.taskId === task.id && row.repeat === repeat && row.variant === 'candidate') }))).flat();
   const passing = pairs.filter(pair => pair.baseline?.success && pair.candidate?.success);
   const ratios = passing.map(pair => ({ taskId: pair.taskId, repeat: pair.repeat, time: pair.candidate.wallTimeMs / pair.baseline.wallTimeMs,
-    tokens: pair.candidate.usage && pair.baseline.usage ? (pair.candidate.usage.input_tokens + pair.candidate.usage.output_tokens) / (pair.baseline.usage.input_tokens + pair.baseline.usage.output_tokens) : null }));
+    tokens: pair.candidate.usage && pair.baseline.usage ? (pair.candidate.usage.input_tokens + pair.candidate.usage.output_tokens) / (pair.baseline.usage.input_tokens + pair.baseline.usage.output_tokens) : null,
+    inputTokens: pair.candidate.usage && pair.baseline.usage ? pair.candidate.usage.input_tokens / pair.baseline.usage.input_tokens : null }));
   const timeRatio = latencyDistribution(ratios.map(r => r.time)).medianMs, tokenRatio = latencyDistribution(ratios.map(r => r.tokens)).medianMs;
-  await save(join(output, 'summary.json'), { samples: rows.length, success: Object.fromEntries(variants.map(variant => [variant, rows.filter(row => row.variant === variant && row.success).length])),
-    correctnessRegressions: pairs.filter(p => p.baseline?.success && !p.candidate?.success).map(p => p.taskId), jointlyPassing: passing.length, ratios, medianTimeRatio: timeRatio, medianTokenRatio: tokenRatio,
-    note: 'Single-run paired pilot; no confidence intervals or universal savings claim. Costs unavailable; provider tokens include cached inputs once.' });
+  await save(join(output, 'summary.json'), { samples: rows.length, plannedAttempts:plan.length, complete:rows.length===plan.length,
+    success: Object.fromEntries(variants.map(variant => [variant, rows.filter(row => row.variant === variant && row.success).length])),
+    correctnessRegressions: pairs.filter(p => p.baseline?.success && p.candidate && !p.candidate.success).map(p => p.taskId), jointlyPassing: passing.length, ratios, medianTimeRatio: timeRatio, medianTokenRatio: tokenRatio,
+    medianInputTokenRatio:latencyDistribution(ratios.map(r=>r.inputTokens)).medianMs,
+    note: `${repeats} counterbalanced repetitions; no confidence intervals or universal savings claim. Costs unavailable; provider tokens include cached inputs once.` });
 } else console.log(JSON.stringify({ contractHash, plan, instruction: '--prepare qualifies validators; --run consumes configured Codex quota after qualification.' }, null, 2));

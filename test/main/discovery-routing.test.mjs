@@ -23,6 +23,80 @@ async function fixture(files, run) {
   } finally { closeDB(root); await rm(root, { recursive: true, force: true }); }
 }
 
+it('adaptive context finds operational evidence without document trigger words and preserves bounded connected evidence', async () => {
+  await fixture({
+    'docs/HUMAN-PENDING.md': '# Pending actions\nGitHub Actions billing or spending limit blocked CI. Account owner must resolve payment.\n',
+    'src/service.ts': 'import { quota } from "./config";\nexport function charge(n: number) { if (n > quota) throw new Error("quota"); return n; }\n',
+    'src/config.ts': 'export const quota = 3;\n',
+    'src/client.ts': 'import { charge } from "./service";\nexport const run = () => charge(2);\n',
+    'src/service.test.ts': 'import { charge } from "./service";\nexport const test = () => charge(1);\n',
+  }, async root => {
+    const query = 'Find the humanpending entry recording GitHub Actions billing or spending limit blocked CI.';
+    assert.equal(wantsDocuments(query), false);
+    const text = await getContext({rootDir:root,query,intent:'auto',maxTokens:1500,retrievalPreset:'keyword_only'});
+    assert.match(text, /HUMAN-PENDING.md:\d/);
+    assert.match(text, /Account owner must resolve payment/);
+    const word=await getContext({rootDir:root,query:'billing',intent:'lookup',maxTokens:1400,retrievalPreset:'keyword_only'});
+    assert.match(word,/Account owner must resolve payment/);
+    const absent=await getContext({rootDir:root,query:'nonexistent_zebra_468291',intent:'auto',maxTokens:1400,retrievalPreset:'keyword_only'});
+    assert.doesNotMatch(absent,/Account owner must resolve payment|src\/service.ts:\d/);
+    const change = await getContext({rootDir:root,query:'charge',intent:'change',maxTokens:3000,retrievalPreset:'keyword_only'});
+    assert.match(change, /src\/client.ts:\d/);
+    assert.match(change, /src\/service.test.ts:\d/);
+    assert.match(change, /configuration=returned/);
+    assert.match(change, /not compiler-resolved/);
+    assert.ok(Buffer.byteLength(change) <= 12000);
+    const bounded = await getContext({rootDir:root,query:'charge',intent:'change',maxTokens:512,retrievalPreset:'keyword_only'});
+    assert.ok(Buffer.byteLength(bounded) <= 2048);
+    await assert.rejects(getContext({rootDir:root,targets:[{file:'src/service.ts'}],intent:'change'}), /query discovery only/);
+  });
+});
+
+it('adaptive retrieval prioritizes decisive operational paragraphs over headings and incidental CI mentions',async()=>{
+  await fixture({
+    'humanpending.md':'# Owner dependencies\n'+('Unrelated release detail.\n'.repeat(29))+'GitHub Actions availability: account payments failed or the spending limit must be increased. The owner must resolve runner billing before hosted CI can run. '+('Local checks do not prove hosted success. '.repeat(10))+'\n',
+    'docs/ci.md':'# GitHub Actions CI\n'+('GitHub Actions workflow checks run tests.\n'.repeat(40)),
+    'src/billing.ts':'export function billing() { return "GitHub"; }\n',
+  },async root=>{
+    for(const query of ['Find the humanpending entry recording GitHub Actions billing or spending limit blocked CI.','Why cannot hosted CI run when the account spending limit is reached?']) {
+      const text=await getContext({rootDir:root,query,intent:'auto',maxTokens:1400,retrievalPreset:'keyword_only'});
+      assert.match(text,/owner must resolve runner billing/);assert.ok(Buffer.byteLength(text)<=5600);
+    }
+  });
+});
+
+it('adaptive endpoint questions retain route source among client and workflow mentions', async () => {
+  await fixture({
+    'apps/web/api/download-batch/route.ts': `export async function POST(items: string[]) {
+  // Mint signed URLs for a batch, validating every upstream receipt.
+  let temporaryFailure = false;
+  const urls: string[] = [];
+  for (const item of items) {
+    const receipt = await mint(item);
+    if (!receipt.valid) temporaryFailure = true;
+    else urls.push(receipt.url);
+  }
+  if (temporaryFailure) return { status: 503 };
+  return { status: 200, urls };
+}\n`,
+    'apps/web/client/thumbnails.ts': '// The thumbnail client retries a transient signed batch failure after validation.\nexport const thumbnailRetry = true;\n',
+    'apps/native/client/thumbnails.ts': '// Native thumbnails share the transient signed batch failure retry contract.\nexport const nativeRetry = true;\n',
+    'docs/workflow.md': '# Web thumbnail workflow\nTransient signed thumbnail batch failure validation and whole-batch retry contract.\n',
+    'apps/web/api/unrelated/route.ts': 'export const unrelatedEndpoint = "unrelated-marker";\n',
+  }, async root => {
+    for (const query of [
+      'Locate the transient signed thumbnail batch failure validation and whole-batch retry contract in the web thumbnail route.',
+      'Review the download batch endpoint validation failure response.',
+    ]) {
+      const text = await getContext({rootDir:root,query,intent:'auto',maxTokens:1600,retrievalPreset:'keyword_only'});
+      assert.match(text, /apps\/web\/api\/download-batch\/route.ts:\d/);
+      assert.match(text, /if \(temporaryFailure\) return \{ status: 503 \}/);
+      assert.ok(text.indexOf("apps/web/api/download-batch/route.ts:") < text.indexOf("unrelated-marker") || !text.includes("unrelated-marker"));
+      assert.ok(Buffer.byteLength(text) <= 6400);
+    }
+  });
+});
+
 it('keeps case-distinct schema and value definitions in a multi-name query', async () => {
   await fixture({
     'core/index.ts': `export const orderSchema = z.object({\n${'  filler: z.string(),\n'.repeat(80)}  items: z.array(z.object({ regionCodes: z.array(z.string()) })),\n});\nexport type NormalizedOrder = z.infer<typeof orderSchema>;\n`,

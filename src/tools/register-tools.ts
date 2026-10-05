@@ -27,6 +27,10 @@ import { getRelated } from "./related.js";
 import { getTestMap } from "./test-map.js";
 import { explain } from "./explain.js";
 import { getContext } from "./context.js";
+import { recordValidation, validationState, memoryEvidenceStatus } from "../core/evidence-state.js";
+import { getDB } from "../core/db.js";
+import { teamStatus, teamTask } from "../core/team-ledger.js";
+import { compilerDiagnostics, previewRename, applyRename } from "./compiler-actions.js";
 import { getFeatureBrief } from "./feature-brief.js";
 import { getRepoMap } from "./repo-map.js";
 import { resolveSymbol } from "./resolve-symbol.js";
@@ -98,7 +102,7 @@ export function registerTools(
   const invocations = new Map<string, { schema: z.AnyZodObject; handler: (args: unknown) => Promise<CallToolResult> }>();
   // This compatibility route must never dispatch source edits or destructive
   // maintenance under discovery's non-destructive annotation.
-  const callable = new Set(["context", "exact_references", "search", "grep", "skeleton", "explain", "tree", "status", "health", "reindex", "blast_radius", "validate_scope", "efficiency_report", "task_pack", "repo_map", "feature_brief", "artifact_read"]);
+  const callable = new Set(["context", "exact_references", "search", "grep", "skeleton", "explain", "tree", "status", "health", "reindex", "blast_radius", "validate_scope", "efficiency_report", "task_pack", "repo_map", "feature_brief", "artifact_read", "team_status", "compiler_diagnostics", "rename_preview"]);
   const refreshCatalogCost = (): void => setToolSchemaTokens(Buffer.byteLength(JSON.stringify({ tools: [...catalog.values()].filter(tool => active.has(tool.name)) }), "utf8") / 4);
   const noteSchema = (name: string, description: string, shape: Record<string, unknown>, output?: unknown): void => {
     const entry = { name, description, inputSchema: toJsonSchemaCompat(z.object({ ...shape, root: rootArg } as z.ZodRawShape).strict()), annotations: annotationsForTool(name),
@@ -148,12 +152,13 @@ export function registerTools(
   };
 
   server.tool("context", "Find and read source evidence in one call. Query for discovery; targets for batched exact file/symbol/line reads without search. Returns deduplicated source ranges with explicit omissions. Prefer this for repository questions; stop when evidence suffices.", {
+    intent: z.enum(["auto", "lookup", "change", "debug", "review", "overview"]).optional().describe("Query-only opt-in adaptive retrieval. Change/debug/review include bounded connected evidence; auto infers intent."),
     query: z.string().max(2000).optional().describe("Discovery query, at most 2000 characters. Use a literal symbol name to prioritize its definition."),
     targets: z.array(z.object({ file: z.string().max(240), symbol: z.string().max(200).optional(), start: z.number().int().min(1).optional(), end: z.number().int().min(1).optional() }).strict()).min(1).max(6).optional().describe("Exact reads: 1–6 file/symbol/line targets per call. Split larger batches."),
     max_tokens: z.number().int().min(512).max(12000).optional().describe("Integer response budget: 512–12000, UTF-8 bytes/4; default 4000. Raise within this range or narrow targets if omitted."),
     previous_context_id: z.string().regex(/^source_context-[a-f0-9]{14}$/).optional().describe("Query mode only: source_context ID from a complete packet you still hold. Returns source changes; omit after compaction. Exact targets are stateless."),
-  }, withRequestActivity(async ({ query, targets, max_tokens, previous_context_id }) => ({
-    content: [{ type: "text" as const, text: await getContext({ rootDir: rootDir(), query, targets, maxTokens: max_tokens, previousContextId: previous_context_id }) }],
+  }, withRequestActivity(async ({ query, targets, max_tokens, previous_context_id, intent }) => ({
+    content: [{ type: "text" as const, text: await getContext({ rootDir: rootDir(), query, targets, intent, maxTokens: max_tokens, previousContextId: previous_context_id }) }],
   }), { toolName: "context", waitForIndexing: false }));
 
   server.tool("feature_brief", "Explain connected implementation and tests with source citations. Reuses hash-validated artifacts. Deterministic by default; model summaries require CONTEXTPRO_FEATURE_SUMMARIES=true.", {
@@ -257,10 +262,18 @@ export function registerTools(
     },
     withRequestActivity(async ({ artifact_id }) => {
       const artifact = await readArtifact(rootDir(), artifact_id);
+      let applicability: unknown;
+      if (artifact?.kind === "validation_result") applicability = await validationState(rootDir(), artifact_id);
+      if (artifact?.kind === "handoff") {
+        const payload=artifact.payload as {taskMemoryId?:string;validation?:Array<{id:string}>};
+        const node=payload.taskMemoryId ? (await getDB(rootDir())).getMemoryNode(payload.taskMemoryId) : null;
+        applicability={sourceEvidence:node ? await memoryEvidenceStatus(rootDir(),node) : "unverified",
+          validation:await Promise.all((payload.validation??[]).map(async ({id})=>({id,state:await validationState(rootDir(),id)})))};
+      }
       return {
         content: [{
           type: "text" as const,
-          text: artifact ? JSON.stringify(artifact, null, 2) : JSON.stringify({ error: `Artifact not found: ${artifact_id}` }, null, 2),
+          text: artifact ? JSON.stringify({...artifact,...applicability ? {currentApplicability:applicability} : {}}, null, 2) : JSON.stringify({ error: `Artifact not found: ${artifact_id}` }, null, 2),
         }],
       };
     }, { toolName: "artifact_read", waitForIndexing: false }),
@@ -940,7 +953,7 @@ export function registerTools(
         type: "text" as const,
         text: await getStatus({ rootDir: rootDir(), format }),
       }],
-    }), { toolName: "status" }),
+    }), { toolName: "status", waitForIndexing: false }),
   );
 
   server.tool(
@@ -1308,19 +1321,23 @@ export function registerTools(
   );
 
   const MEMORY_RECORD_TASK_SHAPE = {
-    task: z.string().min(1).describe("Task or issue name."),
-    summary: z.string().min(1).describe("What changed or was learned."),
-    files: z.array(z.string()).optional().describe("Files touched or relevant to the task."),
-    assumptions: z.array(z.string()).optional().describe("Assumptions made during the task."),
-    evidence: z.array(z.string()).optional().describe("Evidence supporting the outcome."),
-    open_risks: z.array(z.string()).optional().describe("Risks that remain unresolved."),
+    task: z.string().min(1).max(300).describe("Task or issue name."),
+    summary: z.string().min(1).max(8000).describe("What changed or was learned."),
+    source_evidence: z.array(z.object({ file: z.string().max(240), hash: z.string().regex(/^[a-f0-9]{64}$/).optional(), start: z.number().int().positive().optional(), end: z.number().int().positive().optional() }).strict()).max(256).optional().describe("Source supporting this memory. Whole-file hashes are captured and rechecked on retrieval."),
+    supersedes: z.array(z.string()).max(50).optional().describe("Previous memory IDs explicitly superseded; history is retained."),
+    validation_refs: z.array(z.string()).max(20).optional().describe("Validation result artifact IDs; host-reported status is checked for current applicability."),
+    files: z.array(z.string().max(240)).max(256).optional().describe("Files touched or relevant to the task."),
+    assumptions: z.array(z.string().max(1000)).max(20).optional().describe("Assumptions made during the task."),
+    evidence: z.array(z.string().max(1000)).max(20).optional().describe("Evidence supporting the outcome."),
+    open_risks: z.array(z.string().max(1000)).max(20).optional().describe("Risks that remain unresolved."),
     format: z.enum(["text", "json"]).optional().describe("Return plain text or structured JSON. Default: text."),
   };
   type MemoryRecordTaskArgs = {
     task: string; summary: string; files?: string[]; assumptions?: string[];
     evidence?: string[]; open_risks?: string[]; format?: "text" | "json";
+    source_evidence?: Array<{file: string; hash?: string; start?: number; end?: number}>; supersedes?: string[]; validation_refs?: string[];
   };
-  const runMemoryRecordTask = ({ task, summary, files, assumptions, evidence, open_risks, format }: MemoryRecordTaskArgs) =>
+  const runMemoryRecordTask = ({ task, summary, files, assumptions, evidence, open_risks, format, source_evidence, supersedes, validation_refs }: MemoryRecordTaskArgs) =>
     recordTaskMemory({
       rootDir: rootDir(),
       task,
@@ -1328,6 +1345,7 @@ export function registerTools(
       files,
       assumptions,
       evidence,
+      sourceEvidence: source_evidence, supersedes, validationRefs: validation_refs,
       openRisks: open_risks,
       format,
     });
@@ -1340,6 +1358,41 @@ export function registerTools(
       content: [{ type: "text" as const, text: await runMemoryRecordTask(args) }],
     }), { useEmbeddingTracker: true, toolName: "memory_record_task" }),
   );
+
+  server.tool("validation_record", "Record host-executed checks against a pre-check validation snapshot. Results are host-reported and become stale when inputs change.", {
+    snapshot_id: z.string().regex(/^validation_snapshot-[a-f0-9]{14}$/),
+    command: z.string().min(1).max(2000), exit_code: z.number().int(),
+    runtime: z.string().min(1).max(1000), evidence: z.string().max(8000).optional(),
+  }, withRequestActivity(async ({ snapshot_id, command, exit_code, runtime, evidence }) => ({ content: [{type:"text" as const,
+    text: JSON.stringify(await recordValidation({ rootDir: rootDir(), snapshotId: snapshot_id, command, exitCode: exit_code, runtime, evidence })) }],
+  }), { toolName: "validation_record", waitForIndexing: false }));
+
+  server.tool("team_status", "Inspect local shared task ownership, dependencies, readiness, file leases and retained handoff history. Advisory coordination only.", {
+    task_id: z.string().min(1).max(120).optional().describe("Inspect one task and its history."),
+    before_event_id: z.number().int().positive().optional().describe("Continue older history using olderEventsBefore from the last response."),
+    event_limit: z.number().int().min(1).max(50).optional().describe("History records to return; default 20."),
+  }, withRequestActivity(async ({ task_id, before_event_id, event_limit }) => ({ content: [{ type: "text" as const,
+    text: JSON.stringify(await teamStatus(rootDir(),Date.now(),{taskId:task_id,beforeEventId:before_event_id,eventLimit:event_limit})) }] }), { toolName: "team_status", waitForIndexing: false }));
+  server.tool("team_task", "Explicit local task coordination. Claims and individual-file leases are atomic and expire after five minutes; renew while working. No agents are spawned or messaged.", {
+    action: z.enum(["create", "update", "claim", "renew", "release", "block", "complete", "handoff"]),
+    task_id: z.string().min(1).max(128).optional(), title: z.string().min(1).max(500).optional(),
+    dependencies: z.array(z.string().min(1).max(128)).max(50).optional(), owner: z.string().min(1).max(128).optional(),
+    files: z.array(z.string().min(1).max(240)).max(100).optional(), note: z.string().max(8000).optional(),
+    handoff_id: z.string().regex(/^handoff-[a-f0-9]{14}$/).optional(),
+  }, withRequestActivity(async ({ action, task_id, title, dependencies, owner, files, note, handoff_id }) => ({ content: [{ type: "text" as const,
+    text: JSON.stringify(await teamTask({ rootDir: rootDir(), action, taskId: task_id, title, dependencies, owner, files, note, handoffId: handoff_id })) }],
+  }), { toolName: "team_task", waitForIndexing: false }));
+
+  server.tool("compiler_diagnostics", "Read current TS/JS or configured Pyright diagnostics for explicit files. Does not run tests. Missing language servers fail explicitly.", {
+    files: z.array(z.string().min(1).max(240)).min(1).max(100),
+  }, withRequestActivity(async ({files}) => ({content:[{type:"text" as const,text:JSON.stringify(await compilerDiagnostics({rootDir:rootDir(),files}))}]}), {toolName:"compiler_diagnostics",ensureFreshIndex:true}));
+  server.tool("rename_preview", "Preview compiler-backed TS/JS or Python rename edits. Inspect the immutable artifact before rename_apply; source/config changes invalidate it. No source is edited.", {
+    file:z.string().min(1).max(240),line:z.number().int().positive(),column:z.number().int().positive(),new_name:z.string().min(1).max(200),
+    max_tokens:z.number().int().min(512).max(12000).optional(),
+  }, withRequestActivity(async ({file,line,column,new_name,max_tokens}) => ({content:[{type:"text" as const,text:await previewRename({rootDir:rootDir(),file,line,column,newName:new_name,maxTokens:max_tokens})}]}), {toolName:"rename_preview",ensureFreshIndex:true}));
+  server.tool("rename_apply", "Apply only a previously inspected compiler rename preview, with workspace and per-file hash checks and a restore point. No textual fallback.", {
+    preview_id:z.string().regex(/^rename_preview-[a-f0-9]{14}$/),
+  }, withRequestActivity(async ({preview_id}) => ({content:[{type:"text" as const,text:JSON.stringify(await applyRename({rootDir:rootDir(),previewId:preview_id}))}]}), {toolName:"rename_apply",waitForIndexing:false}));
 
   registerDeprecatedAlias(
     "remember",
