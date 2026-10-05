@@ -62,7 +62,8 @@ The discoverable `feature_brief` expert accepts `query`, optional `refresh`, and
 `max_tokens` (512–12000, default 2000; UTF-8 bytes/4). Its deterministic facts cite
 source ranges. Optional model interpretations are labeled separately; citation
 validation does not verify the claims themselves. Cached briefs validate source
-hashes, dependency membership and generator/model identity before reuse. Neither
+hashes, dependency membership, generator/model identity and retrieval settings
+(adaptive mode, reranking and embedding identity) before reuse. Neither
 briefs nor deltas imply exhaustive repository coverage. Use `artifact_read` for
 full stored packets. Both experts support compatibility dispatch through
 `discover_tools`; the lean catalog remains three tools.
