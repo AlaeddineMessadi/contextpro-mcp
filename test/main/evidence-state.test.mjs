@@ -53,3 +53,20 @@ it('task records preserve repeated history and invalidate when configuration is 
     await assert.rejects(recordTaskMemory({rootDir:root,task:'explicit missing',summary:'Unproved',sourceEvidence:[{file:'deleted.py'}]}),/ENOENT/);
   } finally {closeDB(root);await rm(root,{recursive:true,force:true});}
 });
+
+it('memory does not recommend a validation conclusion after other checked source changes', async () => {
+  const root = await mkdtemp(join(tmpdir(),'cp-memory-validation-'));
+  try {
+    await writeFile(join(root,'source.ts'),'export const auth = true;\n');
+    await writeFile(join(root,'check.ts'),'export const check = true;\n');
+    const db = await getDB(root), state = await bindEvidence(root,[{file:'source.ts'}]);
+    const snapshot = await createValidationSnapshot(root);
+    const receipt = await recordValidation({rootDir:root,snapshotId:snapshot.id,command:'tsc',exitCode:0,runtime:process.version});
+    const id = db.upsertMemoryNode({type:'note',label:'auth check',content:'auth validation passed',metadata:{
+      source_evidence:JSON.stringify(state),validation_refs:JSON.stringify([receipt.artifact.id]),scope:'project',project_id:''}});
+    assert.equal(await memoryEvidenceStatus(root,db.getMemoryNode(id)),'current');
+    await writeFile(join(root,'check.ts'),'export const check = false;\n');
+    assert.equal(await memoryEvidenceStatus(root,db.getMemoryNode(id)),'stale');
+    assert.deepEqual(await getProjectMemoryHits(root,'auth',5,true),[]);
+  } finally {closeDB(root);await rm(root,{recursive:true,force:true});}
+});

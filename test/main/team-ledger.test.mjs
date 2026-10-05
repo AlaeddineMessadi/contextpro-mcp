@@ -4,6 +4,7 @@ import { mkdtemp, mkdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { teamStatus, teamTask } from '../../build/core/team-ledger.js';
+import { persistArtifact } from '../../build/core/artifacts.js';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 const exec=promisify(execFile);
@@ -25,9 +26,22 @@ it('atomically claims tasks and file leases, enforces dependencies, and recovers
     await teamTask({rootDir:root,action:'complete',taskId:'base',owner},1003);
     assert.equal((await teamStatus(root,1004)).tasks.find(task=>task.id==='dependent').ready,true);
     await claim('dependent','b');
+    const handoffs = [];
+    for (const key of ['first','second']) {
+      const artifact = await persistArtifact({rootDir:root,kind:'handoff',key,payload:{completed:key},immutable:true});
+      handoffs.push(artifact.id);
+      await teamTask({rootDir:root,action:'handoff',taskId:'dependent',owner:'b',handoffId:artifact.id},1002);
+    }
     await assert.rejects(teamTask({rootDir:root,action:'renew',taskId:'dependent',owner:'b'},400000),/expired/);
     assert.equal((await claim('dependent','c',['other.ts'],400000)).task.owner,'c');
-    assert.ok((await teamStatus(root,400001)).events.length >= 6);
+    const status = await teamStatus(root,400001);
+    assert.ok(status.events.length >= 6);
+    assert.deepEqual(status.events.filter(event=>event.action==='handoff').map(event=>JSON.parse(JSON.parse(event.details).handoff).id).sort(),handoffs.sort());
+    const firstPage = await teamStatus(root,400001,{taskId:'dependent',eventLimit:2});
+    const older = await teamStatus(root,400001,{taskId:'dependent',eventLimit:2,beforeEventId:firstPage.olderEventsBefore});
+    assert.equal(firstPage.tasks.length,1);
+    assert.ok(older.events.every(event=>event.task_id==='dependent' && event.id<firstPage.olderEventsBefore));
+    assert.ok(older.events.some(event=>event.action==='handoff'));
     await assert.rejects(claim('parallel','d',['../escape']), /outside|escape|traversal/i);
   } finally {
     if(previous===undefined) delete process.env.CONTEXTPRO_TEAM_DIR; else process.env.CONTEXTPRO_TEAM_DIR=previous;

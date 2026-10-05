@@ -28,7 +28,11 @@ async function ledger(rootDir: string) {
   db.exec(`CREATE TABLE IF NOT EXISTS tasks (
     id TEXT PRIMARY KEY, title TEXT NOT NULL, state TEXT NOT NULL CHECK(state IN ('queued','active','blocked','completed')),
     dependencies TEXT NOT NULL, owner TEXT, root TEXT NOT NULL, expires INTEGER NOT NULL, files TEXT NOT NULL, handoff TEXT);
-    CREATE TABLE IF NOT EXISTS events (id INTEGER PRIMARY KEY, task_id TEXT NOT NULL, at INTEGER NOT NULL, action TEXT NOT NULL, owner TEXT, root TEXT NOT NULL, note TEXT NOT NULL);`);
+    CREATE TABLE IF NOT EXISTS events (id INTEGER PRIMARY KEY, task_id TEXT NOT NULL, at INTEGER NOT NULL, action TEXT NOT NULL, owner TEXT, root TEXT NOT NULL, note TEXT NOT NULL, details TEXT NOT NULL DEFAULT '{}');`);
+  const hasDetails = () => (db.prepare("PRAGMA table_info(events)").all() as Array<{name:string}>).some(column=>column.name==="details");
+  if (!hasDetails()) db.transaction(() => {
+    if (!hasDetails()) db.exec("ALTER TABLE events ADD COLUMN details TEXT NOT NULL DEFAULT '{}'");
+  }).immediate();
   return { db, root };
 }
 const effectiveState = (task: Task, now: number): State => task.state === "active" && task.expires <= now ? "queued" : task.state;
@@ -38,13 +42,17 @@ const describe = (task: Task, all: Task[], now: number) => ({ ...task, state: ef
   ready: effectiveState(task, now) === "queued" && (JSON.parse(task.dependencies) as string[]).every(id => all.some(item => item.id === id && item.state === "completed")),
 });
 
-export async function teamStatus(rootDir: string, now = Date.now()) {
+export async function teamStatus(rootDir: string, now = Date.now(), options: {taskId?:string;beforeEventId?:number;eventLimit?:number} = {}) {
   const { db, root } = await ledger(rootDir);
   try {
     const all = db.prepare("SELECT * FROM tasks ORDER BY id").all() as Task[];
-    return { root, advisory: true, total: all.length, omitted: Math.max(0, all.length - 100), tasks: all.slice(0, 100).map(task => describe(task, all, now)),
-      readyTaskIds: all.filter(task => describe(task, all, now).ready).slice(0, 100).map(task => task.id),
-      events: db.prepare("SELECT * FROM events ORDER BY id DESC LIMIT 20").all() };
+    const selected = options.taskId ? all.filter(task=>task.id===options.taskId) : all;
+    const limit = Math.max(1,Math.min(options.eventLimit ?? 20,50));
+    const events = db.prepare("SELECT * FROM events WHERE (? IS NULL OR task_id=?) AND (? IS NULL OR id<?) ORDER BY id DESC LIMIT ?")
+      .all(options.taskId ?? null, options.taskId ?? null, options.beforeEventId ?? null, options.beforeEventId ?? null, limit) as Array<{id:number}>;
+    return { root, advisory: true, total: selected.length, omitted: Math.max(0, selected.length - 100), tasks: selected.slice(0, 100).map(task => describe(task, all, now)),
+      readyTaskIds: selected.filter(task => describe(task, all, now).ready).slice(0, 100).map(task => task.id),
+      events, olderEventsBefore: events.length === limit ? events.at(-1)!.id : null };
   } finally { db.close(); }
 }
 
@@ -113,7 +121,10 @@ export async function teamTask(options: TeamTaskOptions, now = Date.now()) {
         else { task.state = options.action === "complete" ? "completed" : options.action === "block" ? "blocked" : "queued"; task.owner = null; task.expires = 0; task.files = "[]"; }
       }
       db.prepare("INSERT OR REPLACE INTO tasks VALUES (@id,@title,@state,@dependencies,@owner,@root,@expires,@files,@handoff)").run(task);
-      db.prepare("INSERT INTO events(task_id,at,action,owner,root,note) VALUES(?,?,?,?,?,?)").run(id, now, options.action, options.owner ?? null, root, options.note ?? "");
+      // Keep each handoff and claim snapshot even after a later owner replaces
+      // the task's current fields. Old schema rows remain valid empty details.
+      db.prepare("INSERT INTO events(task_id,at,action,owner,root,note,details) VALUES(?,?,?,?,?,?,?)")
+        .run(id, now, options.action, options.owner ?? null, root, options.note ?? "", JSON.stringify(task));
       return { task: describe(task, proposed, now), warnings, advisory: true, leaseMs: LEASE_MS };
     }).immediate();
   } finally { db.close(); }

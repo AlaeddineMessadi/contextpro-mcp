@@ -1367,8 +1367,12 @@ export function registerTools(
     text: JSON.stringify(await recordValidation({ rootDir: rootDir(), snapshotId: snapshot_id, command, exitCode: exit_code, runtime, evidence })) }],
   }), { toolName: "validation_record", waitForIndexing: false }));
 
-  server.tool("team_status", "Inspect local shared task ownership, dependencies, readiness, file leases and recent handoffs. Advisory coordination only.", {},
-    withRequestActivity(async () => ({ content: [{ type: "text" as const, text: JSON.stringify(await teamStatus(rootDir())) }] }), { toolName: "team_status", waitForIndexing: false }));
+  server.tool("team_status", "Inspect local shared task ownership, dependencies, readiness, file leases and retained handoff history. Advisory coordination only.", {
+    task_id: z.string().min(1).max(120).optional().describe("Inspect one task and its history."),
+    before_event_id: z.number().int().positive().optional().describe("Continue older history using olderEventsBefore from the last response."),
+    event_limit: z.number().int().min(1).max(50).optional().describe("History records to return; default 20."),
+  }, withRequestActivity(async ({ task_id, before_event_id, event_limit }) => ({ content: [{ type: "text" as const,
+    text: JSON.stringify(await teamStatus(rootDir(),Date.now(),{taskId:task_id,beforeEventId:before_event_id,eventLimit:event_limit})) }] }), { toolName: "team_status", waitForIndexing: false }));
   server.tool("team_task", "Explicit local task coordination. Claims and individual-file leases are atomic and expire after five minutes; renew while working. No agents are spawned or messaged.", {
     action: z.enum(["create", "update", "claim", "renew", "release", "block", "complete", "handoff"]),
     task_id: z.string().min(1).max(128).optional(), title: z.string().min(1).max(500).optional(),

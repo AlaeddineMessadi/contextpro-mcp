@@ -73,6 +73,14 @@ export async function memoryEvidenceStatus(rootDir: string, node: MemoryNodeRow)
     if (!state.files?.length) return "unverified";
     if(metadata.configuration_paths && metadata.configuration_paths!==JSON.stringify(await evidenceConfigurationFiles(rootDir))) return "stale";
     if (!await evidenceCurrent(rootDir, state)) return "stale";
+    const validationRefs = JSON.parse(metadata.validation_refs ?? "[]");
+    if (!Array.isArray(validationRefs) || validationRefs.length > 20) return "unverified";
+    for (const id of validationRefs) {
+      if (typeof id !== "string") return "unverified";
+      const validation = await validationState(rootDir, id);
+      if (validation === "stale") return "stale";
+      if (validation === "unverified") return "unverified";
+    }
     return JSON.parse(metadata.unavailable_evidence ?? "[]").length ? "unverified" : "current";
   } catch { return "unverified"; }
 }

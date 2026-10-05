@@ -1,6 +1,6 @@
 import { describe, it, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, rm, writeFile, readdir, readFile } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, writeFile, readdir, readFile, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -15,6 +15,14 @@ async function indexFixture(dir) {
 }
 
 describe("artifact cache + GC", () => {
+  it("reads and lists stored artifacts through a different alias of the same root", async () => {
+    const { persistArtifact, readArtifact, listArtifacts } = await import("../../build/core/artifacts.js");
+    const artifact = await persistArtifact({rootDir:root,kind:"handoff",key:"alias",payload:{completed:"kept"},immutable:true});
+    const alias = join(root,"alias");
+    await symlink(root,alias,process.platform === "win32" ? "junction" : "dir");
+    assert.equal((await readArtifact(alias,artifact.id)).payload.completed,"kept");
+    assert.ok((await listArtifacts(alias)).find(item=>item.id===artifact.id).sizeBytes>0);
+  });
   it("bounds long artifact keys in MCP discovery output", async () => {
     const { compactArtifactListKeys } = await import("../../build/tools/register-tools.js");
     const longKey = "x".repeat(15_000);
