@@ -940,7 +940,7 @@ export function registerTools(
         type: "text" as const,
         text: await getStatus({ rootDir: rootDir(), format }),
       }],
-    }), { toolName: "status" }),
+    }), { toolName: "status", waitForIndexing: false }),
   );
 
   server.tool(

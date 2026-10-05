@@ -81,10 +81,10 @@ export async function getIndexState(rootDir: string): Promise<IndexState> {
   }
   const generation = db.getIndexGeneration();
   const activeStatus = db.getMeta("index_status");
-  const state = indexedFiles === 0
-    ? "empty"
-    : activeStatus === "indexing"
-      ? "indexing"
+  const state = activeStatus === "indexing"
+    ? "indexing"
+    : indexedFiles === 0
+      ? "empty"
       : db.getMeta("index_repair_required") === "1" || generation === 0 || changedIndexedFiles > 0 || missingIndexedFiles > 0 || removedIndexedFiles > 0 || sourceEntries.length !== indexedFiles
         ? "stale"
         : "fresh";

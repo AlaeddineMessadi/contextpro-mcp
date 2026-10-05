@@ -7,6 +7,52 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { getDB, closeDB } from '../../build/core/db.js';
+
+it('reports active indexing through status and its dispatcher without waiting or changing the lock', { timeout: 30000 }, async () => {
+  const root = await mkdtemp(join(tmpdir(), 'contextpro-indexing-status-'));
+  await writeFile(join(root, 'api.ts'), 'export const ready = true;\n');
+  const client = new Client({ name: 'indexing-status-integration', version: '1' });
+  const transport = new StdioClientTransport({ command: process.execPath, args: [join(process.cwd(), 'build/index.js'), '--root', root],
+    env: { ...process.env, CONTEXTPRO_TOOL_PROFILE: 'lean', CONTEXTPRO_EMBED_TRACKER: 'lazy', CONTEXTPRO_REINDEX_NO_EMBED: 'true', CONTEXTPRO_EFFICIENCY_FOOTER: 'false' }, stderr: 'pipe' });
+  transport.stderr?.on('data', () => {});
+  let db;
+  try {
+    await client.connect(transport);
+    await client.callTool({ name: 'discover_tools', arguments: { root, enable: ['status'] } });
+    db = await getDB(root);
+    for (const indexed of [false, true]) {
+      if (indexed) {
+        const result = await client.callTool({ name: 'discover_tools', arguments: { root, call: { name: 'reindex', arguments: { no_embed: true, auto_hubs: false } } } });
+        assert.ok(!result.isError, JSON.stringify(result));
+      }
+      const startedAt = Date.now(), generation = db.getIndexGeneration();
+      db.setMetaBatch([['index_status', 'indexing'], ['index_owner_pid', String(process.pid)], ['index_started_at', String(startedAt)]]);
+      for (const request of [
+        { name: 'status', arguments: { root, format: 'json' } },
+        { name: 'discover_tools', arguments: { root, call: { name: 'status', arguments: { format: 'json' } } } },
+      ]) {
+        const result = await client.callTool(request, undefined, { timeout: 5000 });
+        assert.ok(!result.isError, JSON.stringify(result));
+        const status = JSON.parse(result.content[0].text);
+        assert.equal(status.index.state, 'indexing');
+        assert.equal(status.files.indexed, indexed ? 1 : 0);
+        assert.equal(status.index.indexStartedAt, new Date(startedAt).toISOString());
+        assert.ok(status.warnings.some(warning => warning.includes('Indexing is currently in progress')));
+        assert.equal(db.getMeta('index_status'), 'indexing');
+        assert.equal(db.getMeta('index_owner_pid'), String(process.pid));
+        assert.equal(db.getIndexGeneration(), generation);
+      }
+      db.setMetaBatch([['index_status', 'idle'], ['index_owner_pid', '']]);
+      const result = await client.callTool({ name: 'status', arguments: { root, format: 'json' } });
+      assert.equal(JSON.parse(result.content[0].text).index.state, indexed ? 'fresh' : 'empty');
+    }
+  } finally {
+    db?.setMetaBatch([['index_status', 'idle'], ['index_owner_pid', '']]);
+    await client.close(); await transport.close(); closeDB(root);
+    await rm(root, { recursive: true, force: true });
+  }
+});
 
 it('delivers bounded offline task packs and isolated final reports over MCP', { timeout: 30000 }, async () => {
   const scratch = await mkdtemp(join(tmpdir(), 'contextpro-wire-'));
