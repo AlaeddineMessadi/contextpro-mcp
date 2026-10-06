@@ -27,6 +27,23 @@ retrieval policy or a guarantee that all relevant code was found.
 Use `discover_tools` to enable editing, graph, validation or diagnostics only when
 needed. Do not automatically call status, reindex, report or memory on each task.
 
+## Choose the next call from the evidence
+
+| What you need or observe | Next useful action |
+| --- | --- |
+| Unfamiliar implementation | Name a known source directory and observed symbol/route in `context(query:...)`; use `intent:"change"`, `"debug"` or `"review"` when supporting evidence matters |
+| Known file or declaration | Use `context(targets:[{file,symbol}])` or a narrow `{file,start,end}` range; no search or embeddings are needed |
+| Source displaced by documents or budget omissions | Read the discovered source target directly or split the batch; use scoped native search if the path remains unknown |
+| Binding identity or cross-file TS/JS callers | Use `exact_references` with the observed declaration file; inspect totals, scope and warnings |
+| Reference timeout | Continue with bounded source/native local tracing; keep compiler completeness or rename safety unverified |
+
+Choose only the rows needed for the task. Do not invent symbol names to satisfy
+an example, or repeat the same broad query after an explicit omission.
+Evidence labels describe the packet: `returned` is included, `omitted` was
+budget-excluded, `unclassified` was not evaluated, and `unavailable` is not proof
+that a role or source is absent. Inspect citations and control flow before editing.
+Lexical fallback can still supply useful source; it is not a semantic-quality test.
+
 ## Existing workflow
 
 1. Start with `task_pack(max_tokens:2000, graph_hops:1)` for a task-specific context bundle, or `status` when
@@ -56,7 +73,8 @@ response budget. Batch requests reduce model turns and repeated input history.
 
 The default catalog exposes 14 workflow tools, including `exact_references`.
 For other experts, call `discover_tools(query:"rename")`, then
-`discover_tools(enable:["rename_symbol"])` to expose its schema for this session.
+`discover_tools(enable:["rename_preview","rename_apply"])` to expose binding-aware
+rename schemas for this session.
 Enabling returns the requested schemas and does not execute the tool. If the client
 cannot refresh its catalog, tools marked `callable` can run through the existing tool:
 
@@ -68,6 +86,9 @@ Pass this to `discover_tools` after reading the enabled tool's schema. The fallb
 supports source reads, references, validation planning, status/health, and reindex;
 it excludes source edits and destructive maintenance. It uses the target's normal
 root routing, validation, freshness and metrics. Put `root` only at the top level.
+Use only `root` and `call` for execution; do not mix discovery controls such as
+`query`, `enable` or `limit` into that request. Budgets are tool-specific:
+`max_tokens` is accepted by `context`, not `status` or `exact_references`.
 For other experts, configure `CONTEXTPRO_TOOL_PROFILE=full` before startup.
 Unknown top-level arguments and unknown `context.targets` keys are rejected;
 use `root` and `max_tokens`, not `projectPath` or `maxTokens`.
@@ -199,8 +220,9 @@ default: test whether the extra context helps your task before enabling it routi
 
 ## Safe editing (core/full or enabled expert tools)
 
-Prefer exact language-server rename when available. ContextPro rename remains a
-textual operation; inspect the resulting diff. `find_symbol` JSON exposes a
+Use `rename_preview` / `rename_apply` for compiler-backed TS/JS or configured
+Python renames. The separate `rename_symbol` compatibility tool is textual;
+inspect the resulting diff. `find_symbol` JSON exposes a
 `contentHash`; pass it as `expected_content_hash` to reject an outdated edit.
 Writes serialize within the project, preserve file modes, and reject symlinked
 targets or parents. Source replacements use exact spans or reject ambiguity.
@@ -236,7 +258,11 @@ If no declaration exists, the response requests an explicit occurrence rather th
 assuming line one. Indexed tests remain in scope even when excluded from production
 compilation. Retained compiler services observe source/config changes and run in a
 separate worker with a 30-second active deadline and idle disposal. Cold initialization
-can still be slow; retry or use native/compiler tools when analysis cannot complete.
+can still be slow. `limit` bounds displayed occurrences, not the compiler workspace;
+lowering it does not narrow analysis. Do not repeatedly retry an unchanged timeout.
+Read the target and trace local uses natively when that answers the task; disclose
+the limited scope. A binding-sensitive rename still needs resolved references or
+an appropriate compiler/language-server check.
 
 Check `total`, `returned`, `truncated`, `counts`, `scope` and `warnings` in JSON output.
 Text output labels each occurrence as definition, import, call or reference, and
@@ -260,7 +286,8 @@ reason to expand or verify evidence, not to label a rename safe.
 Use `context(query:...,intent:"change")` for supporting implementation, caller,
 contract, configuration and test evidence. `debug`, `review`, `overview`, `lookup`
 and `auto` are also supported. The hint opts that query into adaptive retrieval;
-check unavailable versus budget-omitted roles. Ordinary exact reads remain fast.
+distinguish unclassified, unavailable and budget-omitted roles. Ordinary exact reads
+avoid discovery and compiler initialization.
 
 Discover `team_status` / `team_task` only when coordinating local work. Claim a
 task with an explicit owner and individual files, then renew five-minute leases.

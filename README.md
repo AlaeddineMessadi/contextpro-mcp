@@ -46,6 +46,11 @@ Use the printed Node executable and your checkout path in the client configurati
 
 Replace every placeholder, add `.contextpro/` to the target project's `.gitignore`, then restart the client. [Installation instructions](INSTALL.md) cover Codex, Claude Code, OpenCode, indexing and native-module recovery. [Project instructions](INSTRUCTIONS.md) teach agents when ContextPro is useful and when to verify with native tools.
 
+Install the project instructions as well as the server: connecting MCP exposes tools,
+while `AGENTS.md` / `CLAUDE.md` teaches the agent when to use them. The detailed
+workflow is available on demand through `contextpro://instructions`. A separate
+skill is optional; it does not enable tools or repair retrieval.
+
 ## A small interface for real coding work
 
 | Task | Start with | What to check |
@@ -81,18 +86,36 @@ Pass the absolute active repository or worktree as `root` on every call. Query
 budgets use `max_tokens` (512–12000, default 4000; estimated UTF-8 bytes divided by
 four). Exact batches accept up to six targets.
 
+This example uses ContextPro's own repository. In another project, use paths and
+declaration names observed in its source rather than guessed symbols.
+
 ```js
 context({
-  root: "/absolute/path/to/project",
-  query: "apps/mobile/app/host reports publish controls and disabled state",
+  root: "/absolute/path/to/contextpro-mcp",
+  query: "src/core/agent-setup.ts mergeAgentInstructions preserve existing project rules",
+  intent: "change",
   max_tokens: 2500
 })
 context({
-  root: "/absolute/path/to/project",
-  targets: [{file: "src/guest/rules/page.tsx"}, {file: "src/guest/identity/page.tsx"}],
-  max_tokens: 4000
+  root: "/absolute/path/to/contextpro-mcp",
+  targets: [{file: "src/core/agent-setup.ts", symbol: "mergeAgentInstructions"}],
+  max_tokens: 1500
+})
+// Use compiler references when binding identity or cross-file callers matter.
+exact_references({
+  root: "/absolute/path/to/contextpro-mcp",
+  file: "src/core/agent-setup.ts",
+  symbol_name: "mergeAgentInstructions",
+  limit: 20
 })
 ```
+
+These are task-dependent choices, not a checklist: stop when enough evidence is
+available. If a broad query favors documentation, read the discovered source
+symbol or a narrow line range directly. If references time out, continue with
+bounded source/native tracing and disclose its limits; lowering `limit` changes
+the display window, not compiler workspace scope. Read each tool's schema:
+`max_tokens` is a `context` budget, not an argument for `status` or `exact_references`.
 
 Known directory prefixes and route topics help query discovery retain the requested
 implementation. A named component or compound error code supplies additional local

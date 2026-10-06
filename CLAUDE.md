@@ -9,6 +9,8 @@ Name a known relative directory and concrete routes/symbols to focus discovery.
 Scope/usage hints are bounded textual evidence, not compiler references or hard
 filters. If source is omitted, narrow to exact targets or native search instead
 of repeating the same broad query.
+Use paths and declaration names observed in source. Unclassified roles were not
+evaluated; unavailable is not proof of absence. Lexical fallback is not exhaustive.
 Stop once evidence suffices; do not run a fixed checklist for a small lookup.
 For the workflow profile, use task_pack (max_tokens: 2000,
 graph_hops: 1) or search (mode: "file", format: "compact", include_dependencies: true).
@@ -21,9 +23,14 @@ A shell cd or worktree change does not retarget a shared MCP server.
 
 exact_references is immediately available in lean and workflow profiles; no discovery
 is needed. Check its per-file call totals, occurrence labels, scope and warnings.
+Reference limit caps displayed results, not the compiler workspace. After a timeout,
+use exact source/native local tracing instead of repeating the unchanged call;
+disclose that textual matches cannot establish binding identity or rename safety.
 Use discover_tools to find and enable other expert tools such as symbolic edits.
 If the client does not refresh its catalog, use the supported call:{name,arguments}
 dispatcher with the discovered schema; put root only at the top level.
+Use call alone with root; do not mix query, enable or limit into execution.
+Arguments are tool-specific: max_tokens belongs to context, not status or exact_references.
 Prefer text or compact search output; verbose json is for diagnostics.
 Batch independent symbol reads with explain(symbols:[{symbol,file},...], depth:0)
 instead of paying for another model turn per symbol. Request dependencies only
