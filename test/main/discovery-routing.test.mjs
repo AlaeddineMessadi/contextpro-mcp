@@ -23,6 +23,29 @@ async function fixture(files, run) {
   } finally { closeDB(root); await rm(root, { recursive: true, force: true }); }
 }
 
+it('reports unevaluated lookup roles as unclassified while preserving evaluated coverage', async () => {
+  await fixture({
+    'src/media.ts': '// Media caller authorization\nexport function requireMediaCaller(authorized: boolean) {\n  if (!authorized) throw new Error("media caller authorization required");\n  return true;\n}\n',
+    'src/config.ts': 'export const quota = 3;\n',
+  }, async root => {
+    for (const intent of ['lookup','auto']) for (const connected of [false,true]) {
+      const text=await getContext({rootDir:root,query:'requireMediaCaller',intent,connected,maxTokens:1500,retrievalPreset:'keyword_only'});
+      assert.match(text,/export function requireMediaCaller/);
+      assert.match(text,/implementation=unclassified/);
+      assert.doesNotMatch(text,/implementation=unavailable|hybrid \+ structural relations/);
+      assert.ok(Buffer.byteLength(text)<=6000);
+    }
+    const natural=await getContext({rootDir:root,query:'media caller authorization',intent:'lookup',connected:false,maxTokens:1500,retrievalPreset:'keyword_only'});
+    assert.match(natural,/implementation=unclassified/);
+    const config=await getContext({rootDir:root,query:'quota',intent:'lookup',connected:false,maxTokens:1500,retrievalPreset:'keyword_only'});
+    assert.match(config,/configuration=returned/);
+    const change=await getContext({rootDir:root,query:'requireMediaCaller',intent:'change',maxTokens:1500,retrievalPreset:'keyword_only'});
+    assert.match(change,/implementation=returned/);
+    assert.match(change,/caller=unavailable/);
+    assert.match(change,/hybrid \+ structural relations/);
+  });
+});
+
 it('adaptive context finds operational evidence without document trigger words and preserves bounded connected evidence', async () => {
   await fixture({
     'docs/HUMAN-PENDING.md': '# Pending actions\nGitHub Actions billing or spending limit blocked CI. Account owner must resolve payment.\n',

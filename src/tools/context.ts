@@ -106,6 +106,7 @@ export async function collectSourceEvidence(options: ContextOptions): Promise<So
   const scopedFiles = new Set<string>();
   const coverageFiles = new Set<string>();
   let connectedCandidates: EvidenceCandidate[] = [];
+  let rolesClassified = false;
   const connected = options.connected ?? (changeContext || connectedRetrievalEnabled());
   if (!targets.length) {
     // Exact identifiers need no embedding round trip. Natural language keeps the
@@ -118,6 +119,7 @@ export async function collectSourceEvidence(options: ContextOptions): Promise<So
       mode: "file", preset: exact ? "keyword_only" : options.retrievalPreset ?? "balanced", topK: exact ? 4 : 12,
       inlineCode: "off", includeDependencies: true, persistArtifact: false });
     connectedCandidates = packet?.candidates ?? [];
+    rolesClassified = packet !== undefined;
     if (packet?.relationNotice) notices.push(packet.relationNotice);
     if (packet?.relevanceNotice) notices.push(packet.relevanceNotice);
     if (packet?.limited) notices.push("Candidate pool capped at 32 files; additional paths omitted.");
@@ -604,11 +606,11 @@ export async function collectSourceEvidence(options: ContextOptions): Promise<So
     if (missing.length) notices.push(`Evidence not returned for: ${missing.join(", ")}; this is not proof of absence.`);
   }
   const summary = notices.at(-1)?.startsWith("Evidence not returned") ? notices.at(-1) : undefined;
-  const coverageNotice = adaptive ? `Retrieval: ${intent}; ${connected ? "hybrid + structural relations" : "exact/lexical + configured semantic"}. Relations are structural/textual, not compiler-resolved.\nEvidence: ${["implementation", "caller", "dependency", "contract", "configuration", "test"].map(role => `${role}=${merged.some(part => roles(part).includes(role)) ? "returned" : targets.some(target => roles(target).includes(role)) ? "omitted" : "unavailable"}`).join(", ")}. Unavailable is not proof of absence.` : undefined;
+  const coverageNotice = adaptive ? `Retrieval: ${intent}; ${rolesClassified ? "hybrid + structural relations" : "exact/lexical + configured semantic"}. Relations are structural/textual, not compiler-resolved.\nEvidence: ${["implementation", "caller", "dependency", "contract", "configuration", "test"].map(role => `${role}=${merged.some(part => roles(part).includes(role)) ? "returned" : targets.some(target => roles(target).includes(role)) ? "omitted" : rolesClassified ? "unavailable" : "unclassified"}`).join(", ")}. Unclassified roles were not evaluated. Unavailable is not proof of absence.` : undefined;
   const text = ["Source evidence (only the indicated ranges are included):", coverageNotice, ...merged.map(render), riskNotice, footer, summary,
     !merged.length ? "No source fit or matched. Try exact file/line targets or native search." : ""].filter(Boolean).join("\n\n");
   return { text, ranges: merged, hashes: Object.fromEntries([...snapshots].map(([file, source]) => [file, createHash("sha256").update(source).digest("hex")])),
     notices: [coverageNotice, riskNotice, footer, summary].filter((value): value is string => !!value), complete: true,
-    settings: JSON.stringify({ version: 32, adaptive, intent, connected, risks, preset: options.retrievalPreset ?? "balanced", rerank: process.env.CONTEXTPRO_CHAT_RERANK === "true",
+    settings: JSON.stringify({ version: 33, adaptive, intent, connected, risks, preset: options.retrievalPreset ?? "balanced", rerank: process.env.CONTEXTPRO_CHAT_RERANK === "true",
       embedding: `${getProvider()}:${getEmbedModelName()}`, chat: options.targets?.length ? "unused" : await chatModelIdentity(options.rootDir) }) };
 }
