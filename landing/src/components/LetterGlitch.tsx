@@ -33,7 +33,7 @@ const LetterGlitch = ({
   >([]);
   const grid = useRef({ columns: 0, rows: 0 });
   const context = useRef<CanvasRenderingContext2D | null>(null);
-  const lastGlitchTime = useRef(Date.now());
+  const lastGlitchTime = useRef(0);
 
   const lettersAndSymbols = Array.from(characters);
 
@@ -121,7 +121,7 @@ const LetterGlitch = ({
     drawLetters();
   };
 
-  const drawLetters = () => {
+  function drawLetters() {
     if (!context.current || letters.current.length === 0) return;
 
     const ctx = context.current;
@@ -137,7 +137,7 @@ const LetterGlitch = ({
       ctx.fillStyle = letter.color;
       ctx.fillText(letter.char, x, y);
     });
-  };
+  }
 
   const updateLetters = () => {
     if (!letters.current || letters.current.length === 0) return;
@@ -208,6 +208,7 @@ const LetterGlitch = ({
     if (!canvas) return;
 
     context.current = canvas.getContext("2d");
+    lastGlitchTime.current = Date.now();
     resizeCanvas();
     animate();
 
@@ -225,6 +226,7 @@ const LetterGlitch = ({
     window.addEventListener("resize", handleResize);
 
     return () => {
+      clearTimeout(resizeTimeout);
       cancelAnimationFrame(animationRef.current!);
       window.removeEventListener("resize", handleResize);
     };

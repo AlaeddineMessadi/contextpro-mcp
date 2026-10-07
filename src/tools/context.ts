@@ -173,7 +173,7 @@ export async function collectSourceEvidence(options: ContextOptions): Promise<So
     for (const hint of options.retrievalPreset === "semantic_only" ? [] : hints.slice(0, 16)) {
       for (const symbol of db.searchSymbolsByName(hint).filter(symbol => symbol.name === hint)) {
         const file = files.get(symbol.file_id);
-        if (file && discoveryPathWeight(query, file) >= 1) {
+        if (file && discoveryPathWeight(query, file, true) >= 1) {
           definingFiles.add(file); namedSymbols.add(symbol.name);
         }
       }
@@ -201,7 +201,7 @@ export async function collectSourceEvidence(options: ContextOptions): Promise<So
       if (scoped.length) notices.push("Scoped candidates use filename and literal-text hints, not resolved references; verify bindings with exact_references.");
     }
     const mentioned = [...new Set([...mentionedFiles(options.rootDir, query, indexed), ...documents?.mentioned ?? []])];
-    for (const file of documents?.files ?? []) { documentFiles.add(file); filePriors.set(file, 2); }
+    for (const file of documents?.files ?? []) { documentFiles.add(file); filePriors.set(file, 2 * discoveryPathWeight(query, file)); }
     if (documentFiles.size) notices.push(`Document discovery uses filenames and bounded heading/intro previews${documents?.limited ? "; additional documents omitted" : ""}; verify scope with exact reads.`);
     if (mentioned.length > 6) notices.push("More than six files named; additional files omitted. Use batches of at most six exact targets.");
     for (const file of mentioned.slice(0, 6)) { requestedFiles.add(file); filePriors.set(file, 2); }
@@ -322,6 +322,8 @@ export async function collectSourceEvidence(options: ContextOptions): Promise<So
       }
     } catch { omitted.push(`${file}: unreadable`); continue; }
     const lines = source.split("\n");
+    if (!options.targets?.length && /\.(?:md|mdx|rst|txt)$/i.test(file)
+      && discoveryPathWeight(query, file, false, lines.filter(line => /^#{1,6}\s/.test(line)).join("\n")) === 0) continue;
     let start = target.start ?? 1, end = Math.min(target.end ?? lines.length, lines.length);
     const analyze = async (): Promise<FileAnalysis> => {
       let value = analyses.get(file);
@@ -441,7 +443,7 @@ export async function collectSourceEvidence(options: ContextOptions): Promise<So
       };
       visit(statement.type);
     }
-    if (namedSymbols.size && discoveryPathWeight(query, file) >= 1) {
+    if (namedSymbols.size && discoveryPathWeight(query, file, true) >= 1) {
       for (const symbol of flattenSymbols((await analyze()).symbols)) {
         if (!localNames.has(symbol.name)) continue;
         const definition = { file, start: symbol.line, end: symbol.endLine, text: lines.slice(symbol.line - 1, symbol.endLine).join("\n") };
@@ -492,12 +494,13 @@ export async function collectSourceEvidence(options: ContextOptions): Promise<So
     }
     omitted.push(`${file}: partial; unreturned lines omitted`);
   }
-  const documentLimit = mixedDocuments || isUiOrientationQuery(query) ? Math.floor(limit * .3) : limit;
+  const sourceFirst = namedSymbols.size > 0 && !wantsDocuments(query);
+  const documentLimit = mixedDocuments || sourceFirst || isUiOrientationQuery(query) ? Math.floor(limit * .3) : limit;
   // Keep quoted/compound keys ahead of generic literals, then prefer windows
   // covering the rest of the question over the first incidental occurrence.
   const literalRank = (part: Excerpt) => literals.findIndex(literal => part.text.normalize("NFC").toLowerCase().includes(literal));
   const coverage = (part: Excerpt) => [...new Set(searchTerms(part.text))].filter(term => terms.has(term)).length;
-  documentPassages.sort((a,b)=>coverage(b)-coverage(a) || Number(requestedFiles.has(b.file))-Number(requestedFiles.has(a.file)) || a.file.localeCompare(b.file));
+  documentPassages.sort((a,b)=>coverage(b)*discoveryPathWeight(query,b.file)-coverage(a)*discoveryPathWeight(query,a.file) || Number(requestedFiles.has(b.file))-Number(requestedFiles.has(a.file)) || a.file.localeCompare(b.file));
   literalParts.sort((a,b)=>literalRank(a)-literalRank(b) || coverage(b)-coverage(a));
   identifierParts.sort((a,b)=>Number(coverageFiles.has(b.file))-Number(coverageFiles.has(a.file)) || coverage(b)-coverage(a));
   let documentBytes = 0;
@@ -505,7 +508,8 @@ export async function collectSourceEvidence(options: ContextOptions): Promise<So
   const isDocument = (part: Excerpt) => (documentFiles.has(part.file) || /\.(?:md|mdx|rst|txt)$/i.test(part.file))
     && !requestedFiles.has(part.file);
   // Preserve the existing exact-name priority before adding scoped usage windows.
-  for (const definition of [...documentPassages, ...priorityParts, ...definitions, ...literalParts, ...identifierParts, ...scopedParts]) {
+  const priority = sourceFirst ? [...definitions, ...documentPassages, ...priorityParts] : [...documentPassages, ...priorityParts, ...definitions];
+  for (const definition of [...priority, ...literalParts, ...identifierParts, ...scopedParts]) {
     for (const part of uncoveredRanges(definition, candidates)) {
       const size = bytes(render(part)) + 2;
       if (size <= available && (!isDocument(part) || documentBytes + size <= documentLimit)) {
@@ -611,6 +615,6 @@ export async function collectSourceEvidence(options: ContextOptions): Promise<So
     !merged.length ? "No source fit or matched. Try exact file/line targets or native search." : ""].filter(Boolean).join("\n\n");
   return { text, ranges: merged, hashes: Object.fromEntries([...snapshots].map(([file, source]) => [file, createHash("sha256").update(source).digest("hex")])),
     notices: [coverageNotice, riskNotice, footer, summary].filter((value): value is string => !!value), complete: true,
-    settings: JSON.stringify({ version: 33, adaptive, intent, connected, risks, preset: options.retrievalPreset ?? "balanced", rerank: process.env.CONTEXTPRO_CHAT_RERANK === "true",
+    settings: JSON.stringify({ version: 53, adaptive, intent, connected, risks, preset: options.retrievalPreset ?? "balanced", rerank: process.env.CONTEXTPRO_CHAT_RERANK === "true",
       embedding: `${getProvider()}:${getEmbedModelName()}`, chat: options.targets?.length ? "unused" : await chatModelIdentity(options.rootDir) }) };
 }

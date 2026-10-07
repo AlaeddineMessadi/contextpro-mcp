@@ -169,5 +169,9 @@ it("reuses one compiler across configurations and avoids stale results on repeat
     assert.equal(next.counts.call,5);
     assert.equal(next.scope.checkedFiles,5);
     assert.equal(next.reusedProjects,5);
+    await writeFile(target, 'export function value() { return 2; }\n');
+    const edited = await pool.query(input);
+    assert.match(edited.references.find(ref => ref.isDefinition).context, /return 2/);
+    assert.equal(edited.counts.call,5);
   } finally { pool.close(); await rm(root,{recursive:true,force:true}); }
 });

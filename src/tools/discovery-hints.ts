@@ -4,8 +4,9 @@ import { searchTerms } from "../core/embeddings.js";
 import { isTestFile } from "./retrieval-helpers.js";
 
 const BACKEND_DIRECTORY = /(?:^|\/)(?:api|backend|server|services?|workers?|scripts?)(?:\/|$)/i;
-export const SCOPE_CLAUSE_BOUNDARY = /;|[.!?](?=\s|$)|(?:^|\s)(?:but|however|instead)(?=\s|$)|(?:,\s*|\s+(?:and|then)\s+)(?=(?:include|including|show|find|read|locate|search|inspect|in|under|inside|within)\b)/i;
-const EXCLUDED_FILE_CLAUSE = /(?:^|[\s(])(?:exclude|excluding|ignore|ignoring|do\s+not\s+(?:read|include)|don't\s+(?:read|include))(?=\s|:|$)/i;
+export const SCOPE_CLAUSE_BOUNDARY = /;|[.!?](?=\s|$)|(?:^|\s)(?:but|however|instead)(?=\s|$)|(?:,\s*|\s+(?:and|then)\s+)(?=(?:include|including|show|find|read|open|locate|search|review|inspect|in|under|inside|within)\b)/i;
+// Ambiguous exclusions must introduce evidence, not behavior such as skipping comments.
+const EXCLUDED_FILE_CLAUSE = /(?:^|[\s(])(?:exclude|excluding|ignore|ignoring|(?:(?:do\s+not|don't)\s+(?:read|include|open|show|find|locate|search|review|inspect)|skip(?:ping)?|omit(?:ting)?|avoid(?:ing)?|without)(?=\s+(?:(?:the|any|relevant|existing|historical|archived?|old)\s+)*(?:tests?|testing|fixtures?|mocks?|regressions?|coverage|assert|locales?|translations?|translate|i18n|l10n|locali[sz](?:ation|e)|wording|copy|strings?|messages?|lockfile|lock\s+file|integrity|resolved|transitive|dependencies|dependency|readme|roadmap|handoff|readiness|docs?|documentation|documents?|notes?|history|blog\s+(?:posts?|articles?)|reports?|plans?|specs?|specifications?|(?:task|design|implementation)\s+(?:plans?|specs?|specifications?)|(?:product|project|repository|api|setup|developer|user|security|compliance)\s+docs|(?:project|repository)\s+(?:instructions|status)|(?:repo(?:sitory)?|project|codebase)\s+(?:orientation|overview)|(?:orientation|overview)\s+(?:(?:of|to|the)\s+)*(?:repo(?:sitory)?|project|codebase)|(?:status|qa|audit)\s+(?:documents?|reports?)|agent\s+brief|[\w@./-]+\.[A-Za-z][\w]*)(?=\s|[;,.!?]|$)))(?=\s|:|$)/i;
 
 /** A negative read is neither a requested file nor an instruction to read whole files. */
 export function positiveDiscoveryQuery(query: string): string {
@@ -20,23 +21,56 @@ export function queryLiterals(query: string): string[] {
 }
 
 /** Secondary evidence stays available, but must not crowd out implementations. */
-export function discoveryPathWeight(query: string, path: string): number {
+export function discoveryPathWeight(query: string, path: string, exactSymbol = false, documentHeadings?: string): number {
   if (/\.(?:md|mdx|rst|txt)$/i.test(path) && /(?:^|\/)(?:blog|posts)\//i.test(path)
     && query.split(SCOPE_CLAUSE_BOUNDARY).some(clause => {
       const negative = EXCLUDED_FILE_CLAUSE.exec(clause);
       return negative && /\bblog\s+(?:posts?|articles?)\b/i.test(clause.slice(negative.index));
     })) return 0;
-  const mention = [...query.matchAll(/[\w@./-]+\.[A-Za-z][\w]*(?::\d+(?:-\d+)?)?/g)].filter(match => {
+  const documentStem = /\.(?:md|mdx|rst|txt)$/i.test(path) ? basename(path).replace(/\.[^.]+$/, "").toLowerCase() : undefined;
+  let mentionWeight: number | undefined;
+  for (const match of query.matchAll(/[\w@./-]+\.[A-Za-z][\w]*(?::\d+(?:-\d+)?)?|\b(?:readme|roadmap|handoff|readiness)\b/gi)) {
     const token = match[0].replace(/:\d+(?:-\d+)?$/, "").replace(/^\.\//, "");
-    return !token.startsWith("/") && (token === path || (!token.includes("/") && token === basename(path)) || path.endsWith(`/${token}`));
-  }).at(-1);
-  if (mention && EXCLUDED_FILE_CLAUSE.test(query.slice(0, mention.index).split(SCOPE_CLAUSE_BOUNDARY).at(-1) ?? "")) return 0;
+    if (token.startsWith("/") || !(token === path || (!token.includes("/") && token === basename(path)) || path.endsWith(`/${token}`)
+      || token.toLowerCase() === documentStem)) continue;
+    const clause = query.slice(0, match.index + match[0].length).split(SCOPE_CLAUSE_BOUNDARY).at(-1) ?? "";
+    const negative = EXCLUDED_FILE_CLAUSE.test(clause);
+    // A repeated title alone cannot undo an earlier exclusion.
+    if (mentionWeight === 0 && !negative && token.toLowerCase() === documentStem
+      && !/\b(?:include|including|show|find|read|open|locate|search|review|inspect)\s+(?:(?:the|any|relevant|existing|historical|archived?|old)\s+)*$/i.test(clause.slice(0, -match[0].length))) continue;
+    mentionWeight = negative ? 0 : 1;
+  }
+  if (mentionWeight !== undefined) return mentionWeight;
+  if (documentStem !== undefined) {
+    const labels = `${path} ${documentHeadings ?? ""}`.replace(/[_-]/g, " ");
+    const excluded = new Set<string>();
+    for (const clause of query.split(SCOPE_CLAUSE_BOUNDARY)) {
+      const negative = EXCLUDED_FILE_CLAUSE.exec(clause);
+      const action = negative ?? /\b(?:include|including|show|find|read|open|locate|search|review|inspect)\b/i.exec(clause);
+      if (!action) continue;
+      const object = clause.slice(action.index + action[0].length);
+      if (/\b(?:historical|archived?|old)\b/i.test(object) && !/\b(?:archive[ds]?|historical|history|old)\b/i.test(labels)) continue;
+      for (const match of object.matchAll(/(?:^|,|\band\b)\s*(?:(?:the|any|relevant|existing|historical|archived?|old)\s+)*(?:(?:task|design|implementation)\s+)?(docs?|documentation|documents?|plans?|specs?|specifications?)\b(?![/.])/gi)) {
+        const category = /^doc/i.test(match[1]) ? "documents" : /^plan/i.test(match[1]) ? "plans" : "specifications";
+        const matches = category === "documents" || (category === "plans" ? /\bplans?\b/i : /\b(?:specs?|specifications?)\b/i).test(labels);
+        // A later category request may match an as-yet unread heading. Keep
+        // that candidate until the caller supplies its actual headings.
+        if (!matches && (negative || documentHeadings !== undefined)) continue;
+        if (negative) excluded.add(category);
+        else { excluded.delete(category); excluded.delete("documents"); }
+      }
+    }
+    if (excluded.size) return 0;
+  }
+  query = positiveDiscoveryQuery(query);
   if (query.toLowerCase().includes(path.toLowerCase())) return 1;
+  if (/\.(?:md|mdx|rst|txt)$/i.test(path) && /(?:^|\/)(?:archive[ds]?|historical|history)(?:\/|$)/i.test(path)
+    && !/\b(?:archive[ds]?|historical|history)\b|\bold\s+(?:(?:task|design|implementation|product|project|repository|api|setup|developer|user|security|compliance)\s+)?(?:docs?|documentation|documents?|readme|roadmap|handoff|notes?|reports?|plans?|specs?|specifications?)\b/i.test(query)) return .25;
   if (isLockfile(path) && !wantsLockfile(query)) return .15;
   if ((isTestFile(path) || /(?:^|\/)(?:tests?|__tests__|fixtures?)(?:\/|$)/i.test(path))
     && !/\b(?:tests?|testing|specs?|fixtures?|mocks?|regressions?|coverage|assert)\b/i.test(query)) return .2;
-  const locale = /(?:^|\/)(?:locales?|translations?|messages)(?:\/|\.)/i.test(path) && /\.(?:json|ya?ml|[cm]?[jt]sx?)$/i.test(path);
-  if (locale && !/\b(?:locales?|translations?|translate|i18n|l10n|locali[sz](?:ation|e)|wording|copy|strings?|messages?)\b/i.test(query)) return .2;
+  const locale = /(?:^|\/)(?:locales?|translations?|messages|i18n|l10n)(?:\/|\.)/i.test(path) && /\.(?:json|ya?ml|[cm]?[jt]sx?)$/i.test(path);
+  if (locale && !exactSymbol && !/\b(?:locales?|translations?|translate|i18n|l10n|locali[sz](?:ation|e)|wording|copy|strings?|messages?)\b/i.test(searchTerms(query).join(" "))) return .2;
   // Known report locations can repeat implementation terms without containing
   // the implementation. An extension alone says nothing about that role: JSON
   // configuration, Markdown content and CSV data can be primary source evidence.
@@ -82,6 +116,7 @@ export function mentionedFiles(root: string, query: string, files: Array<Pick<Fi
 
 /** Require both a UI scope and a broad navigation/orientation request. */
 export function isUiOrientationQuery(query: string): boolean {
+  query = positiveDiscoveryQuery(query);
   const uiScope = /\b(?:ui|ux|frontend|front.end|user.facing|web app|website)\b/i.test(query);
   // Routes/navigation/audit alone also occur in narrow coding requests. Only
   // explicit overview language or a request to inventory product surfaces
@@ -93,6 +128,7 @@ export function isUiOrientationQuery(query: string): boolean {
 }
 
 export function isOrientationQuery(query: string): boolean {
+  query = positiveDiscoveryQuery(query);
   return isUiOrientationQuery(query) || /\b(?:orient(?:ation)?|overview|understand)\b.*\b(?:repo(?:sitory)?|project|codebase)\b|\b(?:repo(?:sitory)?|project|codebase)\s+(?:orientation|overview)\b/i.test(query);
 }
 

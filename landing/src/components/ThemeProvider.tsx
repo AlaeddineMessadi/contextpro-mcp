@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext, useEffect, useState } from "react";
+import { createContext, useContext, useEffect, useSyncExternalStore } from "react";
 
 type Theme = "light" | "dark";
 
@@ -11,29 +11,30 @@ interface ThemeContextType {
 
 const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
 
+function readTheme(): Theme {
+    const stored = localStorage.getItem("theme");
+    return stored === "light" || stored === "dark" ? stored
+        : window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+}
+
+function subscribeTheme(onChange: () => void) {
+    window.addEventListener("storage", onChange);
+    window.addEventListener("theme-change", onChange);
+    return () => {
+        window.removeEventListener("storage", onChange);
+        window.removeEventListener("theme-change", onChange);
+    };
+}
+
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
-    const [theme, setTheme] = useState<Theme>("light");
-    const [mounted, setMounted] = useState(false);
-
+    const theme = useSyncExternalStore(subscribeTheme, readTheme, () => "light" as Theme);
     useEffect(() => {
-        setMounted(true);
-        const stored = localStorage.getItem("theme") as Theme | null;
-        if (stored) {
-            setTheme(stored);
-        } else if (window.matchMedia("(prefers-color-scheme: dark)").matches) {
-            setTheme("dark");
-        }
-    }, []);
-
-    useEffect(() => {
-        if (mounted) {
-            document.documentElement.setAttribute("data-theme", theme);
-            localStorage.setItem("theme", theme);
-        }
-    }, [theme, mounted]);
+        document.documentElement.setAttribute("data-theme", theme);
+    }, [theme]);
 
     const toggleTheme = () => {
-        setTheme((prev: Theme) => (prev === "light" ? "dark" : "light"));
+        localStorage.setItem("theme", theme === "light" ? "dark" : "light");
+        window.dispatchEvent(new Event("theme-change"));
     };
 
     return (

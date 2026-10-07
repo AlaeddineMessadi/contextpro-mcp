@@ -20,7 +20,7 @@ interface Snapshot { stamp: string; text: string; snapshot: ts.IScriptSnapshot; 
 interface Project {
   files: string[]; options: ts.CompilerOptions; references?: readonly ts.ProjectReference[];
   snapshots: Map<string, Snapshot>;
-  service: ts.LanguageService; touched: number;
+  service: ts.LanguageService; touched: number; version: number;
 }
 const projects = new Map<string, Project>();
 const MAX_PROJECTS = 1;
@@ -92,11 +92,12 @@ function getProject(key: string, root: string, files: string[], options: ts.Comp
       const oldest = [...projects.entries()].sort((a, b) => a[1].touched - b[1].touched)[0];
       oldest[1].service.dispose(); projects.delete(oldest[0]);
     }
-    const state = { files, options, references, snapshots: new Map<string, Snapshot>(), touched: Date.now() } as Project;
+    const state = { files, options, references, snapshots: new Map<string, Snapshot>(), touched: Date.now(), version: 0 } as Project;
     // The source-redirect host hook is also used by tsserver; it lets source
     // workspaces resolve references before declaration outputs have been built.
     const host: ts.LanguageServiceHost & { useSourceOfProjectReferenceRedirect(): boolean } = {
       getScriptFileNames: () => state.files,
+      getProjectVersion: () => String(state.version),
       getScriptVersion: file => String(snapshotFor(state, file)?.version ?? "missing"),
       getScriptSnapshot: file => snapshotFor(state, file)?.snapshot,
       getCurrentDirectory: () => root,
@@ -115,6 +116,9 @@ function getProject(key: string, root: string, files: string[], options: ts.Comp
   project.files = files;
   project.options = options;
   project.references = references;
+  // Recheck disk/config changes for every request/project, but do not repeat
+  // the full filesystem scan for each compiler API within that same snapshot.
+  project.version++;
   project.touched = Date.now();
   scheduleEviction();
   return { project, reused };

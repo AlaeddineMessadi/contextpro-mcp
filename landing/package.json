@@ -36,5 +36,10 @@
     "tailwindcss": "^4",
     "typescript": "^5",
     "wrangler": "^4.142.0"
+  },
+  "overrides": {
+    "miniflare": {
+      "sharp": "0.35.5"
+    }
   }
 }

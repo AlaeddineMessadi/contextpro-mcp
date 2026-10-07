@@ -225,7 +225,7 @@ async function applyExactSymbolFileBoosts(
     // Keep exact-name evidence, but never let a zero-semantic result jump above a result with
     // strong semantic agreement. The keyword component remains honest at 100.
     const rawCombined = result.score + exactPathBoost + exactSymbolBoost;
-    const weight = discoveryPathWeight(query, result.path);
+    const weight = discoveryPathWeight(query, result.path, true);
     const cap = (result.semanticScore < 15 ? keywordOnlyCap : 100) * weight;
     return {
       ...result,
@@ -242,7 +242,7 @@ async function applyExactSymbolFileBoosts(
     boosted.push({
       path,
       // A hit found only through the symbol table stays below every strong semantic result.
-      score: keywordOnlyCap * discoveryPathWeight(query, path),
+      score: keywordOnlyCap * discoveryPathWeight(query, path, true),
       semanticScore: 0,
       keywordScore: 100,
       header: dbFile?.header ?? "",

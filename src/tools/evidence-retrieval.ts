@@ -33,7 +33,7 @@ export async function retrieveEvidence(options: {
     let weakSemanticMatches = 0;
     const add = (path: string, rank: number, lane: string, role: EvidenceRole = "implementation", anchor?: number, symbols: string[] = []) => {
       if (isTestFile(path)) role = "test";
-      const prior = discoveryPathWeight(query, path);
+      const prior = discoveryPathWeight(query, path, lane === "named definition");
       // Graph links are evidence in their own right, including tests that do not
       // repeat the query words. Lexical decoys still receive the normal penalty.
       const weight = lane.startsWith("graph:") || lane === "test association" ? 1 : prior;
@@ -92,7 +92,7 @@ export async function retrieveEvidence(options: {
       for (const hint of extractIdentifierHints(query).slice(0, 16)) {
         for (const symbol of db.searchSymbolsByName(hint).filter(symbol => symbol.name === hint).slice(0, 8)) {
           const path = byId.get(symbol.file_id);
-          if (path && discoveryPathWeight(query, path) >= 1) add(path, 0, "named definition", "implementation", symbol.line_start, [hint]);
+          if (path && discoveryPathWeight(query, path, true) >= 1) add(path, 0, "named definition", "implementation", symbol.line_start, [hint]);
         }
       }
     }

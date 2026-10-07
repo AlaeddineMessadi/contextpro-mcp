@@ -8,8 +8,9 @@ import { reindex } from '../../build/tools/reindex.js';
 import { unifiedSearchData } from '../../build/tools/search.js';
 import { getStatusData } from '../../build/tools/status.js';
 import { closeDB, getDB } from '../../build/core/db.js';
-import { isUiOrientationQuery, orientationFiles, documentTopicFiles, discoveryPathWeight, mentionedFiles } from '../../build/tools/discovery-hints.js';
+import { isOrientationQuery, isUiOrientationQuery, orientationFiles, documentTopicFiles, discoveryPathWeight, mentionedFiles, positiveDiscoveryQuery } from '../../build/tools/discovery-hints.js';
 import { wantsDocuments, discoverDocuments } from '../../build/tools/discovery-documents.js';
+import { retrieveEvidence } from '../../build/tools/evidence-retrieval.js';
 
 async function fixture(files, run) {
   const root = await mkdtemp(join(tmpdir(), 'contextpro-discovery-routing-'));
@@ -22,6 +23,378 @@ async function fixture(files, run) {
     await run(root);
   } finally { closeDB(root); await rm(root, { recursive: true, force: true }); }
 }
+
+it('keeps named implementation ahead of incidental history and still finds requested plans', async () => {
+  const source = 'export function createListingAction(owner: string) {\n'
+    + Array.from({length: 12}, (_, i) => `  const field${i} = owner.trim(); // listing submission validation field ${i}\n`).join('')
+    + '  if (!owner) throw new Error("listing owner required");\n  return { saved: true };\n}\n';
+  await fixture({
+    'src/actions.ts': source,
+    'README.md': '# Listing submission validation\ncreateListingAction validates the listing owner before submission.\n',
+    'docs/plans/trader-sales.md': '# Trader sales specification\nCurrent task plan: assistance and trader routes require an actual seller.\n',
+    ...Object.fromEntries(Array.from({length: 8}, (_, i) => [`docs/archive/trader-sales-${i}.md`, '# Trader sales listing submission validation\ncreateListingAction owner saved listing submission validation field history.\n' + 'Historical listing validation notes.\n'.repeat(30)])),
+  }, async root => {
+    for (const query of ['createListingAction listing submission validation', 'Find createListingAction; ignore task plans', 'Find createListingAction; do not include design specs', 'Find createListingAction; do not review task plans', 'Find createListingAction; do not inspect design specs', 'Find createListingAction; skip task plans', 'Find createListingAction; skipping task plans', 'Find createListingAction without task plans', 'Find createListingAction without README', 'Find createListingAction; do not read relevant docs', 'Find createListingAction; do not review existing task plans', 'Find createListingAction; do not read project instructions', 'Find createListingAction; do not review project overview', ...['omit task plans', 'omitting task plans', 'avoid design specifications', 'avoiding design specifications'].map(clause => `Find createListingAction; ${clause}`), ...['open', 'show', 'find', 'locate', 'search'].map(verb => `Find createListingAction; do not ${verb} task plans`)]) for (const intent of [undefined, 'lookup', 'change']) {
+      const packet = await collectSourceEvidence({rootDir: root, query, intent, maxTokens: 800, retrievalPreset: 'keyword_only'});
+      assert.equal(packet.ranges[0]?.file, 'src/actions.ts');
+      assert.ok(packet.text.includes(source.trimEnd()), packet.text);
+      assert.ok(Buffer.byteLength(packet.text) <= 3200);
+    }
+    const query = 'trader-sales reviewed specification task plan assistance trader routes';
+    assert.equal(wantsDocuments(query), true);
+    const documents = await discoverDocuments(root, query);
+    assert.equal(documents.files[0], 'docs/plans/trader-sales.md');
+    const plan = await getContext({rootDir: root, query, maxTokens: 1200, retrievalPreset: 'keyword_only'});
+    assert.match(plan, /Current task plan: assistance and trader routes require an actual seller/);
+    const history = await getContext({rootDir: root, query: 'Read docs/archive/trader-sales-0.md', maxTokens: 1200, retrievalPreset: 'keyword_only'});
+    assert.match(history, /Historical listing validation notes/);
+    assert.equal(discoveryPathWeight('listing submission', 'src/lib/i18n.ts'), .2);
+    assert.equal(discoveryPathWeight('listing i18n copy', 'src/lib/i18n.ts'), 1);
+    assert.equal(discoveryPathWeight('getLocale', 'src/lib/i18n.ts'), 1);
+    assert.equal(discoveryPathWeight('trader sales history', 'docs/archive/trader-sales-0.md'), 1);
+  });
+});
+
+it('prioritizes named implementations in locale modules over their callers', async () => {
+  const source = 'export function formatDate(value: Date) {\n  const iso = value.toISOString();\n  return iso.slice(0, 10);\n}\n';
+  for (const module of ['i18n', 'l10n']) await fixture({
+    [`src/${module}.ts`]: source,
+    ...Object.fromEntries(Array.from({length: 16}, (_, i) => [`src/caller-${i}.ts`, `import { formatDate } from './${module}';\nexport function render${i}(value: Date) { return formatDate(value); }\n`])),
+  }, async root => {
+    const path = `src/${module}.ts`;
+    for (const query of ['formatDate', 'Find formatDate']) {
+      for (const intent of [undefined, 'lookup', 'change']) {
+        const packet = await collectSourceEvidence({rootDir: root, query, intent, maxTokens: 800, retrievalPreset: 'keyword_only'});
+        assert.equal(packet.ranges[0]?.file, path, packet.text);
+        assert.ok(packet.text.includes(source.trimEnd()), packet.text);
+      }
+      const evidence = await retrieveEvidence({rootDir: root, query, preset: 'keyword_only', graphHops: 0});
+      assert.equal(evidence.candidates[0]?.path, path);
+      assert.match(evidence.candidates[0].reason, /named definition/);
+    }
+    const excluded = await collectSourceEvidence({rootDir: root, query: `Find formatDate; ignore ${path}`, intent: 'change', maxTokens: 800, retrievalPreset: 'keyword_only'});
+    assert.ok(!excluded.ranges.some(range => range.file === path), excluded.text);
+    assert.equal(discoveryPathWeight('listing submission', path), .2);
+  });
+});
+
+it('retains positive document clauses after exclusions in default discovery', async () => {
+  const adaptive = process.env.CONTEXTPRO_ADAPTIVE_CONTEXT;
+  process.env.CONTEXTPRO_ADAPTIVE_CONTEXT = 'false';
+  try {
+    await fixture({
+      'src/actions.ts': 'export function createListingAction() { return "saved"; }\n',
+      'docs/guide.md': '# Documentation\nListing owner approval is required before publication.\n',
+    }, async root => {
+      for (const verb of ['read', 'find', 'open', 'show', 'locate', 'search', 'review', 'inspect']) {
+        for (const boundary of [' and ', ' then ', ', ']) {
+          const query = `Find createListingAction; skip task plans${boundary}${verb} documentation`;
+          assert.equal(wantsDocuments(query), true, query);
+          const packet = await collectSourceEvidence({rootDir: root, query, maxTokens: 1200, retrievalPreset: 'keyword_only'});
+          assert.match(packet.text, /Listing owner approval is required before publication/, query);
+        }
+      }
+      assert.equal(discoveryPathWeight('skip docs/guide.md and review documentation', 'docs/guide.md'), 0);
+    });
+  } finally {
+    if (adaptive === undefined) delete process.env.CONTEXTPRO_ADAPTIVE_CONTEXT;
+    else process.env.CONTEXTPRO_ADAPTIVE_CONTEXT = adaptive;
+  }
+});
+
+it('does not treat excluded document topics as positive discovery intent', () => {
+  for (const excluded of ['ignore task plans', 'skip task plans', 'skipping task plans', 'omit task plans', 'omitting task plans', 'avoid design specifications', 'avoiding design specifications', 'do not include design specs', "don't read the specification", 'exclude docs/README.md', 'ignoring project overview', 'without relevant docs', 'avoid existing specifications', 'skip relevant task plans']) {
+    assert.equal(wantsDocuments(`Find createListingAction; ${excluded}`), false, excluded);
+  }
+  for (const verb of ['read', 'include', 'open', 'show', 'find', 'locate', 'search', 'review', 'inspect']) for (const negation of ['do not', "don't"]) for (const qualifier of ['', 'relevant ', 'existing ']) {
+    assert.equal(wantsDocuments(`Find createListingAction; ${negation} ${verb} ${qualifier}task plans`), false);
+    assert.equal(discoveryPathWeight(`find listing; ${negation} ${verb} ${qualifier}docs/plans.md`, 'docs/plans.md'), 0);
+    assert.equal(discoveryPathWeight(`find listing; ${negation} ${verb} ${qualifier}archived documents`, 'docs/archive/listing.md'), 0);
+    assert.equal(wantsDocuments(`Find createListingAction; ${negation} ${verb} ${qualifier}task plans; read documentation`), true);
+    const behavior = `Review documentation explaining why clients ${negation} ${verb} ${qualifier}connections`;
+    assert.equal(positiveDiscoveryQuery(behavior), behavior);
+  }
+  for (const excluded of ['ignore history', 'do not include archived documents', 'exclude historical notes', 'omit history', 'omitting history', 'avoid historical notes', 'avoiding historical notes']) {
+    assert.equal(discoveryPathWeight(`find listing validation; ${excluded}`, 'docs/archive/listing.md'), excluded === 'do not include archived documents' ? 0 : .25, excluded);
+  }
+  assert.equal(wantsDocuments('Find createListingAction; ignore task plans; read the specification'), true);
+  assert.equal(discoveryPathWeight('find listing validation; ignore history; include history', 'docs/archive/listing.md'), 1);
+  assert.equal(discoveryPathWeight('find listing validation; ignore docs/archive/listing.md', 'docs/archive/listing.md'), 0);
+  for (const path of ['src/actions.test.ts', 'src/lib/i18n.ts', 'package-lock.json']) {
+    assert.ok(discoveryPathWeight('find listing validation; ignore tests, translations and dependencies', path) < 1, path);
+  }
+});
+
+it('aligns compound document exclusions with positive document intent', () => {
+  const objects = [
+    ...['product', 'project', 'repository', 'api', 'setup', 'developer', 'user', 'security', 'compliance'].map(scope => `${scope} docs`),
+    ...['project', 'repository'].flatMap(scope => ['instructions', 'status'].map(topic => `${scope} ${topic}`)),
+    ...['repo', 'repository', 'project', 'codebase'].flatMap(scope => ['orientation', 'overview'].map(topic => `${scope} ${topic}`)),
+    ...['status', 'qa', 'audit'].flatMap(scope => ['document', 'documents', 'report', 'reports'].map(topic => `${scope} ${topic}`)),
+    ...['implementation', 'task', 'design'].flatMap(scope => ['plan', 'plans', 'spec', 'specs'].map(topic => `${scope} ${topic}`)),
+    'agent brief', 'overview of the project', 'orientation to the repository',
+  ];
+  for (const object of objects) {
+    assert.equal(wantsDocuments(`read ${object}`), true, object);
+    for (const action of ['do not read', "don't review", 'skip', 'omit', 'avoid', 'without']) {
+      const query = `Find createListingAction; ${action} ${object}`;
+      assert.equal(wantsDocuments(query), false, query);
+      assert.equal(isOrientationQuery(query), false, query);
+      assert.equal(isUiOrientationQuery(`frontend ${query}`), false, query);
+      assert.equal(wantsDocuments(`${query}; read ${object}`), true, query);
+    }
+  }
+  const behavior = 'Review documentation explaining why clients do not read project deadlines';
+  assert.equal(positiveDiscoveryQuery(behavior), behavior);
+});
+
+it('retains penalties for negated secondary evidence classes', () => {
+  for (const [category, path, weight] of [['tests', 'src/actions.test.ts', .2], ['translations', 'src/lib/i18n.ts', .2], ['dependencies', 'package-lock.json', .15]]) {
+    for (const action of ['without', 'skip', 'skipping', 'omit', 'omitting', 'avoid', 'avoiding', 'do not read']) {
+      const query = `Find listing validation; ${action} ${category}`;
+      assert.equal(discoveryPathWeight(query, path), weight, query);
+      assert.equal(discoveryPathWeight(`${query}; include ${category}`, path), 1);
+    }
+  }
+});
+
+it('filters excluded document categories from adaptive discovery', async () => {
+  const plans = ['docs/plans/task.md', 'docs/proposal.md'];
+  const specs = ['docs/specs/listing.md', 'docs/contract.md'];
+  const documents = ['README.md', ...plans, ...specs];
+  await fixture({
+    'src/actions.ts': 'export function createListingAction() { return "listing validation"; }\n',
+    'README.md': '# Guide\ncreateListingAction listing validation guide.\n',
+    ...Object.fromEntries(plans.map(path => [path, '# Implementation plan\ncreateListingAction listing validation plan.\n'])),
+    ...Object.fromEntries(specs.map(path => [path, '# Design specification\ncreateListingAction listing validation specification.\n'])),
+  }, async root => {
+    for (const [exclusion, excluded] of [['without documentation', documents], ['skip task plans', plans], ['avoid design specifications', specs], ['skip task plans; read documentation', plans]]) {
+      const query = `Find createListingAction ${exclusion}`;
+      for (const intent of ['lookup', 'change']) {
+        const packet = await collectSourceEvidence({rootDir: root, query, intent, maxTokens: 4000, retrievalPreset: 'keyword_only'});
+        assert.ok(packet.ranges.some(range => range.file === 'src/actions.ts'), packet.text);
+        assert.ok(!packet.ranges.some(range => excluded.includes(range.file)), `${query}: ${packet.text}`);
+        if (excluded !== documents) assert.ok(packet.ranges.some(range => range.file === 'README.md'), packet.text);
+      }
+      const found = await discoverDocuments(root, query);
+      assert.ok(!found.files.some(file => excluded.includes(file)), query);
+    }
+    for (const plan of plans) assert.ok((await discoverDocuments(root, 'Find createListingAction without documentation; read task plans')).files.includes(plan));
+    assert.ok((await discoverDocuments(root, 'Find createListingAction skip task plans; read task plans')).files.includes(plans[0]));
+    assert.equal(discoveryPathWeight('skip task plans; read docs/plans/task.md', plans[0]), 1);
+    assert.equal(discoveryPathWeight('skip docs/plans/task.md; read task plans', plans[0]), 0);
+  });
+});
+
+it('keeps requested archive basenames inside the bounded document candidate pool', async () => {
+  const path = 'docs/archive/listing.md';
+  const topic = 'listing owner seller status submission validation';
+  await fixture({
+    [path]: `# ${topic}\nHistorical listing contract.\n`,
+    ...Object.fromEntries(Array.from({length: 64}, (_, i) => [`docs/${topic.replaceAll(' ', '-')}-${i}.md`, `# ${topic}\nCurrent listing contract.\n`])),
+  }, async root => {
+    const documents = await discoverDocuments(root, 'read listing.md owner seller status submission validation');
+    assert.equal(documents.files[0], path);
+    assert.equal(documents.limited, true);
+    assert.equal(discoveryPathWeight('read listing.md', path), 1);
+    for (const verb of ['ignore', 'skip', 'skipping', 'omit', 'omitting', 'avoid', 'avoiding']) {
+      assert.equal(discoveryPathWeight(`find listing; ${verb} listing.md`, path), 0);
+      assert.equal(discoveryPathWeight(`find listing; ${verb} blog posts`, 'blog/listing.md'), 0);
+      assert.equal(discoveryPathWeight(`find listing; ${verb} listing.md; read listing.md`, path), 1);
+    }
+  });
+});
+
+it('retains behavioral topics after ambiguous exclusions in document discovery', async () => {
+  await fixture({
+    'README.md': '# Parser documentation\nReview of implementation details.\n',
+    'docs/comments.md': '# Comments\nTrivia is discarded.\n',
+    'docs/fields.md': '# Fields\nOptional entries are suppressed.\n',
+    'docs/deadlocks.md': '# Deadlocks\nAcquire resources in a consistent order.\n',
+    'docs/connections.md': '# Connections\nSockets remain closed until needed.\n',
+  }, async root => {
+    for (const [behavior, topic] of [
+      ['why the parser must skip comments', 'comments'], ['the parser skipping comments', 'comments'],
+      ['why the serializer must omit fields', 'fields'], ['the serializer omitting fields', 'fields'],
+      ['how workers avoid deadlocks', 'deadlocks'], ['workers avoiding deadlocks', 'deadlocks'],
+      ...['do not', "don't"].flatMap(negation => ['read', 'include', 'open', 'show', 'find', 'locate', 'search', 'review', 'inspect'].map(verb => [`why clients ${negation} ${verb} connections`, 'connections'])),
+    ]) {
+      const query = `Review documentation explaining ${behavior}`;
+      const documents = await discoverDocuments(root, query);
+      assert.ok(documents.files.includes(`docs/${topic}.md`), `${query}: ${documents.files}`);
+      assert.equal(positiveDiscoveryQuery(query), query);
+    }
+  });
+});
+
+it('distinguishes without evidence from behavior without a feature', () => {
+  for (const query of ['Find createListingAction without task plans', 'Find createListingAction without the design specification', 'Find createListingAction without any documentation']) {
+    assert.equal(wantsDocuments(query), false, query);
+  }
+  assert.equal(discoveryPathWeight('find listing validation without historical notes', 'docs/archive/listing.md'), .25);
+  assert.equal(discoveryPathWeight('find listing validation without docs/archive/listing.md', 'docs/archive/listing.md'), 0);
+  assert.equal(wantsDocuments('Find createListingAction without task plans; read the specification'), true);
+  assert.equal(discoveryPathWeight('find listing validation without historical notes; include history', 'docs/archive/listing.md'), 1);
+  for (const query of ['find routes without authentication in src/api', 'read retry behavior without automatic retries in src/api/retry.ts']) {
+    assert.equal(positiveDiscoveryQuery(query), query, query);
+  }
+});
+
+it('keeps incidental specification mentions from displacing a named implementation', async () => {
+  const source = 'export function parseUrl(value: string) {\n  return new URL(value);\n}\n';
+  const adaptive = process.env.CONTEXTPRO_ADAPTIVE_CONTEXT;
+  process.env.CONTEXTPRO_ADAPTIVE_CONTEXT = 'false';
+  try {
+    await fixture({
+      'src/url.ts': source,
+      'docs/url.md': '# WHATWG URL specification\nparseUrl implementation matching the WHATWG specification.\n',
+    }, async root => {
+      for (const topic of ['specification', 'specifications']) {
+        const query = `Find parseUrl implementation matching the WHATWG ${topic}`;
+        for (const intent of [undefined, 'lookup', 'change']) {
+          const packet = await collectSourceEvidence({rootDir: root, query, intent, maxTokens: 512, retrievalPreset: 'keyword_only'});
+          assert.equal(packet.ranges[0]?.file, 'src/url.ts', packet.text);
+          assert.ok(packet.text.includes(source.trimEnd()), packet.text);
+        }
+        assert.equal(wantsDocuments(query), false, query);
+        for (const action of ['read', 'find', 'open', 'show', 'locate', 'search', 'review', 'inspect', 'include']) {
+          assert.equal(wantsDocuments(`${action} the ${topic}`), true);
+          assert.equal(wantsDocuments(`${action} the API ${topic}`), true);
+          assert.equal(wantsDocuments(`${action} the WHATWG ${topic}`), true);
+        }
+        assert.equal(wantsDocuments(`Find parseUrl; skip ${topic}; read the ${topic}`), true);
+      }
+    });
+  } finally {
+    if (adaptive === undefined) delete process.env.CONTEXTPRO_ADAPTIVE_CONTEXT;
+    else process.env.CONTEXTPRO_ADAPTIVE_CONTEXT = adaptive;
+  }
+});
+
+it('finds plural specifications and downranks plural archives directories', async () => {
+  const adaptive = process.env.CONTEXTPRO_ADAPTIVE_CONTEXT;
+  process.env.CONTEXTPRO_ADAPTIVE_CONTEXT = 'false';
+  try {
+    await fixture({
+      'src/app.ts': 'export const app = 1;\n',
+      'docs/specifications/api.md': '# API and design specifications\nCurrent contract requires an authenticated seller.\n',
+      'docs/archives/api.md': '# API and design specifications\nHistorical contract allowed anonymous submissions.\n',
+    }, async root => {
+      for (const query of ['Read the API specifications', 'review the design specifications']) {
+        assert.equal(wantsDocuments(query), true, query);
+        const packet = await collectSourceEvidence({rootDir: root, query, maxTokens: 1000, retrievalPreset: 'keyword_only'});
+        assert.equal(packet.ranges[0]?.file, 'docs/specifications/api.md');
+        assert.match(packet.text, /Current contract requires an authenticated seller/);
+      }
+      assert.equal(wantsDocuments('Find app without the design specifications'), false);
+      assert.equal(discoveryPathWeight('find listing validation', 'docs/archives/listing.md'), .25);
+      assert.equal(discoveryPathWeight('read listing archives', 'docs/archives/listing.md'), 1);
+      assert.equal(discoveryPathWeight('read docs/archives/listing.md', 'docs/archives/listing.md'), 1);
+      assert.equal(discoveryPathWeight('find listing; ignore history', 'docs/archives/listing.md'), .25);
+      assert.equal(discoveryPathWeight('find listing validation', 'src/archives/listing.ts'), 1);
+    });
+  } finally {
+    if (adaptive === undefined) delete process.env.CONTEXTPRO_ADAPTIVE_CONTEXT;
+    else process.env.CONTEXTPRO_ADAPTIVE_CONTEXT = adaptive;
+  }
+});
+
+it('honors extensionless document exclusions and old-document intent', async () => {
+  for (const title of ['README', 'roadmap', 'handoff', 'readiness']) {
+    assert.equal(wantsDocuments(`Find createListingAction without ${title}`), false, title);
+    assert.equal(wantsDocuments(`Find createListingAction without ${title}; read documentation`), true, title);
+  }
+  await fixture({
+    'src/app.ts': 'export const app = 1;\n',
+    'docs/archive/listing.md': '# Old listing documentation\nPrior listing contract used manual approval.\n',
+    'docs/listing.md': '# Current listing documentation\nCurrent documentation uses automatic approval.\n',
+  }, async root => {
+    assert.equal(discoveryPathWeight('review old documentation', 'docs/archive/listing.md'), 1);
+    assert.equal((await discoverDocuments(root, 'review old documentation')).files[0], 'docs/archive/listing.md');
+    assert.equal(discoveryPathWeight('find listing; ignore old documentation', 'docs/archive/listing.md'), 0);
+    assert.equal(discoveryPathWeight('find listing without old documentation', 'docs/archive/listing.md'), 0);
+    assert.equal(discoveryPathWeight('fix old browser behavior', 'docs/archive/listing.md'), .25);
+  });
+});
+
+it('finds explicitly requested old qualified plans, specifications and scoped docs', async () => {
+  const scopes = ['product', 'project', 'repository', 'API', 'setup', 'developer', 'user', 'security', 'compliance'];
+  await fixture({
+    'docs/archive/plans.md': `# Old design specifications and task implementation plans\n## ${scopes.join(' ')} docs\nPrevious listing requirements.\n`,
+    'docs/plans.md': `# Current design specifications and task implementation plans\n## ${scopes.join(' ')} docs\nCurrent listing requirements.\n`,
+  }, async root => {
+    for (const query of ['review old design specifications', 'read old task plans', 'review old implementation plans', ...scopes.map(scope => `review old ${scope} docs`)]) {
+      assert.equal((await discoverDocuments(root, query)).files[0], 'docs/archive/plans.md', query);
+      assert.equal(discoveryPathWeight(query, 'docs/archive/plans.md'), 1, query);
+      assert.equal(discoveryPathWeight(`find listing; do not ${query}`, 'docs/archive/plans.md'), query.endsWith('plans') ? 0 : .25, query);
+    }
+    assert.equal(discoveryPathWeight('find listing without old design specifications', 'docs/archive/plans.md'), .25);
+    for (const scope of ['design', ...scopes]) assert.equal(discoveryPathWeight(`fix old ${scope} behavior`, 'docs/archive/plans.md'), .25);
+  });
+});
+
+it('removes excluded document stems from adaptive discovery packets', async () => {
+  const documents = ['README.md', 'docs/roadmap.mdx', 'docs/HANDOFF.rst', 'docs/readiness.txt'];
+  await fixture({
+    'src/actions.ts': 'export function createListingAction() { return "saved"; }\n',
+    ...Object.fromEntries(documents.map(file => [file, '# Listing submission\ncreateListingAction validates the listing owner before submission.\n'])),
+  }, async root => {
+    for (const intent of ['lookup', 'change']) {
+      const packet = await collectSourceEvidence({rootDir: root, query: 'Find createListingAction without README, roadmap, handoff and readiness', intent, maxTokens: 4000, retrievalPreset: 'keyword_only'});
+      assert.ok(packet.ranges.some(range => range.file === 'src/actions.ts'));
+      assert.ok(!packet.ranges.some(range => documents.includes(range.file)), packet.text);
+    }
+    for (const [index, title] of ['readme', 'roadmap', 'handoff', 'readiness'].entries()) {
+      const query = `Find createListingAction without ${title}`;
+      assert.equal(discoveryPathWeight(query, documents[index]), 0, title);
+      assert.ok(!(await discoverDocuments(root, query)).files.includes(documents[index]), title);
+      assert.equal(discoveryPathWeight(`${query}; include ${title}`, documents[index]), 1, title);
+      assert.equal(discoveryPathWeight(query, `src/${title}.ts`), 1, title);
+      assert.equal(discoveryPathWeight(query, `docs/${title}-examples.md`), 1, title);
+    }
+  });
+});
+
+it('keeps explicit document exclusions when later prose repeats a generic stem', async () => {
+  const query = 'ignore docs/status.md; report current status';
+  await fixture({
+    'src/status.ts': 'export const currentStatus = "active"; // report current status\n',
+    'docs/status.md': '# Current status\nReport current status from this document.\n',
+  }, async root => {
+    for (const intent of ['lookup', 'change']) {
+      const packet = await collectSourceEvidence({rootDir: root, query, intent, maxTokens: 2000, retrievalPreset: 'keyword_only'});
+      assert.ok(packet.ranges.some(range => range.file === 'src/status.ts'), packet.text);
+      assert.ok(!packet.ranges.some(range => range.file === 'docs/status.md'), packet.text);
+    }
+    assert.equal(discoveryPathWeight(query, 'docs/status.md'), 0);
+    assert.ok(!(await discoverDocuments(root, query)).files.includes('docs/status.md'));
+    assert.equal(discoveryPathWeight(`${query}; include docs/status.md`, 'docs/status.md'), 1);
+  });
+});
+
+it('keeps explicit exclusions before ordinary document-title words', async () => {
+  const titles = ['readiness', 'roadmap', 'handoff', 'README'];
+  await fixture({
+    'src/release.ts': 'export const release = "ready";\n',
+    ...Object.fromEntries(titles.map(title => [`docs/${title}.md`, `# Release ${title}\nRelease review evidence.\n`])),
+  }, async root => {
+    for (const title of titles) {
+      const path = `docs/${title}.md`;
+      const query = `ignore ${path}; assess release ${title}`;
+      assert.equal(discoveryPathWeight(query, path), 0, query);
+      assert.ok(!(await discoverDocuments(root, query)).files.includes(path), query);
+      for (const intent of ['lookup', 'change']) {
+        const packet = await collectSourceEvidence({rootDir: root, query, intent, maxTokens: 2000, retrievalPreset: 'keyword_only'});
+        assert.ok(!packet.ranges.some(range => range.file === path), packet.text);
+      }
+      for (const verb of ['include', 'including', 'read', 'find', 'open', 'show', 'locate', 'search', 'review', 'inspect']) {
+        assert.equal(discoveryPathWeight(`${query}; ${verb} the ${title}`, path), 1);
+      }
+      assert.equal(discoveryPathWeight(`${query}; read ${title}.md`, path), 1);
+      assert.equal(discoveryPathWeight(`read ${title}; ignore ${path}`, path), 0);
+    }
+  });
+});
 
 it('reports unevaluated lookup roles as unclassified while preserving evaluated coverage', async () => {
   await fixture({

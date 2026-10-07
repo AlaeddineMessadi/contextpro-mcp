@@ -9,7 +9,7 @@ import { chatModelIdentity } from "./chat-model.js";
 import { getProvider, getEmbedModelName } from "./provider-config.js";
 
 // Invalidate explanations assembled under earlier source-ranking behavior.
-export const FEATURE_BRIEF_VERSION = 29;
+export const FEATURE_BRIEF_VERSION = 49;
 const BRIEF_ROLES = ["implementation", "dependency", "caller", "test"] as const;
 export interface BriefCitation {
   id: string; file: string; start: number; end: number; hash: string;

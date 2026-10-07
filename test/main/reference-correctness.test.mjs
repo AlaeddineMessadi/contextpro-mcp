@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, mkdir, writeFile, rm, stat, utimes } from "node:fs/promises";
+import fs from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { reindex } from "../../build/tools/reindex.js";
@@ -42,6 +44,22 @@ describe("reference correctness and incremental projects", () => {
     assert.match(text, /src\/relative.ts=2, tests\/math.test.ts=1/);
     assert.match(text, /src\/relative.ts:1:\d+ \[import\]/);
     assert.match(text, /src\/relative.ts:2:\d+ \[call\]/);
+  });
+
+  it("avoids a repeated warm freshness scan while observing the next edit", async () => {
+    const files = ["src/math.ts", "src/relative.ts", "tests/math.test.ts"].map(file => join(root, file));
+    const lookup = () => findTypeScriptReferences({rootDir:root, files, file:files[0], line:1, symbol:"add"});
+    lookup();
+    const original = fs.statSync;
+    let checks = 0;
+    fs.statSync = (path, ...args) => { if (path === files[0]) checks++; return original(path, ...args); };
+    syncBuiltinESMExports();
+    try {
+      assert.equal(lookup().counts.call, 3);
+      assert.ok(checks <= 3, `getProgram and findReferences repeated the source scan (${checks} stat calls)`);
+      await write("src/math.ts", "export function add(a: number, b: number) { return a - b; }\n");
+      assert.match(lookup().references.find(ref => ref.isDefinition).context, /return a - b/);
+    } finally { fs.statSync = original; syncBuiltinESMExports(); }
   });
 
   it("infers an omitted line from current property declarations, with explicit ambiguity", async () => {
