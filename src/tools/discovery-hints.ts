@@ -1,7 +1,7 @@
 import { basename, relative } from "node:path";
 import type { ContextPlusDB, FileRow } from "../core/db.js";
 import { searchTerms } from "../core/embeddings.js";
-import { isTestFile } from "./retrieval-helpers.js";
+import { isTestEvidence, isTestFile } from "./retrieval-helpers.js";
 
 const BACKEND_DIRECTORY = /(?:^|\/)(?:api|backend|server|services?|workers?|scripts?)(?:\/|$)/i;
 export const SCOPE_CLAUSE_BOUNDARY = /;|[.!?](?=\s|$)|(?:^|\s)(?:but|however|instead)(?=\s|$)|(?:,\s*|\s+(?:and|then)\s+)(?=(?:include|including|show|find|read|open|locate|search|review|inspect|in|under|inside|within)\b)/i;
@@ -62,12 +62,18 @@ export function discoveryPathWeight(query: string, path: string, exactSymbol = f
     }
     if (excluded.size) return 0;
   }
+  const excludesTests = query.split(SCOPE_CLAUSE_BOUNDARY).some(clause => {
+    const exclusion = EXCLUDED_FILE_CLAUSE.exec(clause);
+    return exclusion && /\b(?:tests?|testing|specs?|fixtures?|mocks?|regressions?|coverage|assert)\b/i.test(
+      clause.slice(exclusion.index).replace(/[\w@./-]+\.[A-Za-z][\w]*/g, ""));
+  });
   query = positiveDiscoveryQuery(query);
   if (query.toLowerCase().includes(path.toLowerCase())) return 1;
   if (/\.(?:md|mdx|rst|txt)$/i.test(path) && /(?:^|\/)(?:archive[ds]?|historical|history)(?:\/|$)/i.test(path)
     && !/\b(?:archive[ds]?|historical|history)\b|\bold\s+(?:(?:task|design|implementation|product|project|repository|api|setup|developer|user|security|compliance)\s+)?(?:docs?|documentation|documents?|readme|roadmap|handoff|notes?|reports?|plans?|specs?|specifications?)\b/i.test(query)) return .25;
   if (isLockfile(path) && !wantsLockfile(query)) return .15;
-  if ((isTestFile(path) || /(?:^|\/)(?:tests?|__tests__|fixtures?)(?:\/|$)/i.test(path))
+  if ((isTestEvidence(path) || /(?:^|\/)(?:tests?|__tests__|fixtures?)(?:\/|$)/i.test(path))
+    && (!exactSymbol || excludesTests)
     && !/\b(?:tests?|testing|specs?|fixtures?|mocks?|regressions?|coverage|assert)\b/i.test(query)) return .2;
   const locale = /(?:^|\/)(?:locales?|translations?|messages|i18n|l10n)(?:\/|\.)/i.test(path) && /\.(?:json|ya?ml|[cm]?[jt]sx?)$/i.test(path);
   if (locale && !exactSymbol && !/\b(?:locales?|translations?|translate|i18n|l10n|locali[sz](?:ation|e)|wording|copy|strings?|messages?)\b/i.test(searchTerms(query).join(" "))) return .2;

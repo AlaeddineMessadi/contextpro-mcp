@@ -472,12 +472,11 @@ export async function reindex(options: ReindexOptions): Promise<string> {
     let memoryEmbedCount = 0;
     let embedError: string | null = null;
 
-    // Validate the vector space before refreshers compare content hashes. Recording
-    // this afterward can reuse vectors from a previous same-dimension model and then
-    // incorrectly clear the stale flag without embedding anything.
-    db.recordEmbeddingProvider(getEmbedProvider(), getEmbedModel());
-
     if (!noEmbed) {
+      // Only a semantic rebuild owns the vector-space identity. A structural-only
+      // worker may use another model; it must not erase another session's vectors.
+      // Validate before content-hash checks to prevent cross-model vector reuse.
+      db.recordEmbeddingProvider(getEmbedProvider(), getEmbedModel());
       try {
         const [files, identifiers] = await Promise.all([
           refreshFileSearchEmbeddings({ rootDir: options.rootDir, relativePaths: indexedRelativePaths }),

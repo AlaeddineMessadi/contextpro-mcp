@@ -1,7 +1,7 @@
 // SQLite-backed memory tool wrappers with scope-aware task context retrieval
 // FEATURE: Agent memory operations over project-scoped persistent storage
 
-import { fetchEmbedding } from "../core/embeddings.js";
+import { fetchEmbedding, embedMemoryText, hasCompatibleEmbeddingModel, currentEmbeddingModel } from "../core/embeddings.js";
 import { memoryEvidenceStatus } from "../core/evidence-state.js";
 import { createMemoryEdgeId, createMemoryNodeId } from "../core/memory-graph.js";
 import { getDB, type MemoryNodeInput, type MemoryNodeRow, type TraversalResult } from "../core/db.js";
@@ -173,7 +173,7 @@ export async function toolUpsertMemoryNode(options: UpsertMemoryNodeOptions): Pr
   const metadata = await buildScopedMetadata(options.rootDir, options.metadata, options.scope);
   let embedding: number[] = [];
   try {
-    if (!options.skipEmbedding) [embedding] = await fetchEmbedding(`${options.label} ${options.content}`);
+    if (!options.skipEmbedding) embedding = await embedMemoryText(db, `${options.label} ${options.content}`);
   } catch {
     // Embedding provider unavailable — store without vector; keyword search still works.
   }
@@ -184,7 +184,7 @@ export async function toolUpsertMemoryNode(options: UpsertMemoryNodeOptions): Pr
     content: options.content,
     metadata,
   } satisfies MemoryNodeInput;
-  const id = db.upsertMemoryNode(node, embedding.length > 0 ? embedding : undefined);
+  const id = db.upsertMemoryNode(node, embedding.length > 0 ? embedding : undefined, currentEmbeddingModel());
   db.ensureGraphFresh();
   const stats = db.getGraphStats();
   return [
@@ -228,13 +228,13 @@ export async function toolSearchMemoryGraph(options: SearchMemoryGraphOptions): 
   db.pruneStaleEdges();
   let queryVector: number[] = [];
   try {
-    [queryVector] = await fetchEmbedding(options.query);
+    if (hasCompatibleEmbeddingModel(db)) [queryVector] = await fetchEmbedding(options.query);
   } catch {
     // Embedding provider unavailable — fall back to returning empty results.
   }
   const requestedScope = options.scope ?? "project";
   const resolved = await resolveProjectConfig(options.rootDir);
-  const semanticHits = queryVector.length ? db.searchMemoryNodes(queryVector, Math.max((options.topK ?? 5) * 8, 20)) : [];
+  const semanticHits = queryVector.length && hasCompatibleEmbeddingModel(db) ? db.searchMemoryNodes(queryVector, Math.max((options.topK ?? 5) * 8, 20)) : [];
   const terms = options.query.toLowerCase().match(/[\p{L}\p{N}_]+/gu) ?? [];
   const lexicalHits = db.listMemoryNodes().map(node => ({ node, distance: 1,
     score: terms.reduce((score, term) => score + Number(`${node.label} ${node.content}`.toLowerCase().includes(term)), 0) }))
@@ -308,7 +308,7 @@ export async function toolAddInterlinkedContext(options: AddInterlinkedContextOp
     const item = options.items[i];
     let embedding: number[] = [];
     try {
-      [embedding] = await fetchEmbedding(`${item.label} ${item.content}`);
+      embedding = await embedMemoryText(db, `${item.label} ${item.content}`);
     } catch {
       // Embedding provider unavailable — store without vector; keyword search still works.
     }
@@ -318,7 +318,7 @@ export async function toolAddInterlinkedContext(options: AddInterlinkedContextOp
       label: item.label,
       content: item.content,
       metadata: metadataItems[i],
-    }, embedding.length > 0 ? embedding : undefined);
+    }, embedding.length > 0 ? embedding : undefined, currentEmbeddingModel());
     if (embedding.length > 0) createdVectors.set(id, embedding);
     nodes.push({ id, type: item.type, label: item.label });
   }

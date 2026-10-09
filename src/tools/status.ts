@@ -11,6 +11,7 @@ import { loadProjectConfig } from "../core/project-config.js";
 import { getIndexState } from "../core/context-metadata.js";
 import { getToolTimingSnapshots } from "../core/tool-metrics.js";
 import { getRuntimeBuildIdentity } from "../core/startup-health.js";
+import { hasCompatibleEmbeddingModel, getEmbedProvider, getEmbedModel } from "../core/embeddings.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -169,6 +170,12 @@ export async function getStatusData(options: StatusOptions): Promise<StatusSnaps
   }
   if (embeddings.stale) {
     warnings.push(`Embeddings flagged stale: ${embeddings.staleReason ?? "unknown reason"}. Run reindex to rebuild.`);
+  }
+  if (embedModel && !hasCompatibleEmbeddingModel(db)) {
+    warnings.push(`Stored embeddings use ${embedProvider}/${embedModel}; this worker uses ${getEmbedProvider()}/${getEmbedModel()}. Semantic reads ignore incompatible vectors. Align client model settings and reconnect, or explicitly reindex with the intended model.`);
+  }
+  if ((embeddings.total || embeddings.memory) && (!embedProvider || !embedModel)) {
+    warnings.push("Stored vectors have no complete provider/model identity; semantic reads ignore them. Configure the intended model and run reindex with no_embed:false to rebuild.");
   }
 
   return {

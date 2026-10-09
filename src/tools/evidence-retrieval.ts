@@ -5,7 +5,7 @@ import { basename, dirname } from "node:path";
 import { searchTerms, withQueryEmbeddingCache } from "../core/embeddings.js";
 import { unifiedSearchData, extractIdentifierHints, type UnifiedSearchOptions } from "./search.js";
 import { discoveryPathWeight, facetPathWeight, mentionedFiles, queryLiterals } from "./discovery-hints.js";
-import { findTestsForFiles, isTestFile } from "./retrieval-helpers.js";
+import { findTestsForFiles, isTestEvidence, isTestFile } from "./retrieval-helpers.js";
 import { maybeChatRerankPlanningFiles } from "./planning-helpers.js";
 
 export type EvidenceRole = "implementation" | "dependency" | "caller" | "test";
@@ -32,7 +32,7 @@ export async function retrieveEvidence(options: {
     const topicOwners = new Set<string>();
     let weakSemanticMatches = 0;
     const add = (path: string, rank: number, lane: string, role: EvidenceRole = "implementation", anchor?: number, symbols: string[] = []) => {
-      if (isTestFile(path)) role = "test";
+      if (isTestEvidence(path)) role = "test";
       const prior = discoveryPathWeight(query, path, lane === "named definition");
       // Graph links are evidence in their own right, including tests that do not
       // repeat the query words. Lexical decoys still receive the normal penalty.
@@ -90,7 +90,15 @@ export async function retrieveEvidence(options: {
         .filter(file => file.hits >= 2).sort((a, b) => b.hits - a.hits || (pool.get(b.path)?.score ?? 0) - (pool.get(a.path)?.score ?? 0) || a.path.localeCompare(b.path)).slice(0, 8)
         .forEach((file, rank) => { add(file.path, rank, "path topics"); topicOwners.add(file.path); });
       for (const hint of extractIdentifierHints(query).slice(0, 16)) {
-        for (const symbol of db.searchSymbolsByName(hint).filter(symbol => symbol.name === hint).slice(0, 8)) {
+        const matches = db.searchSymbolsByName(hint).filter(symbol => symbol.name === hint);
+        const hasImplementation = matches.some(symbol => {
+          const path = byId.get(symbol.file_id);
+          return path && !isTestEvidence(path) && discoveryPathWeight(query, path, true) >= 1;
+        });
+        for (const symbol of matches.filter(symbol => {
+          const path = byId.get(symbol.file_id);
+          return path && (!hasImplementation || !isTestEvidence(path) || discoveryPathWeight(query, path) >= 1);
+        }).slice(0, 8)) {
           const path = byId.get(symbol.file_id);
           if (path && discoveryPathWeight(query, path, true) >= 1) add(path, 0, "named definition", "implementation", symbol.line_start, [hint]);
         }

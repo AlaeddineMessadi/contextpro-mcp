@@ -6,10 +6,11 @@ import { getIndexState } from "./context-metadata.js";
 import { listArtifacts, readArtifact, type ArtifactReference } from "./artifacts.js";
 import { resolveProjectPath } from "./path-guard.js";
 import { chatModelIdentity } from "./chat-model.js";
+import { embeddingCacheIdentity } from "./embeddings.js";
 import { getProvider, getEmbedModelName } from "./provider-config.js";
 
 // Invalidate explanations assembled under earlier source-ranking behavior.
-export const FEATURE_BRIEF_VERSION = 49;
+export const FEATURE_BRIEF_VERSION = 53;
 const BRIEF_ROLES = ["implementation", "dependency", "caller", "test"] as const;
 export interface BriefCitation {
   id: string; file: string; start: number; end: number; hash: string;
@@ -29,6 +30,7 @@ export async function featureRetrievalIdentity(rootDir: string): Promise<string>
     version: FEATURE_BRIEF_VERSION,
     adaptive: process.env.CONTEXTPRO_ADAPTIVE_CONTEXT === "true", rerank,
     embedding: `${getProvider()}:${getEmbedModelName()}`,
+    embeddingState: embeddingCacheIdentity(await getDB(rootDir)),
     rerankModel: rerank ? await chatModelIdentity(rootDir) : null,
   })).digest("hex");
 }

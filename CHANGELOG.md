@@ -4,6 +4,17 @@ All notable changes to this project are recorded here. The project follows [Sema
 
 ## [Unreleased]
 
+- Explicit documentation requests retain document priority and budget under review/debug/change intents; requests for implementation plus documentation keep their mixed source allocation.
+
+- Query embedding deadlines start at the first provider attempt, so cold index preparation cannot exhaust the semantic budget before a request is sent. Parallel queries and retries retain one shared deadline; older retrieval caches are invalidated.
+
+- Semantic vector batches resolve existing row IDs once and replace by row ID, avoiding repeated scans of sqlite-vec auxiliary columns during large rebuilds.
+
+- Structural-only refreshes preserve semantic vectors from other model settings. File, symbol and memory retrieval reject incompatible vector spaces; memory writes preserve lexical data without mixing models. Semantic cache identity includes persisted vector updates from other workers.
+- Debug/change/review discovery prioritizes source over incidental status journals without requiring an exact symbol name. Fallback headers distinguish stale, skipped, failed and empty semantic indexes from weak query evidence, with explicit recovery guidance. Tool descriptions and agent guidance clarify batching up to six known targets.
+
+- Discovery prioritizes explicitly named test helpers in debugging requests, recognizes smoke tests and test-directory source as test evidence, and preserves production definitions ahead of same-name test stubs. Explicit document and test exclusions remain respected.
+
 - Updated transitive `fast-uri` to 3.1.8, `hono` to 4.13.12 and `ip-address` to 10.7.3, clearing the three moderate dependency advisories found during delivery.
 
 - Discoverable TS/JS and optional Pyright diagnostics and compiler rename preview/apply reuse bounded workers, source hashes and restore points. Configured Python exact references use LSP evidence; unsupported/stale rename operations reject without textual fallback.

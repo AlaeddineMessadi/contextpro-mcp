@@ -25,7 +25,7 @@ it('does not embed a corpus during search, and really aborts a stalled Ollama qu
  try {
   const {reindex}=await import('../../build/tools/reindex.js');
   const {unifiedSearch}=await import('../../build/tools/search.js');
-  const {fetchQueryEmbedding}=await import('../../build/core/embeddings.js');
+  const {fetchQueryEmbedding,withQueryEmbeddingCache}=await import('../../build/core/embeddings.js');
   await writeFile(join(root,'api.ts'),'export function protectChallenge() { return true; }');
   await reindex({rootDir:root,noEmbed:true,autoHubs:false});
   const result=JSON.parse(await unifiedSearch({rootDir:root,query:'protectChallenge',mode:'hybrid',format:'compact'}));
@@ -35,6 +35,17 @@ it('does not embed a corpus during search, and really aborts a stalled Ollama qu
   // On a fresh Node 22 runner, a 150 ms deadline can expire before dispatch.
   assert.deepEqual(await fetchQueryEmbedding('warm the local test provider'),[1,0]);
   assert.equal(requests,1);
+  process.env.CONTEXTPRO_QUERY_EMBED_TIMEOUT_MS='500';
+  await withQueryEmbeddingCache(async()=>{
+   await new Promise(resolve=>setTimeout(resolve,600));
+   const first=fetchQueryEmbedding('after slow index preparation');
+   assert.equal(fetchQueryEmbedding('after slow index preparation'),first,'parallel readers share the query vector');
+   assert.deepEqual(await first,[1,0],'index preparation must not consume the provider deadline');
+   await new Promise(resolve=>setTimeout(resolve,600));
+   await assert.rejects(fetchQueryEmbedding('another query in the same retrieval'),/abort|timeout|failed/i);
+   assert.deepEqual(await fetchQueryEmbedding('after slow index preparation'),[1,0],'completed vectors remain reusable after the deadline');
+  });
+  assert.equal(requests,2,'the provider deadline stays shared after the first request');
   requests=0;stall=true;
   process.env.CONTEXTPRO_QUERY_EMBED_TIMEOUT_MS='500';
   const start=performance.now();

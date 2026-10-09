@@ -27,6 +27,17 @@ retrieval policy or a guarantee that all relevant code was found.
 Use `discover_tools` to enable editing, graph, validation or diagnostics only when
 needed. Do not automatically call status, reindex, report or memory on each task.
 
+When delegating repository work, include the active root and a concrete next
+read in the task prompt when known, for example:
+
+> Work in `/absolute/project/root`. Use `context` for discovery or batch the known
+> targets `[{file:"src/api.ts",symbol:"create"},{file:"src/types.ts"}]` in one call
+> with that root. Inspect omissions and use a narrow native read if needed.
+
+The batch accepts up to six targets. It can reduce separate tool calls even when
+no discovery is needed. A single tiny known read may be simpler natively; tool
+availability or an instruction alone does not establish that an agent used it.
+
 ## Choose the next call from the evidence
 
 | What you need or observe | Next useful action |
@@ -43,6 +54,8 @@ Evidence labels describe the packet: `returned` is included, `omitted` was
 budget-excluded, `unclassified` was not evaluated, and `unavailable` is not proof
 that a role or source is absent. Inspect citations and control flow before editing.
 Lexical fallback can still supply useful source; it is not a semantic-quality test.
+Structural freshness and semantic readiness are separate. A model change needs a
+semantic rebuild for each affected root; see [semantic recovery](docs/maintenance.md#recover-semantic-search).
 
 ## Existing workflow
 

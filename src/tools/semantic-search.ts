@@ -10,6 +10,7 @@ import {
   getEmbeddingBatchSize,
   deleteFileSearchEmbedding,
   SearchIndex,
+  embeddingCacheIdentity,
   type SearchDocument,
   type SearchQueryOptions,
   type SearchResult,
@@ -245,7 +246,7 @@ async function buildSearchDocumentsFromDB(rootDir: string): Promise<SearchDocume
 
 async function buildIndex(rootDir: string, skipEmbeddings = false): Promise<SearchIndex> {
   const db = await getDB(rootDir);
-  const key = JSON.stringify([rootDir, db.getIndexGeneration(), skipEmbeddings, process.env.CONTEXTPRO_EMBED_MODEL, process.env.CONTEXTPRO_PROVIDER]);
+  const key = JSON.stringify([rootDir, db.getIndexGeneration(), skipEmbeddings, embeddingCacheIdentity(db)]);
   const cached = indexCache.get(key);
   if (cached && Date.now() - cached.at < INDEX_TTL_MS) return cached.index;
 

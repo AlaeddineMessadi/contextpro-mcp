@@ -8,8 +8,8 @@ import ts from "typescript";
 import { analyzeContent, flattenSymbols, type FileAnalysis } from "../core/parser.js";
 import { maskSourceText } from "../core/source-mask.js";
 import { resolveProjectPath } from "../core/path-guard.js";
-import { searchTerms } from "../core/embeddings.js";
-import { getDB } from "../core/db.js";
+import { searchTerms, hasCompatibleEmbeddingModel, getEmbedProvider, getEmbedModel } from "../core/embeddings.js";
+import { getDB, type ContextPlusDB } from "../core/db.js";
 import { walkDirectory } from "../core/walker.js";
 import { readBoundedRanges, type BoundedRange } from "../core/bounded-source.js";
 import { extractIdentifierHints, unifiedSearchData } from "./search.js";
@@ -21,7 +21,7 @@ import { finishSourceContext } from "../core/source-context.js";
 import { lookupFeatureBrief } from "../core/feature-brief-cache.js";
 import { chatModelIdentity } from "../core/chat-model.js";
 import { getProvider, getEmbedModelName } from "../core/provider-config.js";
-import { getProjectRiskEvidence } from "./retrieval-helpers.js";
+import { getProjectRiskEvidence, isTestEvidence } from "./retrieval-helpers.js";
 
 export interface ContextTarget {
   file: string;
@@ -49,6 +49,29 @@ export interface SourceEvidence {
 }
 const bytes = (value: string): number => Buffer.byteLength(value, "utf8");
 const render = (part: Excerpt): string => `${part.file}:${part.start}-${part.end}\n${part.text}`;
+
+function lexicalFallbackNotice(db: ContextPlusDB): string {
+  // Use local metadata, without a status walk or an embedding request.
+  const stale = db.isEmbeddingsStale();
+  const detail = (value: string) => {
+    let result = "";
+    for (const character of value.replace(/\s+/g, " ")) {
+      if (bytes(result + character) > 100) break;
+      result += character;
+    }
+    return result;
+  };
+  const error = db.getMeta("last_embed_error");
+  const cause = stale.stale ? `semantic vectors are stale (${detail(stale.reason || "unknown cause")})`
+    : db.getEmbeddingStats().fileSearch > 0 && (!db.getMeta("embed_provider") || !db.getMeta("embed_model")) ? "stored vectors have no complete provider/model identity"
+    : db.getMeta("embed_model") && !hasCompatibleEmbeddingModel(db) ? `stored model ${detail(`${db.getMeta("embed_provider")}/${db.getMeta("embed_model")}`)} differs from this worker's ${detail(`${getEmbedProvider()}/${getEmbedModel()}`)}`
+    : db.getEmbeddingStats().fileSearch > 0 ? undefined
+    : error ? `last embedding build failed: ${detail(error)}`
+    : db.getMeta("last_embed_skipped") === "true" ? "corpus embeddings were skipped by a structural-only refresh"
+    : "no file vectors are stored";
+  return cause ? `Discovery used lexical fallback: ${cause}. Configure the intended embedding model; run reindex with this root and no_embed:false (unset CONTEXTPRO_REINDEX_NO_EMBED).`
+    : "Discovery used lexical fallback or weak semantic evidence for this query; vectors exist, but the query signal was weak or unavailable. Check provider health or refine the query; a weak match alone does not require rebuilding the index.";
+}
 
 /** Keep uncovered tails/interiors instead of rejecting every partial overlap. */
 function uncoveredRanges(part: Excerpt, selected: Excerpt[]): Excerpt[] {
@@ -88,13 +111,17 @@ export async function collectSourceEvidence(options: ContextOptions): Promise<So
   if (!Number.isInteger(budget) || budget < 512 || budget > 12000) throw new Error("max_tokens must be from 512 to 12000 (estimated UTF-8 bytes/4).");
   let targets: Array<ContextTarget & { helper?: boolean }> = [...options.targets ?? []];
   const notices: string[] = [];
+  let discoveryNotice: string | undefined;
   const filePriors = new Map<string, number>();
   const namedSymbols = new Set<string>();
+  const namedDefinitions = new Map<string, Set<string>>();
   const requestedFiles = new Set<string>();
-  // Subjects such as authentication/frontend and output wording such as "source
-  // ranges" do not request code. Only explicit code/implementation intent
-  // authorizes a restricted document allowance.
-  const mixedDocuments = changeContext || (!options.targets?.length && /\b(?:code|implementation)\b/i.test(query));
+  // Change intent implies code only when documentation is not explicitly requested.
+  const positiveQuery = positiveDiscoveryQuery(query);
+  const explicitDocuments = wantsDocuments(query) && (
+    /\b(?:docs|documents?|documentation|readme|specifications?|specs?|plans?|instructions)\b|\.(?:md|mdx|rst|txt)\b/i.test(positiveQuery)
+    || /\b(?:read|find|open|show|locate|search|review|inspect)\s+(?:(?:the|relevant|existing|current)\s+)*(?:roadmap|handoff|readiness)\b/i.test(positiveQuery));
+  const mixedDocuments = (changeContext && !explicitDocuments) || (!options.targets?.length && /\b(?:code|implementation)\b/i.test(query));
   const orientation = options.retrievalPreset !== "semantic_only" && (isOrientationQuery(query) || (adaptive && intent === "overview"));
   // File mentions within an overview supplement the requested architecture;
   // they must not switch discovery into a restricted whole-file read.
@@ -132,8 +159,9 @@ export async function collectSourceEvidence(options: ContextOptions): Promise<So
       }
     }
     if (found.freshness.warning) notices.push(found.freshness.warning);
-    if (!exact && options.retrievalPreset === "keyword_only") notices.push("Discovery used the requested keyword_only preset; semantic vectors were not consulted.");
-    else if (!exact && found.trust.ambiguities.some(warning => warning.includes("keyword-only"))) notices.push("Discovery used lexical fallback; semantic vectors unavailable or weak. Reindex if semantic retrieval is needed.");
+    const db = await getDB(options.rootDir);
+    if (!exact && options.retrievalPreset === "keyword_only") discoveryNotice = "Discovery used the requested keyword_only preset; semantic vectors were not consulted.";
+    else if (!exact && found.trust.ambiguities.some(warning => warning.includes("keyword-only"))) discoveryNotice = lexicalFallbackNotice(db);
     if (!["fresh", "refreshed"].includes(found.freshness.indexState)) notices.push(`Discovery index: ${found.freshness.indexState}; verify scope with native search if incomplete.`);
     const primary = found.files?.results.map(item => ({ file: item.path })) ?? [];
     primary.forEach((item, index) => filePriors.set(item.file, 1 / (1 + index * .5)));
@@ -147,7 +175,6 @@ export async function collectSourceEvidence(options: ContextOptions): Promise<So
     // prose similarity. Look up defining files even if ranking omitted them;
     // ranges are still resolved against the current source below.
     const hints = extractIdentifierHints(query);
-    const db = await getDB(options.rootDir);
     const indexed = db.getAllFiles();
     // Multi-key questions need evidence for each literal, even when one key's
     // many callers fill the primary result window before another key's source.
@@ -169,16 +196,22 @@ export async function collectSourceEvidence(options: ContextOptions): Promise<So
     }
     targets = [...literalFiles].map(file => ({file})).concat(targets.filter(target => !literalFiles.has(target.file)));
     const files = new Map(indexed.map(file => [file.id, file.path]));
-    const definingFiles = new Set<string>();
     for (const hint of options.retrievalPreset === "semantic_only" ? [] : hints.slice(0, 16)) {
-      for (const symbol of db.searchSymbolsByName(hint).filter(symbol => symbol.name === hint)) {
+      const matches = db.searchSymbolsByName(hint).filter(symbol => symbol.name === hint);
+      const hasImplementation = matches.some(symbol => {
+        const file = files.get(symbol.file_id);
+        return file && !isTestEvidence(file) && discoveryPathWeight(query, file, true) >= 1;
+      });
+      for (const symbol of matches) {
         const file = files.get(symbol.file_id);
         if (file && discoveryPathWeight(query, file, true) >= 1) {
-          definingFiles.add(file); namedSymbols.add(symbol.name);
+          if (hasImplementation && isTestEvidence(file) && discoveryPathWeight(query, file) < 1) continue;
+          const names = namedDefinitions.get(file) ?? new Set<string>();
+          names.add(symbol.name); namedDefinitions.set(file, names); namedSymbols.add(symbol.name);
         }
       }
     }
-    const definitions = [...definingFiles].sort((a, b) => Number(query.includes(b)) - Number(query.includes(a)) || a.localeCompare(b));
+    const definitions = [...namedDefinitions.keys()].sort((a, b) => Number(query.includes(b)) - Number(query.includes(a)) || a.localeCompare(b));
     if (definitions.length > 6 || hints.length > 16) notices.push("Some named definitions omitted; narrow the query or use exact file/symbol targets.");
     targets = [...definitions.slice(0, 6).map(file => ({ file })), ...targets.filter(target => !definitions.slice(0, 6).includes(target.file))];
     const documents = options.retrievalPreset !== "semantic_only" && (wantsDocuments(query) || (adaptive && (!exact || definitions.length === 0)))
@@ -434,7 +467,7 @@ export async function collectSourceEvidence(options: ContextOptions): Promise<So
       if (matches.length > 3) omitted.push(`${file}: additional literal matches omitted`);
     }
     const syntax = /\.[cm]?[jt]sx?$/i.test(file) ? ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true) : undefined;
-    const localNames = new Set(namedSymbols);
+    const localNames = new Set(namedDefinitions.get(file));
     // A type inferred from a local runtime schema needs that schema as evidence.
     for (const statement of syntax?.statements ?? []) if (ts.isTypeAliasDeclaration(statement) && localNames.has(statement.name.text)) {
       const visit = (node: ts.Node): void => {
@@ -443,7 +476,7 @@ export async function collectSourceEvidence(options: ContextOptions): Promise<So
       };
       visit(statement.type);
     }
-    if (namedSymbols.size && discoveryPathWeight(query, file, true) >= 1) {
+    if (localNames.size) {
       for (const symbol of flattenSymbols((await analyze()).symbols)) {
         if (!localNames.has(symbol.name)) continue;
         const definition = { file, start: symbol.line, end: symbol.endLine, text: lines.slice(symbol.line - 1, symbol.endLine).join("\n") };
@@ -494,7 +527,7 @@ export async function collectSourceEvidence(options: ContextOptions): Promise<So
     }
     omitted.push(`${file}: partial; unreturned lines omitted`);
   }
-  const sourceFirst = namedSymbols.size > 0 && !wantsDocuments(query);
+  const sourceFirst = namedSymbols.size > 0 && (mixedDocuments || !wantsDocuments(query));
   const documentLimit = mixedDocuments || sourceFirst || isUiOrientationQuery(query) ? Math.floor(limit * .3) : limit;
   // Keep quoted/compound keys ahead of generic literals, then prefer windows
   // covering the rest of the question over the first incidental occurrence.
@@ -507,9 +540,14 @@ export async function collectSourceEvidence(options: ContextOptions): Promise<So
   // Topic/search/graph candidates need the same allowance as heading previews.
   const isDocument = (part: Excerpt) => (documentFiles.has(part.file) || /\.(?:md|mdx|rst|txt)$/i.test(part.file))
     && !requestedFiles.has(part.file);
+  const deferDocuments = changeContext && !wantsDocuments(query);
+  const deferredDocuments: Excerpt[] = [];
   // Preserve the existing exact-name priority before adding scoped usage windows.
   const priority = sourceFirst ? [...definitions, ...documentPassages, ...priorityParts] : [...documentPassages, ...priorityParts, ...definitions];
   for (const definition of [...priority, ...literalParts, ...identifierParts, ...scopedParts]) {
+    // Keep incidental journal prose behind implementation even without a named
+    // symbol. Explicit documentation questions and file reads retain priority.
+    if (deferDocuments && isDocument(definition)) { deferredDocuments.push(definition); continue; }
     for (const part of uncoveredRanges(definition, candidates)) {
       const size = bytes(render(part)) + 2;
       if (size <= available && (!isDocument(part) || documentBytes + size <= documentLimit)) {
@@ -520,13 +558,17 @@ export async function collectSourceEvidence(options: ContextOptions): Promise<So
   }
   // IDF across windows downweights ubiquitous identifiers; marginal coverage
   // reduces repetitive snippets while keeping some evidence for repeated terms.
-  const remaining = discoveryParts.map(part => ({ part, words: new Set(searchTerms(part.text)), size: bytes(render(part)) + 2 }));
-  const weights = new Map([...terms].map(term => [term, 1 + Math.log(1 + remaining.length / (1 + remaining.filter(item => item.words.has(term)).length))]));
+  const remaining = [...deferredDocuments, ...discoveryParts].map(part => ({ part, words: new Set(searchTerms(part.text)), size: bytes(render(part)) + 2 }));
+  // Deferred previews duplicate document windows; they must not change IDF and
+  // accidentally elevate tiny incidental source matches over implementations.
+  const weightingWindows = discoveryParts.map(part => new Set(searchTerms(part.text)));
+  const weights = new Map([...terms].map(term => [term, 1 + Math.log(1 + weightingWindows.length / (1 + weightingWindows.filter(words => words.has(term)).length))]));
   const covered = new Set(candidates.flatMap(part => searchTerms(part.text)));
   const selectedBytes = new Map<string, number>();
   const coveredRoles = new Set<string>();
   const roles = (part: Pick<Excerpt, "file">): string[] => [...new Set([
     ...connectedCandidates.find(item => item.path === part.file)?.roles ?? [],
+    ...(isTestEvidence(part.file) ? ["test"] : []),
     ...(/(?:^|\/)(?:[^/]*config[^/]*|package\.json|pyproject\.toml)$|\.(?:ya?ml|toml)$/i.test(part.file) ? ["configuration"] : []),
     ...(/(?:^|\/)(?:types|schemas?|contracts?)(?:[./-]|$)/i.test(part.file) ? ["contract"] : []),
   ])];
@@ -563,7 +605,8 @@ export async function collectSourceEvidence(options: ContextOptions): Promise<So
       // This is a soft diversity prior; strong evidence can still reuse a file.
       const repetition = 1 + (selectedBytes.get(part.file) ?? 0) / Math.max(512, limit / 4);
       const score = gain * (filePriors.get(part.file) ?? .5) / (Math.sqrt(size) * repetition);
-      if (score > bestScore) { best = i; bestScore = score; bestParts = parts; bestSize = size; }
+      const sourcePriority = deferDocuments && best >= 0 && isDocument(remaining[best].part) !== isDocument(part);
+      if (score > 0 && (sourcePriority ? !isDocument(part) : score > bestScore)) { best = i; bestScore = score; bestParts = parts; bestSize = size; }
     }
     if (best < 0) break;
     const next = remaining.splice(best, 1)[0];
@@ -598,23 +641,34 @@ export async function collectSourceEvidence(options: ContextOptions): Promise<So
   const partialOmissions = omitted.filter(value => !merged.some(part => value === `${part.file}: partial; unreturned lines omitted`
     && part.start === 1 && part.end === snapshots.get(part.file)!.split("\n").length));
   const info = [...notices, ...partialOmissions.map(value => `Omitted: ${value}`)].join("\n");
-  const footer = bytes(info) <= 650 ? info : [
+  let footer = bytes(info) <= 650 ? info : [
     bytes(noticeText) <= 400 ? noticeText : [
       ...notices.filter(notice => notice.startsWith("Discovery used") || notice.startsWith("Discovery index:") || /stale|empty|refresh/i.test(notice)).slice(0, 2),
       "Additional discovery diagnostics omitted; narrow query/targets for detail.",
     ].join("\n"),
     "Some targets or lines omitted. Narrow query/targets or increase max_tokens; verify scope with native search.",
   ].filter(Boolean).join("\n");
+  // The header and footer share the existing diagnostic allowance. Moving a
+  // warning to the top must not evict source that fit the old packet budget.
+  const footerLimit = 650 - bytes(discoveryNotice ?? "") - 2;
+  if (bytes(footer) > footerLimit) {
+    const omission = "Some targets, lines or diagnostics omitted. Narrow query/targets or increase max_tokens; verify scope with native search.";
+    const kept: string[] = [];
+    for (const notice of notices) {
+      if (bytes([...kept, notice, omission].join("\n")) <= footerLimit) kept.push(notice);
+    }
+    footer = [...kept, omission].join("\n");
+  }
   if (connectedCandidates.length) {
     const missing = ["implementation", "caller", "dependency", "test"].filter(role => !merged.some(part => roles(part).includes(role as never)));
     if (missing.length) notices.push(`Evidence not returned for: ${missing.join(", ")}; this is not proof of absence.`);
   }
   const summary = notices.at(-1)?.startsWith("Evidence not returned") ? notices.at(-1) : undefined;
   const coverageNotice = adaptive ? `Retrieval: ${intent}; ${rolesClassified ? "hybrid + structural relations" : "exact/lexical + configured semantic"}. Relations are structural/textual, not compiler-resolved.\nEvidence: ${["implementation", "caller", "dependency", "contract", "configuration", "test"].map(role => `${role}=${merged.some(part => roles(part).includes(role)) ? "returned" : targets.some(target => roles(target).includes(role)) ? "omitted" : rolesClassified ? "unavailable" : "unclassified"}`).join(", ")}. Unclassified roles were not evaluated. Unavailable is not proof of absence.` : undefined;
-  const text = ["Source evidence (only the indicated ranges are included):", coverageNotice, ...merged.map(render), riskNotice, footer, summary,
+  const text = [discoveryNotice, "Source evidence (only the indicated ranges are included):", coverageNotice, ...merged.map(render), riskNotice, footer, summary,
     !merged.length ? "No source fit or matched. Try exact file/line targets or native search." : ""].filter(Boolean).join("\n\n");
   return { text, ranges: merged, hashes: Object.fromEntries([...snapshots].map(([file, source]) => [file, createHash("sha256").update(source).digest("hex")])),
-    notices: [coverageNotice, riskNotice, footer, summary].filter((value): value is string => !!value), complete: true,
-    settings: JSON.stringify({ version: 53, adaptive, intent, connected, risks, preset: options.retrievalPreset ?? "balanced", rerank: process.env.CONTEXTPRO_CHAT_RERANK === "true",
+    notices: [discoveryNotice, coverageNotice, riskNotice, footer, summary].filter((value): value is string => !!value), complete: true,
+    settings: JSON.stringify({ version: 57, adaptive, intent, connected, risks, preset: options.retrievalPreset ?? "balanced", rerank: process.env.CONTEXTPRO_CHAT_RERANK === "true",
       embedding: `${getProvider()}:${getEmbedModelName()}`, chat: options.targets?.length ? "unused" : await chatModelIdentity(options.rootDir) }) };
 }

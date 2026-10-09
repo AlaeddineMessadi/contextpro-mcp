@@ -1,7 +1,7 @@
 // Compatibility adapter for legacy memory graph tests and callers
 // FEATURE: Memory graph compatibility over SQLite-backed project storage
 
-import { fetchEmbedding } from "./embeddings.js";
+import { fetchEmbedding, embedMemoryText, hasCompatibleEmbeddingModel, currentEmbeddingModel } from "./embeddings.js";
 import { getDB, type MemoryEdgeRow, type MemoryNodeInput, type MemoryNodeRow } from "./db.js";
 
 type MemoryType = "concept" | "file" | "symbol" | "note";
@@ -96,9 +96,9 @@ export async function upsertNode(
   metadata?: Record<string, string>,
 ): Promise<LegacyMemoryNode> {
   const db = await getDB(rootDir);
-  const embedding = await embedText(`${label} ${content}`);
+  const embedding = await embedMemoryText(db, `${label} ${content}`).catch(() => []);
   const input = { id: createMemoryNodeId(), type, label, content, metadata } satisfies MemoryNodeInput;
-  const id = db.upsertMemoryNode(input, embedding);
+  const id = db.upsertMemoryNode(input, embedding, currentEmbeddingModel());
   const node = db.peekMemoryNode(id);
   if (!node) throw new Error(`Memory node was not created: ${label}`);
   return legacyNode(node, embedding);
@@ -127,8 +127,8 @@ export async function createRelation(
 
 export async function searchGraph(rootDir: string, query: string, maxDepth: number = 1, topK: number = 5) {
   const db = await getDB(rootDir);
-  const queryVector = await embedText(query);
-  const direct = queryVector.length > 0
+  const queryVector = hasCompatibleEmbeddingModel(db) ? await embedText(query) : [];
+  const direct = queryVector.length > 0 && hasCompatibleEmbeddingModel(db)
     ? db.searchMemoryNodes(queryVector, topK).map((hit) => ({
       node: legacyNode(hit.node),
       distance: hit.distance,

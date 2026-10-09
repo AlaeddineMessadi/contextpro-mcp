@@ -217,6 +217,29 @@ describe("ContextPlusDB", () => {
       db.close();
     });
 
+    it("updates large vector batches without duplicating identities or touching other source types", async () => {
+      const root = await mkdtemp(join(tmpdir(), "contextpro-db-vector-batch-"));
+      await mkdir(join(root, ".contextpro"), { recursive: true });
+      const db = new ContextPlusDB(root);
+      try {
+        const rows = Array.from({length:256},(_,i)=>({sourceId:`path:${i}`,hash:'before',vector:[1,0,0]}));
+        db.upsertEmbeddingsBatch('file_search_cache',rows);
+        db.upsertEmbedding('identifier_cache','path:0',[0,0,1],'other-type');
+        db.upsertEmbeddingsBatch('file_search_cache',[
+          ...rows.map(row=>({...row,hash:'updated',vector:[0,1,0]})),
+          {sourceId:'path:0',hash:'final duplicate',vector:[0,0,1]},
+          {sourceId:'new:_%',hash:'new',vector:[1,0,0]},
+        ]);
+        const result=db.getEmbeddingsByType('file_search_cache');
+        assert.equal(result.length,257);
+        assert.equal(new Set(result.map(row=>row.sourceId)).size,257);
+        assert.equal(result.find(row=>row.sourceId==='path:0').contentHash,'final duplicate');
+        assert.equal(result.find(row=>row.sourceId==='path:0').vector.readFloatLE(8),1);
+        assert.equal(result.find(row=>row.sourceId==='path:255').contentHash,'updated');
+        assert.equal(db.getEmbeddingsByType('identifier_cache')[0].contentHash,'other-type');
+      } finally { db.close(); await rm(root,{recursive:true,force:true}); }
+    });
+
     it("clears incompatible vectors when the provider or model changes", async () => {
       const root = await mkdtemp(join(tmpdir(), "contextpro-db-model-change-"));
       await mkdir(join(root, ".contextpro"), { recursive: true });
@@ -238,6 +261,32 @@ describe("ContextPlusDB", () => {
         db.close();
         await rm(root, { recursive: true, force: true });
       }
+    });
+
+    it("retains rebuilt vectors when a long-lived connection observes a model dimension migration", async () => {
+      const root = await mkdtemp(join(tmpdir(), "contextpro-db-connections-"));
+      await mkdir(join(root, ".contextpro"), { recursive: true });
+      const first = new ContextPlusDB(root);
+      first.recordEmbeddingProvider('ollama','old-model');
+      first.upsertEmbedding('file_search_cache','old.ts',[1,0],'old');
+      const second = new ContextPlusDB(root);
+      try {
+        second.recordEmbeddingProvider('ollama','new-model');
+        second.upsertEmbedding('file_search_cache','fresh.ts',[1,0,0],'fresh');
+        const revision = Number(second.getMeta('embedding_revision'));
+        first.upsertMemoryNode({type:'note',label:'late memory',content:'valid new model'},[1,0,0],{provider:'ollama',model:'new-model'});
+        assert.equal(first.getEmbeddingStats().dimension,3);
+        assert.equal(first.getEmbeddingStats().fileSearch,1);
+        assert.equal(first.getEmbeddingStats().memory,1);
+        assert.equal(first.searchEmbeddings([1,0,0],1,'file_search_cache').length,1);
+        first.upsertMemoryNode({type:'note',label:'stale request',content:'keep text'},[1,0],{provider:'ollama',model:'old-model'});
+        assert.equal(second.getEmbeddingStats().dimension,3);
+        assert.equal(second.getEmbeddingStats().fileSearch,1);
+        assert.equal(second.getEmbeddingStats().memory,1);
+        assert.ok(first.findMemoryNodeByLabel('note','stale request'));
+        first.upsertEmbedding('file_search_cache','next.ts',[1,0,0],'next');
+        assert.ok(Number(second.getMeta('embedding_revision')) > revision);
+      } finally { first.close(); second.close(); await rm(root,{recursive:true,force:true}); }
     });
 
     it("returns empty embedding results when vec metadata exists but tables are missing", async () => {

@@ -141,8 +141,8 @@ function buildAmbiguities(input: {
       ? [`top hit is keyword-only (semantic≈0); it matches the query text but may not be semantically relevant — verify before trusting`]
       : []),
     ...(input.keywordOnlyRequested ? ["keyword_only preset selected; semantic evidence was not requested"] : []),
-    ...(filesAllKeywordOnly && !input.keywordOnlyRequested ? ["file search is keyword-only because semantic embeddings are unavailable or empty"] : []),
-    ...(identifiersAllKeywordOnly && !input.keywordOnlyRequested ? ["identifier search is keyword-only because semantic embeddings are unavailable or empty"] : []),
+    ...(filesAllKeywordOnly && !input.keywordOnlyRequested ? ["file search results are keyword-only; check status for corpus readiness and provider health"] : []),
+    ...(identifiersAllKeywordOnly && !input.keywordOnlyRequested ? ["identifier search results are keyword-only; check status for corpus readiness and provider health"] : []),
     ...(input.files && input.files.results.length > 1 && Math.abs(input.files.results[0].score - input.files.results[1].score) < 5
       ? ["top file matches are close in score"]
       : []),

@@ -7,6 +7,7 @@ import { mkdir } from "fs/promises";
 import { join } from "path";
 import { getProvider, getEmbedModelName, getApiKey, getBaseUrl } from "./provider-config.js";
 import { observeProviderCall } from "./provider-usage.js";
+import type { ContextPlusDB } from "./db.js";
 
 const EMBED_TIMEOUT_MS = 60_000;
 let embedAbortController = new AbortController();
@@ -168,7 +169,9 @@ async function callOpenAIEmbed(input: string[], signal: AbortSignal): Promise<nu
 }
 
 async function callProviderEmbed(input: string[], signal: AbortSignal): Promise<number[][]> {
-  signal = AbortSignal.any([signal, ...(queryDeadline.getStore() ? [queryDeadline.getStore()!] : [])]);
+  const deadline = queryDeadline.getStore();
+  // Cold index preparation must not consume the shared provider budget.
+  if (deadline) signal = AbortSignal.any([signal, deadline.signal ??= AbortSignal.timeout(deadline.timeoutMs)]);
   signal.throwIfAborted();
   if (EMBED_PROVIDER === "openai") {
     return callOpenAIEmbed(input, signal);
@@ -233,6 +236,32 @@ export function getEmbedProvider(): string {
 
 export function getEmbedModel(): string {
   return EMBED_PROVIDER === "openai" ? OPENAI_EMBED_MODEL : EMBED_MODEL;
+}
+
+export function hasCompatibleEmbeddingModel(db: ContextPlusDB): boolean {
+  return db.getMeta("embed_provider") === getEmbedProvider() && db.getMeta("embed_model") === getEmbedModel();
+}
+
+export function currentEmbeddingModel(): {provider: string; model: string} {
+  return {provider: getEmbedProvider(), model: getEmbedModel()};
+}
+
+/** Include durable identity/population changes made by other MCP workers. */
+export function embeddingCacheIdentity(db: ContextPlusDB): string {
+  return JSON.stringify([getEmbedProvider(), getEmbedModel(), db.getMeta("embed_provider"), db.getMeta("embed_model"), db.getMeta("embedding_revision")]);
+}
+
+/** Memory writes cannot migrate another worker's vector space implicitly. */
+export async function embedMemoryText(db: ContextPlusDB, text: string): Promise<number[]> {
+  db.transaction(() => {
+    if (!db.getMeta("embed_provider") && !db.getMeta("embed_model")) {
+      const stats = db.getEmbeddingStats();
+      if (!stats.total && !stats.memory) db.recordEmbeddingProvider(getEmbedProvider(), getEmbedModel());
+    }
+  });
+  if (!hasCompatibleEmbeddingModel(db)) return [];
+  const [vector] = await fetchEmbedding(text);
+  return hasCompatibleEmbeddingModel(db) ? vector : [];
 }
 
 function getErrorMessage(error: unknown): string {
@@ -562,6 +591,7 @@ const FILE_SEARCH_SOURCE_TYPE = "file_search_cache";
 async function loadCache(rootDir: string): Promise<EmbeddingCache> {
   const { getDB, bufferToVec } = await import("./db.js");
   const db = await getDB(rootDir);
+  if (!hasCompatibleEmbeddingModel(db)) return {};
   const rows = db.getEmbeddingsByType(FILE_SEARCH_SOURCE_TYPE);
   const cache: EmbeddingCache = {};
   for (const r of rows) {
@@ -604,11 +634,11 @@ function getMatchedSymbolEntries(symbols: SymbolSearchEntry[], queryTerms: Set<s
 
 // Query vectors are shared only inside one retrieval request, never across projects or turns.
 const queryEmbeddings = new AsyncLocalStorage<Map<string, Promise<number[]>>>();
-const queryDeadline = new AsyncLocalStorage<AbortSignal>();
+const queryDeadline = new AsyncLocalStorage<{timeoutMs: number; signal?: AbortSignal}>();
 export function withQueryEmbeddingCache<T>(fn: () => Promise<T>): Promise<T> {
   const configured = Number(process.env.CONTEXTPRO_QUERY_EMBED_TIMEOUT_MS ?? 1500);
   const timeout = Number.isFinite(configured) ? Math.max(100, Math.min(10000, Math.trunc(configured))) : 1500;
-  return queryEmbeddings.getStore() ? fn() : queryDeadline.run(AbortSignal.timeout(timeout), () => queryEmbeddings.run(new Map(), fn));
+  return queryEmbeddings.getStore() ? fn() : queryDeadline.run({timeoutMs: timeout}, () => queryEmbeddings.run(new Map(), fn));
 }
 export function fetchQueryEmbedding(query: string): Promise<number[]> {
   const cache = queryEmbeddings.getStore();
@@ -642,6 +672,10 @@ export class SearchIndex {
     for (const terms of this.lexicalDocuments) for (const term of terms) frequencies.set(term, (frequencies.get(term) ?? 0) + 1);
     this.inverseFrequency = new Map([...frequencies].map(([term, count]) => [term, Math.log(1 + (docs.length + 1) / (count + 1))]));
     if (skipEmbeddings) { this.vectors = new Array(docs.length); return; }
+    if (!cacheOnly) {
+      const { getDB } = await import("./db.js");
+      (await getDB(rootDir)).recordEmbeddingProvider(getEmbedProvider(), getEmbedModel());
+    }
     const cache = await loadCache(rootDir);
     const uncached: { idx: number; text: string; hash: string }[] = [];
     const dirtyKeys = new Set<string>();

@@ -7,6 +7,8 @@ import { analyzeFile, analyzeContent, flattenSymbols, isSupportedFile } from "..
 import {
   fetchEmbedding,
   fetchQueryEmbedding,
+  hasCompatibleEmbeddingModel,
+  embeddingCacheIdentity,
   getEmbeddingBatchSize,
   type EmbeddingCache,
 } from "../core/embeddings.js";
@@ -18,6 +20,7 @@ const IDENTIFIER_SOURCE_TYPE = "identifier_cache";
 
 async function loadIdentifierCache(rootDir: string): Promise<EmbeddingCache> {
   const db = await getDB(rootDir);
+  if (!hasCompatibleEmbeddingModel(db)) return {};
   const rows = db.getEmbeddingsByType(IDENTIFIER_SOURCE_TYPE);
   const cache: EmbeddingCache = {};
   for (const r of rows) {
@@ -128,6 +131,7 @@ const TRIVIAL_IDENTIFIER_NAMES = new Set([
 let cachedRootDir: string | null = null;
 let cachedAt = 0;
 let cachedGeneration = -1;
+let cachedEmbeddingIdentity = "";
 let cachedLexicalOnly = false;
 let cachedIndex: IdentifierIndex | null = null;
 
@@ -298,7 +302,8 @@ async function buildIdentifierDocsForFile(rootDir: string, relativePath: string)
 async function buildIdentifierIndex(rootDir: string, skipEmbeddings = false): Promise<IdentifierIndex> {
   const db = await getDB(rootDir);
   const generation = db.getIndexGeneration();
-  if (cachedIndex && cachedRootDir === rootDir && cachedGeneration === generation && cachedLexicalOnly === skipEmbeddings && Date.now() - cachedAt < INDEX_TTL_MS) {
+  const embeddingIdentity = embeddingCacheIdentity(db);
+  if (cachedIndex && cachedRootDir === rootDir && cachedGeneration === generation && cachedEmbeddingIdentity === embeddingIdentity && cachedLexicalOnly === skipEmbeddings && Date.now() - cachedAt < INDEX_TTL_MS) {
     return cachedIndex;
   }
 
@@ -355,6 +360,7 @@ async function buildIdentifierIndex(rootDir: string, skipEmbeddings = false): Pr
     cachedRootDir = rootDir;
     cachedAt = Date.now();
     cachedGeneration = generation;
+    cachedEmbeddingIdentity = embeddingIdentity;
     return empty;
   }
 
@@ -378,6 +384,7 @@ async function buildIdentifierIndex(rootDir: string, skipEmbeddings = false): Pr
   cachedRootDir = rootDir;
   cachedAt = Date.now();
   cachedGeneration = generation;
+  cachedEmbeddingIdentity = embeddingIdentity;
   return index;
 }
 

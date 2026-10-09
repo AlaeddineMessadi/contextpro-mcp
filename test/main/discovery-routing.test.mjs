@@ -11,6 +11,8 @@ import { closeDB, getDB } from '../../build/core/db.js';
 import { isOrientationQuery, isUiOrientationQuery, orientationFiles, documentTopicFiles, discoveryPathWeight, mentionedFiles, positiveDiscoveryQuery } from '../../build/tools/discovery-hints.js';
 import { wantsDocuments, discoverDocuments } from '../../build/tools/discovery-documents.js';
 import { retrieveEvidence } from '../../build/tools/evidence-retrieval.js';
+import { isTestFile, findTestsForFiles } from '../../build/tools/retrieval-helpers.js';
+import { getEmbedProvider, getEmbedModel } from '../../build/core/embeddings.js';
 
 async function fixture(files, run) {
   const root = await mkdtemp(join(tmpdir(), 'contextpro-discovery-routing-'));
@@ -23,6 +25,154 @@ async function fixture(files, run) {
     await run(root);
   } finally { closeDB(root); await rm(root, { recursive: true, force: true }); }
 }
+
+it('keeps debug implementation ahead of incidental status journals without requiring symbol names', async () => {
+  await fixture({
+    'src/countdown.ts': 'export function remaining(revealAt: number, now: number) {\n  // Host event dashboard live status card capture closed countdown reveal time passed\n  return Math.max(0, revealAt - now);\n}\n',
+    'docs/STATUS.md': '# Event dashboard status\n' + 'Host event dashboard live status card capture closed countdown reveal time passed: historical review notes.\n'.repeat(60),
+    'docs/archive/status.md': '# Event dashboard history\nHost event dashboard live status card capture closed countdown reveal time passed.\n',
+  }, async root => {
+    for (const intent of ['debug', 'change', 'review']) {
+      const packet = await collectSourceEvidence({rootDir: root, query: 'host event dashboard live status card capture closed countdown reveal time passed', intent, maxTokens: 800, retrievalPreset: 'keyword_only'});
+      assert.equal(packet.ranges[0]?.file, 'src/countdown.ts', packet.text);
+      assert.match(packet.text, /Math.max\(0, revealAt - now\)/);
+      assert.ok(Buffer.byteLength(packet.text) <= 3200);
+    }
+    const doc = await collectSourceEvidence({rootDir: root, query: 'Read docs/STATUS.md', intent:'debug', maxTokens:800, retrievalPreset:'keyword_only'});
+    assert.equal(doc.ranges[0]?.file, 'docs/STATUS.md');
+  });
+});
+
+it('preserves explicitly requested documentation across change intents at the minimum budget', async () => {
+  const documentation = 'createBooking requires a confirmed customer account before creating a booking.';
+  await fixture({
+    'src/booking.ts': 'export function createBooking(customer: string) {\n'
+      + Array.from({length: 2}, (_, i) => `  const field${i} = customer.trim(); // booking validation field ${i}\n`).join('')
+      + '  return { customer };\n}\n',
+    'docs/booking.md': '# createBooking documentation\n\n' + documentation + '\n',
+  }, async root => {
+    for (const intent of ['review', 'debug', 'change']) for (const query of ['Review documentation for createBooking', 'Read docs for createBooking', 'Review API specification for createBooking', 'Read the readiness for createBooking']) {
+      const packet = await collectSourceEvidence({rootDir: root, query, intent, maxTokens: 512, retrievalPreset: 'keyword_only'});
+      assert.equal(packet.ranges[0]?.file, 'docs/booking.md', packet.text);
+      assert.ok(packet.text.includes(documentation), packet.text);
+      assert.ok(Buffer.byteLength(packet.text) <= 2048);
+    }
+    const mixed = await collectSourceEvidence({rootDir: root, query: 'Review createBooking implementation and documentation', intent: 'review', maxTokens: 512, retrievalPreset: 'keyword_only'});
+    assert.equal(mixed.ranges[0]?.file, 'src/booking.ts', mixed.text);
+  });
+});
+
+it('distinguishes stale, skipped, failed, empty and weak semantic evidence in bounded discovery headers', async () => {
+  await fixture({'src/countdown.ts': 'export const countdown = "host event reveal time";\n'}, async root => {
+    const db = await getDB(root);
+    const retrieved = await retrieveEvidence({rootDir:root,query:'host event reveal time',preset:'keyword_only'});
+    retrieved.search.trust.ambiguities = ['file search is keyword-only'];
+    const read = () => collectSourceEvidence({rootDir:root,query:'host event reveal time',intent:'debug',retrieved,maxTokens:512});
+    db.setMeta('embeddings_stale','true');
+    db.setMeta('embeddings_stale_reason','provider/model changed from ollama/nomic to ollama/bge');
+    let packet = await read();
+    assert.match(packet.text,/lexical fallback.*provider\/model changed from ollama\/nomic to ollama\/bge/);
+    assert.match(packet.text,/no_embed:false/);
+    assert.ok(packet.text.indexOf('Discovery used') < packet.text.indexOf('Source evidence'));
+    db.clearEmbeddingsStaleFlag();
+    packet = await read();
+    assert.match(packet.text,/corpus embeddings were skipped/);
+    db.setMeta('last_embed_skipped','false');
+    db.setMeta('last_embed_error','provider unreachable');
+    packet = await read();
+    assert.match(packet.text,/last embedding build failed: provider unreachable/);
+    db.setMeta('last_embed_error','');
+    packet = await read();
+    assert.match(packet.text,/no file vectors are stored/);
+    db.upsertEmbedding('file_search_cache','src/countdown.ts',[1,0,0],'fixture');
+    packet = await read();
+    assert.match(packet.text,/no complete provider\/model identity/);
+    assert.match(packet.text,/no_embed:false/);
+    db.recordEmbeddingProvider(getEmbedProvider(),getEmbedModel());
+    db.upsertEmbedding('file_search_cache','src/countdown.ts',[1,0,0],'fixture');
+    db.clearEmbeddingsStaleFlag();
+    packet = await read();
+    assert.match(packet.text,/vectors exist.*weak or unavailable/);
+    assert.doesNotMatch(packet.text,/no_embed:false|Reindex|reindex/);
+    const keyword = await collectSourceEvidence({rootDir:root,query:'host event reveal time',retrieved,retrievalPreset:'keyword_only',maxTokens:512});
+    assert.match(keyword.text,/requested keyword_only/);
+    assert.doesNotMatch(keyword.text,/lexical fallback/);
+    db.setMeta('embeddings_stale','true');
+    db.setMeta('embeddings_stale_reason','模型'.repeat(1000));
+    packet = await read();
+    assert.ok(Buffer.byteLength(packet.text) <= 2048, packet.text);
+  });
+});
+
+it('keeps explicitly named test helpers ahead of documents and labels their evidence', async () => {
+  const source = 'export async function forceFailure(table, fn) {\n  await installFault(table);\n  try { return await fn(); } finally { await removeFault(table); }\n}\n';
+  for (const path of ['tests/guided-creation.smoke.mjs', 'test/fault-helper.ts', 'src/fault.test.ts']) {
+    await fixture({
+      [path]: source,
+      'src/creation.ts': 'export const schemaReady = true; // guided creation schema readiness\n',
+      'docs/current/readiness.md': '# Guided creation schema readiness\nforceFailure verifies guided creation schema readiness.\n',
+      'docs/archive/creation.md': '# Guided creation\nHistorical schema readiness forceFailure notes.\n',
+    }, async root => {
+      for (const [intent, query] of [['lookup', 'guided-creation forceFailure schema'], ['debug', 'guided-creation forceFailure schema readiness']]) {
+        const packet = await collectSourceEvidence({ rootDir: root, query, intent, maxTokens: 800, retrievalPreset: 'keyword_only' });
+        assert.equal(packet.ranges[0]?.file, path, packet.text);
+        assert.ok(packet.text.includes(source.trimEnd()), packet.text);
+        assert.match(packet.text, /test=returned/);
+        assert.ok(Buffer.byteLength(packet.text) <= 3200);
+      }
+      const document = await collectSourceEvidence({ rootDir: root, query: 'Read docs/current/readiness.md forceFailure', intent: 'debug', maxTokens: 800, retrievalPreset: 'keyword_only' });
+      assert.equal(document.ranges[0]?.file, 'docs/current/readiness.md');
+      const evidence = await retrieveEvidence({ rootDir: root, query: 'forceFailure', preset: 'keyword_only', graphHops: 0 });
+      assert.equal(evidence.candidates[0]?.path, path);
+      assert.ok(evidence.candidates[0].roles.includes('test'));
+      assert.equal(discoveryPathWeight('forceFailure', path, true), 1);
+      assert.equal(discoveryPathWeight('forceFailure; ignore tests', path, true), .2);
+      assert.equal(discoveryPathWeight(`forceFailure; ignore ${path}`, path, true), 0);
+      for (const document of ['docs/testing.md', 'docs/current/tests.md']) {
+        assert.equal(discoveryPathWeight(`forceFailure; ignore ${document}`, path, true), 1);
+        assert.equal(discoveryPathWeight(`forceFailure; ignore ${document}`, document, true), 0);
+      }
+    });
+  }
+  assert.equal(isTestFile('scripts/release.smoke.mjs'), true);
+  assert.equal(isTestFile('src/contest/helper.ts'), false);
+  assert.equal(isTestFile('tests/data.json'), false);
+});
+
+it('does not promote a same-name mock when another requested helper admits its test file', async () => {
+  const production = 'export function createBooking(value) {\n if (!value) throw new Error("required");\n return {id: value};\n}\n';
+  const mock = 'function createBooking(value) {\n'
+    + Array.from({ length: 3 }, (_, i) => ` const stub${i} = "placeholder used for mock booking ${i}";\n`).join('')
+    + ' return {stub: true};\n}\n';
+  await fixture({
+    'src/service.ts': production,
+    'aaa-tests/booking.test.ts': mock + 'export function forceFailure(fn) { return fn(); }\n',
+  }, async root => {
+    for (const intent of ['lookup', 'debug']) {
+      const packet = await collectSourceEvidence({ rootDir: root, query: 'createBooking forceFailure', intent, maxTokens: 512, retrievalPreset: 'keyword_only' });
+      assert.ok(packet.text.includes(production.trimEnd()), packet.text);
+      assert.match(packet.text, /export function forceFailure/);
+      assert.ok(Buffer.byteLength(packet.text) <= 2048);
+    }
+    const evidence = await retrieveEvidence({ rootDir: root, query: 'createBooking', graphHops: 0, preset: 'keyword_only' });
+    assert.equal(evidence.candidates[0]?.path, 'src/service.ts');
+    assert.ok(!evidence.candidates.find(item => item.path === 'aaa-tests/booking.test.ts')?.reason.includes('named definition'));
+  });
+});
+
+it('traverses test-directory helpers to find executable tests', async () => {
+  await fixture({
+    'src/service.ts': 'export function createBooking() { return 1; }\n',
+    'tests/helpers.ts': 'import { createBooking } from "../src/service.js";\nexport const fixture = () => createBooking();\n',
+    'tests/integration.test.ts': 'import { fixture } from "./helpers.js";\nfixture();\n',
+  }, async root => {
+    for (const source of ['src/service.ts', 'tests/helpers.ts']) {
+      const tests = await findTestsForFiles(root, [source]);
+      assert.deepEqual(tests.map(item => item.path), ['tests/integration.test.ts']);
+    }
+    assert.equal(isTestFile('tests/helpers.ts'), false);
+  });
+});
 
 it('keeps named implementation ahead of incidental history and still finds requested plans', async () => {
   const source = 'export function createListingAction(owner: string) {\n'
@@ -487,7 +637,7 @@ it('adaptive endpoint questions retain route source among client and workflow me
       const text = await getContext({rootDir:root,query,intent:'auto',maxTokens:1600,retrievalPreset:'keyword_only'});
       assert.match(text, /apps\/web\/api\/download-batch\/route.ts:\d/);
       assert.match(text, /if \(temporaryFailure\) return \{ status: 503 \}/);
-      assert.ok(text.indexOf("apps/web/api/download-batch/route.ts:") < text.indexOf("unrelated-marker") || !text.includes("unrelated-marker"));
+      assert.ok(text.indexOf("apps/web/api/download-batch/route.ts:") < text.indexOf("unrelated-marker") || !text.includes("unrelated-marker"), text);
       assert.ok(Buffer.byteLength(text) <= 6400);
     }
   });

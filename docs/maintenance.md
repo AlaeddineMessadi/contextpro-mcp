@@ -22,6 +22,33 @@ Repair a missing compatible cache with the failing runtime's `doctor --fix`; do 
 
 Direct imports of built tool modules inherit the shell environment, not the MCP client's configuration. When validating a real project, use the client's provider/model settings as well as its Node runtime: a different model identity can clear regenerable vectors. Prefer temporary fixtures for isolated probes.
 
+## Recover semantic search
+
+A fresh structural index means files, symbols and imports are current. Automatic
+query refreshes intentionally skip corpus embeddings. They do not populate a
+missing semantic index. A semantic rebuild under a different provider/model
+invalidates incompatible vectors, including when the models share a dimension.
+Structural-only refreshes preserve the existing vector-space identity; workers
+with a different model use lexical evidence instead of comparing incompatible vectors.
+
+Use the same intended embedding provider/model in each client. Inspect
+`status({root:"/absolute/project/root",format:"json"})`: check `embeddings`,
+including the stored model, stale reason, counts, skipped flag and last error.
+With that provider available, run
+`reindex({root:"/absolute/project/root",no_embed:false,auto_hubs:false})`.
+Also unset `CONTEXTPRO_REINDEX_NO_EMBED`, which overrides the argument.
+In the lean catalog, discover the current schema with
+`discover_tools({root:"/absolute/project/root",enable:["status","reindex"]})`;
+if the client does not refresh its catalog, execute through
+`discover_tools({root:"/absolute/project/root",call:{name:"reindex",arguments:{no_embed:false,auto_hubs:false}}})`.
+
+Rebuild each affected project/worktree once. Large local corpora can take several
+minutes. If a client times out, check status for an ongoing rebuild before starting
+another one. After completion, verify nonzero file/identifier vectors, no stale
+flag or embedding error, and replay a representative query. A weak semantic match
+with healthy vectors alone is not a reason to rebuild. Existing MCP processes need
+reconnecting to load new server code or changed client model settings.
+
 ## Documentation source of truth
 
 - `README.md`: concise entry point; link to detailed guides instead of repeating every environment setting.

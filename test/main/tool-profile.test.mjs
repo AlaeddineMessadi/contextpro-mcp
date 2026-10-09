@@ -1,5 +1,8 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { mkdtemp, writeFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 describe("tool profiles and MCP annotations", () => {
   it("defaults to workflow and recognizes explicit expert profiles", async () => {
@@ -60,6 +63,47 @@ describe("tool profiles and MCP annotations", () => {
 });
 
 describe('workflow profile budget', () => {
+  it('keeps lean catalogs and exact reads available across independent client lifetimes', async () => {
+    const { McpServer } = await import('@modelcontextprotocol/sdk/server/mcp.js');
+    const { Client } = await import('@modelcontextprotocol/sdk/client/index.js');
+    const { InMemoryTransport } = await import('@modelcontextprotocol/sdk/inMemory.js');
+    const { registerTools } = await import('../../build/tools/register-tools.js');
+    const root = await mkdtemp(join(tmpdir(), 'contextpro-catalog-lifetime-'));
+    const old = process.env.CONTEXTPRO_TOOL_PROFILE;
+    const sessions = [];
+    process.env.CONTEXTPRO_TOOL_PROFILE = 'lean';
+    const start = async () => {
+      const server = new McpServer({ name: 'profile', version: '0' });
+      registerTools(server, root, handler => handler);
+      const client = new Client({ name: 'test', version: '0' });
+      const [a, b] = InMemoryTransport.createLinkedPair();
+      sessions.push({ server, client });
+      await Promise.all([server.connect(a), client.connect(b)]);
+      return { server, client };
+    };
+    const check = async client => {
+      assert.deepEqual((await client.listTools()).tools.map(t => t.name).sort(), ['context', 'discover_tools', 'exact_references']);
+      const response = await client.callTool({ name: 'context', arguments: { root, targets: [{ file: 'value.ts' }], max_tokens: 512 } });
+      assert.ok(!response.isError);
+      assert.match(response.content[0].text, /export const value = 1/);
+    };
+    try {
+      await writeFile(join(root, 'value.ts'), 'export const value = 1;\n');
+      const first = await start(), second = await start();
+      await check(first.client); await check(second.client);
+      await first.client.callTool({ name: 'discover_tools', arguments: { root, enable: ['status'] } });
+      await check(second.client);
+      await first.client.close(); await first.server.close();
+      await check(second.client);
+      await check((await start()).client);
+    } finally {
+      for (const { client, server } of sessions) { await client.close(); await server.close(); }
+      if (old === undefined) delete process.env.CONTEXTPRO_TOOL_PROFILE;
+      else process.env.CONTEXTPRO_TOOL_PROFILE = old;
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it('exposes references immediately while keeping profiles bounded', async () => {
     const { McpServer } = await import('@modelcontextprotocol/sdk/server/mcp.js');
     const { Client } = await import('@modelcontextprotocol/sdk/client/index.js');

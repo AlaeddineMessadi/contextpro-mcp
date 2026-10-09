@@ -7,7 +7,8 @@ import { createHash, randomUUID } from "node:crypto";
 import { bindEvidence, createValidationSnapshot, validationState, memoryEvidenceStatus, evidenceConfigurationFiles, type EvidenceFile } from "../core/evidence-state.js";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { fetchEmbedding, withQueryEmbeddingCache } from "../core/embeddings.js";
+import { embedMemoryText, embeddingCacheIdentity, withQueryEmbeddingCache, currentEmbeddingModel } from "../core/embeddings.js";
+import { getProvider, getEmbedModelName } from "../core/provider-config.js";
 import { getDB, type MemoryNodeInput, type MemoryNodeRow } from "../core/db.js";
 import { createPromotedPattern, listPromotedPatterns, listRegisteredWorkspaces, loadProjectConfig } from "../core/project-config.js";
 import { unifiedSearchData } from "./search.js";
@@ -29,7 +30,6 @@ import { findDirectoryPriorMatches } from "./directory-prior.js";
 import { connectedRetrievalEnabled, retrieveEvidence } from "./evidence-retrieval.js";
 import { collectSourceEvidence, type Excerpt } from "./context.js";
 import { chatModelIdentity } from "../core/chat-model.js";
-import { getProvider, getEmbedModelName } from "../core/provider-config.js";
 
 type OutputFormat = "text" | "json";
 
@@ -99,11 +99,12 @@ async function taskPackArtifactKey(task: string, maxFiles: number, opts: TaskPac
   return createHash("sha256").update(JSON.stringify({
     task,
     connected,
-    retrievalVersion: 49,
+    retrievalVersion: 53,
     adaptive: process.env.CONTEXTPRO_ADAPTIVE_CONTEXT === "true",
     rerank: process.env.CONTEXTPRO_CHAT_RERANK === "true",
     chatModel: process.env.CONTEXTPRO_CHAT_RERANK === "true" ? await chatModelIdentity(opts.rootDir) : null,
     embeddingModel: `${getProvider()}:${getEmbedModelName()}`,
+    embeddingState: embeddingCacheIdentity(await getDB(opts.rootDir)),
     preset: opts.preset ?? "balanced",
     graphHops,
     graphMaxFiles: graphHops ? (connected ? Math.max(0, Math.min(opts.graphMaxFiles ?? 8, 16)) : Math.max(1, Math.min(opts.graphMaxFiles ?? 4, 10))) : 0,
@@ -1524,7 +1525,7 @@ export async function recordTaskMemory(options: MemoryRecordTaskOptions): Promis
   };
   let embedding: number[] = [];
   try {
-    [embedding] = await fetchEmbedding(contentParts.join("\n"));
+    embedding = await embedMemoryText(db, contentParts.join("\n"));
   } catch {
     // Embedding provider unavailable — store node without vector; keyword search still works.
   }
@@ -1538,7 +1539,7 @@ export async function recordTaskMemory(options: MemoryRecordTaskOptions): Promis
   const taskWasNew = !db.findMemoryNodeByLabel("note", node.label);
   const taskMemoryId = db.transaction(() => {
     for(const id of supersedes) if(!db.getMemoryNode(id)) throw new Error(`Superseded memory disappeared: ${id}`);
-    const id = db.upsertMemoryNode(node, embedding.length > 0 ? embedding : undefined);
+    const id = db.upsertMemoryNode(node, embedding.length > 0 ? embedding : undefined, currentEmbeddingModel());
     for (const previous of supersedes) db.upsertMemoryEdge({ source: previous, target: id, relation: "resolved_by", metadata: { relation_kind: "supersedes" } });
     return id;
   });

@@ -6,7 +6,7 @@ import { memoryEvidenceStatus } from "../core/evidence-state.js";
 import { promisify } from "util";
 import { readFile } from "fs/promises";
 import { basename, join } from "path";
-import { fetchQueryEmbedding } from "../core/embeddings.js";
+import { fetchQueryEmbedding, hasCompatibleEmbeddingModel } from "../core/embeddings.js";
 import { getDB } from "../core/db.js";
 import { loadProjectConfig } from "../core/project-config.js";
 import { discoverHubs, parseHubFile } from "../core/hub.js";
@@ -41,9 +41,14 @@ export function parseJsonArray(raw: string | null): string[] {
 
 export function isTestFile(path: string): boolean {
   const name = basename(path).toLowerCase();
-  return /\.test\.\w+$|\.spec\.\w+$|\.demo\.\w+$/.test(path)
+  return /\.(?:test|spec|demo|smoke)\.\w+$/.test(path)
     || /^test_[^/]+\.py$/.test(name)
     || /_test\.py$/.test(name);
+}
+
+// Helpers are test evidence, but test selection must traverse them to runnable tests.
+export function isTestEvidence(path: string): boolean {
+  return isTestFile(path) || /(?:^|\/)(?:tests?|__tests__)\/.*\.(?:[cm]?[jt]sx?|py)$/i.test(path);
 }
 
 function baseNameWithoutTestAffixes(path: string): string {
@@ -148,14 +153,14 @@ export async function getProjectMemoryHits(rootDir: string, query: string, topK:
   const clientId = config?.clientId ?? "";
   let queryVector: number[];
   try {
-    queryVector = keywordOnly ? [] : await fetchQueryEmbedding(query);
+    queryVector = keywordOnly || !hasCompatibleEmbeddingModel(db) ? [] : await fetchQueryEmbedding(query);
   } catch {
     queryVector = [];
   }
   const terms = query.toLowerCase().match(/[\p{L}\p{N}_]+/gu) ?? [];
   const lexicalHits = db.listMemoryNodes().map((node) => ({ node, distance: 1, score: terms.reduce((sum, term) => sum + Number(`${node.label} ${node.content}`.toLowerCase().includes(term)), 0) }))
     .filter((hit) => hit.score > 0).sort((a, b) => b.score - a.score || a.node.id.localeCompare(b.node.id));
-  const semanticHits = queryVector.length ? db.searchMemoryNodes(queryVector, Math.max(topK * 6, 18)) : [];
+  const semanticHits = queryVector.length && hasCompatibleEmbeddingModel(db) ? db.searchMemoryNodes(queryVector, Math.max(topK * 6, 18)) : [];
   const hits = [...semanticHits, ...lexicalHits.filter((hit) => !semanticHits.some((candidate) => candidate.node.id === hit.node.id))];
   const filtered: Array<{ id: string; kind: string; summary: string }> = [];
   for (const hit of hits) {

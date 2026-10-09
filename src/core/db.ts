@@ -295,7 +295,11 @@ export function bufferToVec(buf: Buffer): number[] {
 
 export class ContextPlusDB {
   private db: DatabaseType;
-  private vecDimension: number | null = null;
+  // Other MCP connections can migrate the vector tables while this one lives.
+  private get vecDimension(): number | null {
+    const value = this.getMeta("vec_dimension");
+    return value ? Number.parseInt(value, 10) : null;
+  }
   private rootDir: string;
 
   constructor(rootDir: string) {
@@ -394,8 +398,7 @@ export class ContextPlusDB {
   private ensureVecTables(): void {
     const dimRow = this.db.prepare("SELECT value FROM meta WHERE key = 'vec_dimension'").get() as { value: string } | undefined;
     if (dimRow) {
-      this.vecDimension = parseInt(dimRow.value, 10);
-      this.createVecTablesIfNeeded(this.vecDimension);
+      this.createVecTablesIfNeeded(parseInt(dimRow.value, 10));
     }
   }
 
@@ -424,20 +427,26 @@ export class ContextPlusDB {
       this.db.exec("DROP TABLE IF EXISTS embeddings");
       this.db.exec("DROP TABLE IF EXISTS memory_embeddings");
       this.bumpMemoryRevision();
+      this.bumpEmbeddingRevision();
       this.setMeta("embeddings_stale", "true");
       this.setMeta("embeddings_stale_reason", `dimension changed from ${this.vecDimension} to ${dim}`);
     }
-    this.vecDimension = dim;
     this.createVecTablesIfNeeded(dim);
     this.db.prepare("INSERT OR REPLACE INTO meta (key, value) VALUES ('vec_dimension', ?)").run(String(dim));
   }
 
   recordEmbeddingProvider(provider: string, model: string): void {
+    this.db.transaction(() => this.recordEmbeddingProviderInTransaction(provider, model)).immediate();
+  }
+
+  private recordEmbeddingProviderInTransaction(provider: string, model: string): void {
     const previousProvider = this.getMeta("embed_provider");
     const previousModel = this.getMeta("embed_model");
-    if (previousProvider && previousModel && (previousProvider !== provider || previousModel !== model)) {
+    const missingIdentity = !previousProvider || !previousModel;
+    const populatedWithoutIdentity = missingIdentity && (() => { const stats = this.getEmbeddingStats(); return stats.total > 0 || stats.memory > 0; })();
+    if (populatedWithoutIdentity || (!missingIdentity && (previousProvider !== provider || previousModel !== model))) {
       process.stderr.write(
-        `[contextpro/db] WARNING: embedding provider/model changed from ${previousProvider}/${previousModel} to ${provider}/${model}. ` +
+        `[contextpro/db] WARNING: embedding provider/model changed from ${previousProvider || "unknown"}/${previousModel || "unknown"} to ${provider}/${model}. ` +
         `Cached vectors are being cleared; run reindex to rebuild.\n`,
       );
       // Content hashes alone cannot validate vectors across embedding models. This is
@@ -446,8 +455,9 @@ export class ContextPlusDB {
       if (this.tableExists("embeddings")) this.db.exec("DELETE FROM embeddings");
       if (this.tableExists("memory_embeddings")) this.db.exec("DELETE FROM memory_embeddings");
       this.bumpMemoryRevision();
+      this.bumpEmbeddingRevision();
       this.setMeta("embeddings_stale", "true");
-      this.setMeta("embeddings_stale_reason", `provider/model changed from ${previousProvider}/${previousModel} to ${provider}/${model}`);
+      this.setMeta("embeddings_stale_reason", `provider/model changed from ${previousProvider || "unknown"}/${previousModel || "unknown"} to ${provider}/${model}`);
     }
     this.setMeta("embed_provider", provider);
     this.setMeta("embed_model", model);
@@ -569,24 +579,37 @@ export class ContextPlusDB {
   }
 
   upsertEmbedding(sourceType: string, sourceId: number | string, vector: number[] | Float32Array, hash: string): void {
-    this.ensureVecDimension(vector.length);
-    this.db.prepare("DELETE FROM embeddings WHERE source_type = ? AND source_id = ?").run(sourceType, String(sourceId));
-    this.db.prepare("INSERT INTO embeddings (vector, source_type, source_id, content_hash) VALUES (?, ?, ?, ?)")
-      .run(vecToBuffer(vector), sourceType, String(sourceId), hash);
+    this.upsertEmbeddingsBatch(sourceType, [{sourceId: String(sourceId), vector, hash}]);
   }
 
   upsertEmbeddingsBatch(sourceType: string, entries: Array<{ sourceId: string; vector: number[] | Float32Array; hash: string }>): void {
     if (entries.length === 0) return;
-    this.ensureVecDimension(entries[0].vector.length);
-    const del = this.db.prepare("DELETE FROM embeddings WHERE source_type = ? AND source_id = ?");
-    const ins = this.db.prepare("INSERT INTO embeddings (vector, source_type, source_id, content_hash) VALUES (?, ?, ?, ?)");
     const tx = this.db.transaction((rows: typeof entries) => {
-      for (const r of rows) {
-        del.run(sourceType, r.sourceId);
-        ins.run(vecToBuffer(r.vector), sourceType, r.sourceId, r.hash);
+      this.ensureVecDimension(rows[0].vector.length);
+      // vec0 auxiliary columns have no index. Resolve existing identities once;
+      // scanning the growing vector table before every insert is quadratic.
+      const wanted = new Set(rows.map(row => row.sourceId));
+      const existing = new Map<string, Array<number | bigint>>();
+      const stored = this.db.prepare("SELECT rowid, source_id FROM embeddings WHERE source_type = ?").all(sourceType) as Array<{rowid: number; source_id: string}>;
+      for (const row of stored) {
+        if (!wanted.has(row.source_id)) continue;
+        const ids = existing.get(row.source_id) ?? [];
+        ids.push(row.rowid); existing.set(row.source_id, ids);
       }
+      const del = this.db.prepare("DELETE FROM embeddings WHERE rowid = ?");
+      const ins = this.db.prepare("INSERT INTO embeddings (vector, source_type, source_id, content_hash) VALUES (?, ?, ?, ?)");
+      for (const r of rows) {
+        for (const id of existing.get(r.sourceId) ?? []) del.run(id);
+        const inserted = ins.run(vecToBuffer(r.vector), sourceType, r.sourceId, r.hash);
+        existing.set(r.sourceId, [inserted.lastInsertRowid]);
+      }
+      this.bumpEmbeddingRevision();
     });
-    tx(entries);
+    tx.immediate(entries);
+  }
+
+  private bumpEmbeddingRevision(): void {
+    this.db.prepare("INSERT INTO meta (key, value) VALUES ('embedding_revision', '1') ON CONFLICT(key) DO UPDATE SET value = CAST(value AS INTEGER) + 1").run();
   }
 
   getEmbeddingsByType(sourceType: string): Array<{ sourceId: string; contentHash: string; vector: Buffer }> {
@@ -635,7 +658,8 @@ export class ContextPlusDB {
 
   deleteEmbeddingsByPrefix(sourceType: string, prefix: string): void {
     if (!this.hasVectorTables()) return;
-    this.db.prepare("DELETE FROM embeddings WHERE source_type = ? AND source_id LIKE ?").run(sourceType, `${prefix}%`);
+    const result = this.db.prepare("DELETE FROM embeddings WHERE source_type = ? AND source_id LIKE ?").run(sourceType, `${prefix}%`);
+    if (result.changes) this.bumpEmbeddingRevision();
   }
 
   searchEmbeddings(queryVector: number[] | Float32Array, topK: number, sourceType?: string): EmbeddingMatch[] {
@@ -677,7 +701,14 @@ export class ContextPlusDB {
     this.db.prepare("INSERT INTO meta (key, value) VALUES ('memory_revision', '1') ON CONFLICT(key) DO UPDATE SET value = CAST(value AS INTEGER) + 1").run();
   }
 
-  upsertMemoryNode(input: MemoryNodeInput, embedding?: number[]): string {
+  upsertMemoryNode(input: MemoryNodeInput, embedding?: number[], model?: {provider: string; model: string}): string {
+    return this.db.transaction(() => {
+      const compatible = !model || (this.getMeta("embed_provider") === model.provider && this.getMeta("embed_model") === model.model);
+      return this.upsertMemoryNodeInTransaction(input, compatible ? embedding : undefined);
+    }).immediate();
+  }
+
+  private upsertMemoryNodeInTransaction(input: MemoryNodeInput, embedding?: number[]): string {
     const now = Date.now();
     const existing = this.db.prepare("SELECT id, content FROM memory_nodes WHERE label = ? AND type = ?").get(input.label, input.type) as { id: string; content: string } | undefined;
 
@@ -744,7 +775,7 @@ export class ContextPlusDB {
       this.db.prepare("INSERT INTO memory_embeddings (vector, node_id) VALUES (?, ?)").run(vecToBuffer(embedding), node.id);
       this.bumpMemoryRevision();
       return true;
-    })();
+    }).immediate();
   }
 
   deleteMemoryNode(id: string): void {

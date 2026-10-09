@@ -10,6 +10,11 @@ import { semanticCodeSearchResults } from '../../build/tools/semantic-search.js'
 import { getDB, closeDB } from '../../build/core/db.js';
 import { readArtifact } from '../../build/core/artifacts.js';
 import { reindex } from '../../build/tools/reindex.js';
+import { semanticIdentifierSearchResults } from '../../build/tools/semantic-identifiers.js';
+import { getEmbedProvider, getEmbedModel } from '../../build/core/embeddings.js';
+import { searchGraph, upsertNode } from '../../build/core/memory-graph.js';
+import { getProjectMemoryHits } from '../../build/tools/retrieval-helpers.js';
+import { toolSearchMemoryGraph, toolUpsertMemoryNode, toolAddInterlinkedContext } from '../../build/tools/memory-tools.js';
 
 let root, originalEmbed, calls;
 const source = '// Session refresh implementation\nexport function refreshSession() { return 1; }\nexport function handleRequest() { return refreshSession(); }\n';
@@ -31,15 +36,85 @@ describe('retrieval contracts', () => {
     closeDB(root);
     await rm(root, { recursive: true, force: true });
   });
+  it('rejects foreign-model vectors on warm file, identifier and memory reads without deleting them', async () => {
+    await reindex({rootDir:root,noEmbed:false});
+    const db = await getDB(root);
+    const options = {rootDir:root,query:'renew credentials',preset:'semantic_only',requireSemanticMatch:true};
+    assert.ok((await semanticCodeSearchResults(options)).results.some(hit=>hit.semanticScore>0));
+    assert.ok((await semanticIdentifierSearchResults(options)).results.some(hit=>hit.semanticScore>0));
+    db.upsertMemoryNode({type:'note',label:'unrelated deployment',content:'operational note',metadata:{scope:'global'}},[1,.5,.1]);
+    const count = db.getEmbeddingStats();
+    // Represents a second worker's completed same-dimension model migration.
+    db.setMeta('embed_model','foreign-model');
+    calls.length = 0;
+    assert.deepEqual((await semanticCodeSearchResults(options)).results,[]);
+    assert.deepEqual((await semanticIdentifierSearchResults(options)).results,[]);
+    assert.deepEqual((await searchGraph(root,'renew credentials')).direct,[]);
+    assert.deepEqual(await getProjectMemoryHits(root,'renew credentials',5),[]);
+    assert.match(await toolSearchMemoryGraph({rootDir:root,query:'renew credentials',scope:'global'}),/No memory nodes/);
+    assert.ok((await getProjectMemoryHits(root,'unrelated deployment',5)).length>0,'lexical memory remains available');
+    assert.deepEqual(db.getEmbeddingStats(),count);
+    assert.equal(calls.length,0);
+    await toolUpsertMemoryNode({rootDir:root,type:'note',label:'new memory',content:'keyword evidence',scope:'global'});
+    await upsertNode(root,'note','legacy memory','keyword evidence');
+    await toolAddInterlinkedContext({rootDir:root,items:[{type:'note',label:'linked memory',content:'keyword evidence'}]});
+    assert.equal(calls.length,0,'foreign-model memory writes must not embed');
+    assert.equal(db.getEmbeddingStats().memory,count.memory);
+    assert.equal(db.getMeta('embed_model'),'foreign-model');
+  });
+  it('reloads semantic caches when another worker populates vectors without structural changes', async () => {
+    await reindex({rootDir:root,noEmbed:false});
+    const db=await getDB(root);
+    const rows=['file_search_cache','identifier_cache'].map(type=>[type,db.getEmbeddingsByType(type)]);
+    for(const [type] of rows) db.deleteEmbeddingsByPrefix(type,'');
+    const generation=db.getIndexGeneration();
+    const options={rootDir:root,query:'renew credentials',preset:'semantic_only',requireSemanticMatch:true};
+    assert.deepEqual((await semanticCodeSearchResults(options)).results,[]);
+    assert.deepEqual((await semanticIdentifierSearchResults(options)).results,[]);
+    for(const [type,entries] of rows) db.upsertEmbeddingsBatch(type,entries.map(row=>({sourceId:row.sourceId,hash:row.contentHash,vector:[1,.5,.1]})));
+    assert.equal(db.getIndexGeneration(),generation);
+    assert.ok((await semanticCodeSearchResults(options)).results.some(hit=>hit.semanticScore>0));
+    assert.ok((await semanticIdentifierSearchResults(options)).results.some(hit=>hit.semanticScore>0));
+  });
+  it('initializes semantic identity for a new memory-only database', async () => {
+    await toolUpsertMemoryNode({rootDir:root,type:'note',label:'fresh memory',content:'rotate credentials',scope:'global'});
+    const db=await getDB(root);
+    assert.equal(db.getMeta('embed_provider'),getEmbedProvider());
+    assert.equal(db.getMeta('embed_model'),getEmbedModel());
+    assert.equal(db.getEmbeddingStats().memory,1);
+    assert.equal((await searchGraph(root,'renew credentials')).direct.length,1);
+  });
+  it('rebuilds populated vectors with incomplete model identity instead of adopting their hashes', async () => {
+    for(const missing of ['embed_provider','embed_model']) {
+      await reindex({rootDir:root,noEmbed:false});
+      const db=await getDB(root);
+      for(const type of ['file_search_cache','identifier_cache']) {
+        db.upsertEmbeddingsBatch(type,db.getEmbeddingsByType(type).map(row=>({sourceId:row.sourceId,hash:row.contentHash,vector:[0,1,0]})));
+      }
+      db.setMeta(missing,'');
+      calls.length=0;
+      await reindex({rootDir:root,noEmbed:false});
+      assert.ok(calls.length>1,'file and identifier vectors must be regenerated');
+      const first=db.getEmbeddingsByType('file_search_cache')[0];
+      assert.equal(first.vector.readFloatLE(0),1);
+      assert.equal(db.getMeta('embed_model'),getEmbedModel());
+      assert.equal(db.isEmbeddingsStale().stale,false);
+    }
+  });
   for (const oldVector of [[1, 0, 0], [1, 0, 0, 0]]) {
     it(`rebuilds durable memory after a model change from ${oldVector.length} dimensions`, async () => {
       const db = await getDB(root);
       db.recordEmbeddingProvider('ollama', 'old-memory-model');
       const id = db.upsertMemoryNode({ type: 'note', label: 'durable rule', content: 'Keep sessions atomic', metadata: { scope: 'project', custom: 'preserve' } }, oldVector);
       const original = db.peekMemoryNode(id);
+      db.upsertEmbedding('file_search_cache', 'session.ts', oldVector, 'old-content');
+      db.upsertEmbedding('identifier_cache', 'session.ts:refreshSession', oldVector, 'old-symbol');
       await reindex({ rootDir: root, noEmbed: true });
-      assert.equal(db.getEmbeddingStats().memory, 0);
-      assert.equal(db.isEmbeddingsStale().stale, true);
+      assert.equal(db.getEmbeddingStats().memory, 1, 'structural refresh must retain another model\'s vectors');
+      assert.equal(db.getEmbeddingStats().fileSearch, 1);
+      assert.equal(db.getEmbeddingStats().identifiers, 1);
+      assert.equal(db.getMeta('embed_model'), 'old-memory-model');
+      assert.equal(db.isEmbeddingsStale().stale, false);
       assert.equal(calls.length, 0);
       await reindex({ rootDir: root, noEmbed: false });
       assert.ok(db.searchMemoryNodes([1, 0.5, 0.1], 10).some(result => result.node.id === id));
@@ -88,7 +163,8 @@ describe('retrieval contracts', () => {
     assert.equal(calls.length, 0, JSON.stringify(calls));
   });
   it('shares a single query embedding across file, identifier and task memory retrieval', async () => {
-    await reindex({ rootDir: root, noEmbed: true });
+    await reindex({ rootDir: root, noEmbed: false });
+    calls.length = 0;
     await buildTaskPack({ rootDir: root, task: 'refreshSession', format: 'json', includeRecentDiffs: false, maxTokens: 12000 });
     assert.equal(calls.flat().filter(input => input === 'refreshSession').length, 1);
   });
