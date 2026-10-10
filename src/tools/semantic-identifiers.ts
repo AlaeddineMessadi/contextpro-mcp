@@ -29,15 +29,21 @@ async function loadIdentifierCache(rootDir: string): Promise<EmbeddingCache> {
   return cache;
 }
 
-async function saveIdentifierCache(rootDir: string, cache: EmbeddingCache, dirtyKeys: Set<string>): Promise<void> {
-  if (dirtyKeys.size === 0) return;
+async function saveIdentifierCache(rootDir: string, cache: EmbeddingCache, dirtyKeys: Set<string>, relativePaths: string[]): Promise<void> {
   const db = await getDB(rootDir);
   const entries: Array<{ sourceId: string; vector: number[]; hash: string }> = [];
   for (const key of dirtyKeys) {
     const entry = cache[key];
     if (entry) entries.push({ sourceId: key, vector: entry.vector, hash: entry.hash });
   }
-  db.upsertEmbeddingsBatch(IDENTIFIER_SOURCE_TYPE, entries);
+  // Publish replacements only after generation succeeds, retaining the last usable batch on failure.
+  db.transaction(() => {
+    for (const relativePath of relativePaths) {
+      db.deleteEmbeddingsByPrefix(IDENTIFIER_SOURCE_TYPE, `id:${relativePath}:`);
+      db.deleteEmbeddingsByPrefix(IDENTIFIER_SOURCE_TYPE, `${CALLSITE_CACHE_PREFIX}${relativePath}:`);
+    }
+    db.upsertEmbeddingsBatch(IDENTIFIER_SOURCE_TYPE, entries);
+  });
 }
 
 export interface SemanticIdentifierSearchOptions {
@@ -611,7 +617,6 @@ export async function refreshIdentifierEmbeddings(options: { rootDir: string; re
   const uniquePaths = Array.from(new Set(options.relativePaths.map(normalizeRelativePath).filter(Boolean)));
   if (uniquePaths.length === 0) return 0;
 
-  const db = await getDB(options.rootDir);
   const cache = await loadIdentifierCache(options.rootDir);
   const dirtyKeys = new Set<string>();
   const pending: { key: string; hash: string; text: string }[] = [];
@@ -631,8 +636,6 @@ export async function refreshIdentifierEmbeddings(options: { rootDir: string; re
     }
 
     removeFileScopedCacheEntries(cache, relativePath);
-    db.deleteEmbeddingsByPrefix(IDENTIFIER_SOURCE_TYPE, `id:${relativePath}:`);
-    db.deleteEmbeddingsByPrefix(IDENTIFIER_SOURCE_TYPE, `${CALLSITE_CACHE_PREFIX}${relativePath}:`);
 
     const docs = await buildIdentifierDocsForFile(options.rootDir, relativePath);
     for (const doc of docs) {
@@ -662,7 +665,7 @@ export async function refreshIdentifierEmbeddings(options: { rootDir: string; re
     }
   }
 
-  await saveIdentifierCache(options.rootDir, cache, dirtyKeys);
+  await saveIdentifierCache(options.rootDir, cache, dirtyKeys, uniquePaths);
   invalidateIdentifierSearchCache();
   // Returns only the count actually EMBEDDED (not reused) — that's the real cost.
   void reused;
