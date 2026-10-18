@@ -26,7 +26,19 @@ export function canonicalProjectPath(path: string): string {
 
 export function resolveProjectPath(rootDir: string, inputPath: string | undefined, label: string = "path"): string {
   const root = resolve(rootDir);
-  const candidate = inputPath && inputPath.trim().length > 0 ? resolve(root, inputPath) : root;
+  let candidate = inputPath && inputPath.trim().length > 0 ? resolve(root, inputPath) : root;
+  if (!isPathInside(root, candidate) && isAbsolute(inputPath ?? "")) {
+    const canonicalRoot = canonicalProjectPath(root);
+    let rootAlias: string | undefined;
+    // Rebase only the root alias, preserving inner symlinks for containment and mutation checks.
+    for (let ancestor = candidate; ; ancestor = dirname(ancestor)) {
+      if (canonicalProjectPath(ancestor) === canonicalRoot) {
+        rootAlias = ancestor;
+      }
+      if (dirname(ancestor) === ancestor) break;
+    }
+    if (rootAlias) candidate = resolve(root, relative(rootAlias, candidate));
+  }
   if (!isPathInside(root, candidate)) {
     throw new Error(`Path escapes project root: ${label}=${JSON.stringify(inputPath ?? "")}`);
   }

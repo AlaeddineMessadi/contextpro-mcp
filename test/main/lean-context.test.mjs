@@ -8,6 +8,38 @@ import {explain} from '../../build/tools/explain.js';
 import {reindex} from '../../build/tools/reindex.js';
 import {closeDB,getDB} from '../../build/core/db.js';
 import {unifiedSearchData} from '../../build/tools/search.js';
+import {analyzeContent} from '../../build/core/parser.js';
+
+it('keeps functions under multiline export wrappers unique',async()=>{
+  const analysis=await analyzeContent('api.ts','export\nfunction foo(){ return 1; }');
+  const flatten=symbols=>symbols.flatMap(symbol=>[symbol,...flatten(symbol.children??[])]);
+  assert.equal(flatten(analysis.symbols).filter(symbol=>symbol.name==='foo').length,1);
+});
+
+it('reads and indexes complete functions with inline import intersection return types',async()=>{
+  const root=await mkdtemp(join(tmpdir(),'contextpro-import-type-'));
+  const source=`// 🦊 declaration boundaries
+export async function getValue(): Promise<(import('./domain').Value & { id: string; status: 'active' | 'closed' }) | null> {
+  const value = null;
+  return value;
+} export function sibling() { return 2; }
+`;
+  try {
+    await writeFile(join(root,'api.ts'),source);
+    const analysis=await analyzeContent(join(root,'api.ts'),source);
+    const symbol=analysis.symbols.find(item=>item.name==='getValue');
+    assert.ok(symbol,'the existing declaration must be extracted');
+    assert.equal(symbol.line,2); assert.equal(symbol.endLine,5);
+    assert.equal(source.slice(symbol.startIndex,symbol.endIndex),source.slice(source.indexOf('export async'),source.indexOf(' export function sibling')));
+    assert.equal(analysis.symbols.filter(item=>item.name==='getValue').length,1);
+    assert.ok(analysis.symbols.some(item=>item.name==='sibling'));
+    const text=await getContext({rootDir:root,targets:[{file:'api.ts',symbol:'getValue'}],maxTokens:1200});
+    assert.match(text,/export async function getValue/); assert.match(text,/return value/);
+    assert.doesNotMatch(text,/not found/);
+    await reindex({rootDir:root,noEmbed:true,autoHubs:false});
+    assert.ok((await getDB(root)).searchSymbolsByName('getValue').length);
+  }finally{closeDB(root);await rm(root,{recursive:true,force:true});}
+});
 
 it('keeps lower-ranked implementation evidence eligible for natural-language discovery',async()=>{
  const root=await mkdtemp(join(tmpdir(),'contextpro-recall-'));

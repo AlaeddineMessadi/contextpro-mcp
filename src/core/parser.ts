@@ -495,6 +495,33 @@ export async function analyzeFile(filePath: string): Promise<FileAnalysis> {
   return analyzeContent(filePath, raw);
 }
 
+function recoverTypeScriptFunctions(filePath: string, content: string, symbols: CodeSymbol[]): CodeSymbol[] {
+  const source = ts.createSourceFile(filePath, content, ts.ScriptTarget.Latest, true);
+  for (const statement of source.statements) {
+    if (!ts.isFunctionDeclaration(statement) || !statement.name || !statement.body) continue;
+    const name = statement.name.text;
+    const startIndex = statement.getStart(source), endIndex = statement.end;
+    const line = source.getLineAndCharacterOfPosition(startIndex).line + 1;
+    const nameIndex = statement.name.getStart(source);
+    const nameLine = source.getLineAndCharacterOfPosition(nameIndex).line + 1;
+    if (symbols.some(symbol => symbol.name === name && (symbol.startIndex !== undefined
+      ? symbol.startIndex >= startIndex && symbol.startIndex <= nameIndex
+      : symbol.line >= line && symbol.line <= nameLine))) continue;
+    // Older tree-sitter grammars can omit complete functions with inline import return types.
+    const children = symbols.filter(symbol => symbol.startIndex !== undefined && symbol.endIndex !== undefined
+      && symbol.startIndex >= startIndex && symbol.endIndex <= endIndex);
+    symbols = symbols.filter(symbol => !children.includes(symbol));
+    symbols.push({
+      name, kind: SymbolKind.Function, line,
+      endLine: source.getLineAndCharacterOfPosition(endIndex).line + 1,
+      startIndex, endIndex,
+      signature: statement.getText(source).split("\n")[0].trim().slice(0, 150),
+      children,
+    });
+  }
+  return symbols.sort((left, right) => left.line - right.line);
+}
+
 /**
  * Analyze already-loaded source text under a logical path. Same logic as
  * analyzeFile but without touching disk — lets callers parse content that isn't a
@@ -526,6 +553,10 @@ export async function analyzeContent(filePath: string, raw: string): Promise<Fil
       sql: () => [],
     };
     symbols = (parsers[lang ?? ""] ?? parseGeneric)(lines);
+  }
+
+  if (ext === ".ts" || ext === ".tsx") {
+    symbols = recoverTypeScriptFunctions(filePath, content, symbols);
   }
 
   if ([".ts", ".tsx", ".js", ".jsx", ".mjs"].includes(ext)) {
