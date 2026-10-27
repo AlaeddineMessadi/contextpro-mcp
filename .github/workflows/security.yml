@@ -1,8 +1,6 @@
 name: Security
 
 on:
-  push:
-    branches: [main]
   pull_request:
   workflow_dispatch:
   schedule:
@@ -16,8 +14,10 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  secrets:
-    name: Secret scan
+  # One job instead of four: each job bills at least a full minute, and these
+  # checks take seconds.
+  scan:
+    name: Secret scan and dependency audit
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -33,25 +33,21 @@ jobs:
           tar -xzf gitleaks.tar.gz gitleaks
       - name: Scan reachable history with redacted output
         run: '"$RUNNER_TEMP/gitleaks" git --redact --log-opts="--all"'
-
-  audit:
-    name: Dependency audit (${{ matrix.directory }})
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    strategy:
-      fail-fast: false
-      matrix:
-        directory: ['.', landing, dashboard]
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        if: ${{ !cancelled() }}
         with:
           node-version: 24
           package-manager-cache: false
-      - run: npm audit --omit=dev --audit-level=high
-        working-directory: ${{ matrix.directory }}
+      - name: Audit production dependencies
+        if: ${{ !cancelled() }}
+        run: |
+          status=0
+          for dir in . landing dashboard; do
+            echo "::group::npm audit ($dir)"
+            (cd "$dir" && npm audit --omit=dev --audit-level=high) || status=1
+            echo "::endgroup::"
+          done
+          exit "$status"
 
   dependency-review:
     name: Dependency review

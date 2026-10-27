@@ -12,7 +12,7 @@ Include the affected version or commit, Node/OS/client versions, a minimal redac
 
 ## Supported versions
 
-Security fixes target the latest maintained release and `main`. Until the first registry release, identify reports by Git commit. Older versions do not have a promised backport window. Node.js 24 LTS is recommended; CI also checks Node 22 and 26. The package's older engine floor is a compatibility declaration, not a promise to maintain end-of-life runtimes.
+Security fixes target the latest maintained release and `main`. Until the first registry release, identify reports by Git commit. Older versions do not have a promised backport window. Node.js 24 LTS is recommended; CI also checks the Node 20 engine floor. The package's older engine floor is a compatibility declaration, not a promise to maintain end-of-life runtimes.
 
 ## Trust and data boundaries
 
