@@ -35,6 +35,6 @@ Preparing this branch does not change repository visibility or publish a package
 
 ## Before any npm release
 
-Follow [releasing](../releasing.md). Confirm package-name ownership and the intended initial public version. The existing `1.3.0` metadata does not prove an npm release exists. Bootstrap ownership if needed, configure the protected `npm` environment and trusted publisher, then opt in with `NPM_PUBLISH_ENABLED=true`. Test the packed artifact before approving publication.
+Follow [releasing](../releasing.md). The first public release is `1.4.0`, published manually to claim the package name. For later releases, configure the protected `npm` environment and trusted publisher, then opt in with `NPM_PUBLISH_ENABLED=true`. Test the packed artifact before approving publication.
 
 Release automation remains gated by `RELEASE_AUTOMATION_ENABLED`; it is not enabled merely by making the repository public. No long-lived npm token is included in these workflows.
