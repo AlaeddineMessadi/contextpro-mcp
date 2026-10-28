@@ -4,6 +4,6 @@ For setup and recovery, start with [INSTALL.md](INSTALL.md) and [configuration](
 
 Include the ContextPro commit/version, operating system, actual Node executable/version, MCP client, selected profile, provider/model names without credentials, and a small redacted reproduction. If a tool returns incomplete evidence, include its scope and warning fields. A public fixture is more useful than a screenshot of private source.
 
-For comparison results, use the benchmark issue template and [methodology](docs/comparison.md). Distinguish a tool error from an agent's interpretation of its output.
+For comparison results, use the benchmark issue template and [methodology](docs/benchmarks/methodology.md). Distinguish a tool error from an agent's interpretation of its output.
 
-Do not attach entire `.contextpro` directories, `.env` files, private code or raw account transcripts. Report vulnerabilities [privately](SECURITY.md). Community support is best effort; there is no response-time or commercial-support commitment.
+Do not attach entire `.contextpro` directories, `.env` files, private code or raw account transcripts. Report vulnerabilities [privately](SECURITY.md). ContextPro is maintained by one person. Support is best effort, with no response-time or commercial-support commitment. TypeScript and JavaScript are the primary targets; support for another language is most likely to land as a pull request with fixtures.

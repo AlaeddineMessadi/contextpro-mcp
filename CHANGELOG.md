@@ -1,8 +1,10 @@
 # Changelog
 
-All notable changes to this project are recorded here. The project follows [Semantic Versioning](https://semver.org/) and [Keep a Changelog](https://keepachangelog.com/) conventions. Pair with `STATUS.md` (live state) and `AUDIT.md` (deep findings with evidence).
+All notable changes to this project are recorded here. The project follows [Semantic Versioning](https://semver.org/) and [Keep a Changelog](https://keepachangelog.com/) conventions. Pair with `STATUS.md` (live state).
 
 ## [Unreleased]
+
+- Removed the `landing/` website and `dashboard/` operator app, archived plans, `AUDIT.md`, `TODO.md`, scratch scripts, and raw benchmark data and runners recorded on private repositories. Benchmark reports keep their results with private projects anonymized.
 
 - Explicit documentation requests retain document priority and budget under review/debug/change intents; requests for implementation plus documentation keep their mixed source allocation.
 
@@ -28,8 +30,7 @@ All notable changes to this project are recorded here. The project follows [Sema
 - Opt-in `context.intent` selects bounded change/debug/review evidence and reports structural/textual provenance and missing roles. Adaptive discovery considers relevant documents without requiring document-specific wording. Enable per query or with `CONTEXTPRO_ADAPTIVE_CONTEXT=true`; default promotion awaits coding trials.
 
 - `status` reports an active rebuild without waiting for indexing to finish, including through the expert dispatcher. Initial rebuilds report `indexing` even before the first source file is indexed.
-- Landing/dashboard pin Next.js 16.3.6 (and matching landing lint config), with refreshed browser-mapping locks, clearing the production dependency advisories surfaced by CI.
-- Literal discovery retains up to eight source candidates per key and matching identifier windows after named definitions, recovering command schemas and object-property values behind incidental callers. Unambiguous indexed path suffixes return bounded whole-file source when it fits. Source/task/brief caches invalidate older packets. See the [October 1 replay](docs/benchmarks/2026-10-01-log-fixes.json) for evidence and remaining limits.
+- Literal discovery retains up to eight source candidates per key and matching identifier windows after named definitions, recovering command schemas and object-property values behind incidental callers. Unambiguous indexed path suffixes return bounded whole-file source when it fits. Source/task/brief caches invalidate older packets. The supporting replay ran on a private repository.
 - Reference timeouts restart the worker for queued requests instead of rejecting unstarted work with the active request's timeout; crash and shutdown rejection remain unchanged.
 - Natural-language `context` discovery considers twelve ranked files before source packing, retaining lower-ranked implementations behind incidental callers. Exact identifiers skip embedding lookup; response budgets are unchanged.
 - Explicit bounded line targets read large text bundles with a 64 MiB scan cap, byte budgets and snapshot-change checks; whole-file and symbol reads retain the 2 MB cap.
@@ -42,12 +43,11 @@ All notable changes to this project are recorded here. The project follows [Sema
 - Behavior phrases such as "routes without authentication in src/api" preserve their positive scope. Existing top-level hints such as `src/` and `packages/` are recognized, including exclusion lists.
 - Bare `not <path>` excludes that scope. Negative clauses no longer supply positive path topics or identifier hints, while independently requested words remain searchable; equal-scoring candidates prefer shallower implementations before lexical path order.
 - An explicit source location takes precedence over an earlier behavioral preposition, preserving queries such as "clicks outside of the menu in src/menu" while keeping explicit exclusion commands negative.
-- Refreshed README, status, project/agent instructions and generated website guidance with current scope hints, budgets, dispatcher fallback and the unsuccessful coding-pilot rollout result.
+- Refreshed README, status and project/agent instructions with current scope hints, budgets, dispatcher fallback and the unsuccessful coding-pilot rollout result.
 
-- UI orientation now includes structural routes, navigation, feature components and requested styles/documents in both context selectors. Mixed document/source discovery bounds previews and reserves source evidence for later query topics; strict topic lookup avoids unrelated partial matches. Cached packets and briefs invalidate older output. See the [September 28 replay](docs/benchmarks/2026-09-28-discovery-orientation.md) for verified scope and remaining limitations.
+- UI orientation now includes structural routes, navigation, feature components and requested styles/documents in both context selectors. Mixed document/source discovery bounds previews and reserves source evidence for later query topics; strict topic lookup avoids unrelated partial matches. Cached packets and briefs invalidate older output. The supporting replay ran on a private repository.
 
 - Connected retrieval now rejects weak semantic-only graph seeds, counts each file once per ranking lane, and preserves visual/topic implementations with their local dependencies. Source-packet, task-pack and feature-brief cache identities invalidate the old selector's output. The pipeline remains opt-in.
-- New coding-pilot campaigns use a versioned behavioral plain-text validator with rendered whitespace and text-range scroll checks. Historical validator v1 and its results remain frozen; incompatible campaigns cannot be overwritten or resumed with the new contract.
 - Added opt-in connected source retrieval shared by `context` and `task_pack`, snippet-aware optional reranking, source-cited `feature_brief` artifacts and worktree-bound source deltas. Exact target reads remain stateless; the lean catalog remains three tools. Added provider usage observations and frozen retrieval/coding-pilot harnesses; these changes do not establish token or time savings.
 - Feature briefs derive fact text from validated citation coordinates and bounded retrieval roles. Corrupted facts and older generator artifacts are rejected instead of being rendered as extracted evidence.
 - Graph expansion spends its file limit only on unseen paths, and optional provider traces reject named pipes before opening so diagnostics cannot block provider calls waiting for a reader.
@@ -55,22 +55,22 @@ All notable changes to this project are recorded here. The project follows [Sema
 
 - Automatic freshness reads enforce the configured source-size cap before loading files, including hash mode and files growing while waiting for the index lock. Discovery retains uncovered portions of overlapping source ranges and combines quoted phrases with compound keys.
 - Structural refresh avoids per-file full scans when replacing FTS documents and clearing symbol parent links. Existing databases receive the missing parent-link index when opened; transaction rollback behavior is preserved.
-- Lexical discovery preserves compound identifiers within natural-language queries, and exact-symbol boosts respect test/translation intent so same-name helpers do not displace implementation evidence. See the [refresh and discovery replay](docs/benchmarks/2026-09-26-refresh-and-discovery.md) for measured scope and remaining limitations.
+- Lexical discovery preserves compound identifiers within natural-language queries, and exact-symbol boosts respect test/translation intent so same-name helpers do not displace implementation evidence. The supporting replay ran on a private repository.
 - Reference evidence now labels individual calls/imports, deduplicates repeated snippets and includes bounded per-file call totals before result truncation. `exact_references` is immediately available in lean/workflow profiles.
 - Add opt-in local tool phase traces and repeated, alternating Codex trials with tool arguments, provider usage provenance and explicit index/compiler states. Add offline cold/warm compiler replays.
 
 ### Changed — Documentation and repository cleanup
 
 - Consolidated current setup, configuration, architecture, maintenance and agent guidance. Corrected profile defaults, isolated native repair and reference/efficiency limitations; removed mandatory extra-call and unsupported universal-savings claims.
-- Website instructions now derive from the project policy; configuration samples use canonical provider keys without an unsolicited cloud chat model. Added documentation synchronization and local-link checks.
-- Archived historical plans and backlog; retained raw benchmark evidence. Removed obsolete/duplicate lockfiles, unused starter SVGs, an empty Claude settings file and a superseded one-off audit probe.
+- Configuration samples use canonical provider keys without an unsolicited cloud chat model. Added documentation synchronization and local-link checks.
+- Removed historical plans, the backlog and raw benchmark data. Removed obsolete/duplicate lockfiles, unused starter SVGs, an empty Claude settings file and a superseded one-off audit probe.
 
 ### Fixed — Reference correctness and freshness (2026-09-08)
 
 - TS/JS references now use project configurations, inherited path aliases and source project references. Indexed tests remain in scope even when production builds exclude them. Results distinguish definitions, imports, direct calls and other references; totals precede truncation and incomplete scope is explicit. Python heuristic evidence carries an explicit limitation.
 - Reuse bounded TypeScript language services with versioned source snapshots, configuration updates and idle disposal. Compiler work runs in a separate process with a 30-second active deadline and a 512 MB V8 heap limit; failure rejects the request and permits a fresh worker on retry.
 - Schema v7 adds file change-time fingerprints. Ordinary refresh detects same-size edits with restored modification times, and hashing/parsing consume the same verified source read. Status checks now detect changed content, failed/partial refreshes remain stale, and a completed refresh does not unnecessarily request a full reindex.
-- Periodic reconciliation survives watcher initialization and runtime failures. New regressions cover aliases, project references, re-exports, shadowing, call classification, large result sets, configuration/source edits, worker failure and watcher loss. Direct app-a measurements and remaining work are recorded in `docs/benchmarks/2026-09-08-reference-foundation.md`.
+- Periodic reconciliation survives watcher initialization and runtime failures. New regressions cover aliases, project references, re-exports, shadowing, call classification, large result sets, configuration/source edits, worker failure and watcher loss. Direct measurements on a private application and remaining work are recorded in `docs/benchmarks/2026-09-08-reference-foundation.md`.
 
 ### Added — Measured context workflows
 
@@ -128,7 +128,7 @@ All notable changes to this project are recorded here. The project follows [Sema
 
 A re-audit graded B+ with two A-blockers and an A+ punch-list. All are fixed here; the A+ batch was additionally hardened by an adversarial review workflow (find → skeptic-verify) that confirmed and closed 4 further bugs.
 
-- **Cluster labeling (A-blocker, was CRITICAL).** Labels leaked import/stdlib vocabulary (`invalidoperation` from `from decimal import InvalidOperation`), emitted the bare repo name, and raw path globs; feature dirs (`fees/`, `esports/`, `venues/`) weren't recovered. The clustering geometry was already correct — only the labels were wrong. Fixes: `extractHeader` strips import-like comment lines at the source; the directory anchor is now the strongest signal (a folder shared by ≥60% of a cluster's files becomes the label), filtered only against structural-layout dirs (`src`/`lib`/`tests`…) not the content stopword set, so `esports/` and `decimal/` are valid feature labels; only the immediate parent dir is counted; the shared repo-root segment can never be a label; the basename fallback is stopword-filtered. (`src/tools/semantic-navigate.ts`)
+- **Cluster labeling (A-blocker, was CRITICAL).** Labels leaked import/stdlib vocabulary (`invalidoperation` from `from decimal import InvalidOperation`), emitted the bare repo name, and raw path globs; feature dirs (`fees/`, `scanners/`, `venues/`) weren't recovered. The clustering geometry was already correct — only the labels were wrong. Fixes: `extractHeader` strips import-like comment lines at the source; the directory anchor is now the strongest signal (a folder shared by ≥60% of a cluster's files becomes the label), filtered only against structural-layout dirs (`src`/`lib`/`tests`…) not the content stopword set, so `scanners/` and `decimal/` are valid feature labels; only the immediate parent dir is counted; the shared repo-root segment can never be a label; the basename fallback is stopword-filtered. (`src/tools/semantic-navigate.ts`)
 - **Restore safety (A-blocker, new HIGH).** Restore was a footgun for a "safer than git" tool: it clobbered without a snapshot (irreversible), auto-deleted newly-created files via tombstones with no warning, and had no preview. Fixes: every restore first takes a **pre-restore safety snapshot** of the current state of all touched files (so a wrong restore — or a tombstone deletion — is reversible via the returned undo point); a **`preview`/dry-run** mode returns the full plan (overwrite/create/DELETE per file, with a destructive flag) and writes nothing; `checkpoints` now loudly labels tombstone points (`[⚠ RESTORE DELETES: …]`). The target point is resolved once up front so the safety snapshot's LRU trim can't evict it. (`src/git/shadow.ts`, `src/tools/register-tools.ts`)
 - **fee→feeds ranking collision (A+).** "Add a new fee model" flooded `task_pack` with `feeds/` websocket files because "fee" lexically matched "feeds". Removed the bidirectional `startsWith()` prefix fallback in `termMatches` and the `.includes()` substring match in `directory-prior` (now exact singular/plural equality). Lemmatization already covers `fees`↔`fee`. The directory-prior now frames an existing implementation as a copy template. (`src/tools/planning-helpers.ts`, `src/tools/directory-prior.ts`)
 - **Real read-through caching for `task_pack` (A+).** Was recompute-and-overwrite on every call — the "free re-call" framing was false. `buildTaskPack` now checks for a fresh cached artifact before recomputing and re-renders the stored payload on a hit. The hit is gated on `indexState.state === "fresh"` (not generation alone): a stale index — file added/removed/edited but not reindexed — keeps the same generation, so a generation-only gate would have served a pre-change pack. The cache key includes `maxMemory`. (`src/tools/agentic-context.ts`, `src/core/artifacts.ts`)
@@ -210,7 +210,7 @@ Four critical heuristic/ranking-layer fixes plus high/medium items from the thir
 - New `test/main/round5-fixes.test.mjs` (6 tests): indentation preservation, syntax-error rejection, find_symbol wildcards, directory prior, resolve_symbol word-boundary scoring, search trust decomposition.
 - Full suite: **330 tests, 0 failures**.
 
-### Fixed — Audit feedback from tradebot-plus (Python project)
+### Fixed — Audit feedback from an external audit of a Python project
 
 A B-grade external audit on a 112-file uv-managed Python project exposed several heuristic gaps that hurt agents using ContextPro for Python work and edit planning. Critical/High items addressed:
 
@@ -260,7 +260,7 @@ A post-reconnect sweep with a fresh MCP server surfaced two more issues that the
 
 ### Fixed — Round-3 external-feedback issues
 
-These three issues were surfaced by a Round-3 external assessment that exercised ContextPro . Each fix had a follow-up adversarial review that caught additional bugs, all of which are also fixed.
+These three issues were surfaced by an external assessment. Each fix had a follow-up adversarial review that caught additional bugs, all of which are also fixed.
 
 - **`lint` prefers local TypeScript over system tsc.** macOS ships `/usr/bin/tsc` as Apple's TextureSetCompiler — wholly unrelated. Previously `detectLinters` always ran `npx tsc`, which could fall through to system tsc in some environments. Now `resolveLocalBinary` prefers `./node_modules/.bin/tsc` (including `.cmd` shim on Windows), then falls back to `npx --no-install` to prevent silent system fallthrough, and finally emits a clear "TypeScript not installed" message if npx isn't on PATH. Same pattern applied to `eslint`. (`src/tools/static-analysis.ts`)
 - **`*.config.ts` property keys are now indexed.** Semantic search previously missed `shared: { react: { singleton: true } }` in `rsbuild.config.ts` because property keys weren't symbols. New `extractConfigKeys()` runs only on detected config files (`*.config.ts`, named framework configs like `rsbuild.config.ts`, `webpack.config.ts`, `next.config.ts`, etc.) and extracts top-level property keys via three patterns: `name: {`, `name: true|false` (matches EOL with or without trailing `,`/`}` — adversarial-review fix), and `"name": {`. Reserved words and length-bounded names filter noise. Non-config files are untouched. (`src/core/parser.ts`)

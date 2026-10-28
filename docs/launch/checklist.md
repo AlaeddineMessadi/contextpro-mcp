@@ -6,15 +6,19 @@ Preparing this branch does not change repository visibility or publish a package
 
 - Public-facing README, source installation path, contributor/support/conduct/security guides and upstream attribution.
 - Issue forms, PR template, code ownership and dependency update configuration.
-- CI for the core and optional apps, secret/dependency checks and public-repository CodeQL/dependency review.
+- Core CI, secret/dependency checks and public-repository CodeQL/dependency review.
 - SemVer release configuration and a separately gated manual npm publication workflow.
-- Curated npm file list that excludes raw benchmark records, archives, caches and optional applications.
+- Curated npm file list that excludes raw benchmark records, archives and caches.
 - Honest comparison methodology and draft launch copy; no invented testimonials or universal ranking.
 
-## Before changing visibility
+## Before publishing
 
 - Review the diff and successful CI for the launch commit. Dependency scans and tests are point-in-time evidence, not a security guarantee.
-- Review **all Git history, branches, tags, issues, PRs, Actions logs and artifacts** that will become visible. Existing benchmark records mention private-project identifiers. A zero-finding secret scan does not clear privacy, ownership or licensing concerns. Deleting a current file does not erase its history. Decide whether to publish this history or create a separately reviewed clean public history; do not rewrite the shared repository casually.
+- **Publish to a new repository; do not flip this one public.** GitHub keeps every pull request's refs and descriptions, and the old PRs here reference pre-cleanup commits and private project names. Rewriting and force-pushing this repository does not remove them. Create a fresh public repository and push only the cleaned `main` to it. Keep this private repository as an archive, or delete it once the new one is verified.
+- Choose the public repository name. GitHub does not allow a second repository with the same owner and name, so rename this private repository first (for example `contextpro-mcp-archive`) before creating the new public `contextpro-mcp`. Otherwise every hard-coded `github.com/AlaeddineMessadi/contextpro-mcp` URL must change.
+- After the history rewrite, remap the `bootstrap-sha` in `release-please-config.json` and the pinned ContextPro SHAs in `scripts/fixtures/*.json` through `.git/filter-repo/commit-map`.
+- PR and Actions links from the private repository will not exist in the new one; remove or rewrite any that remain in documentation.
+- Before pushing, confirm the cleaned history has no private identifiers: `git log --all -p | grep -i -E '<private names>'` must print nothing. A zero-finding secret scan does not clear privacy, ownership or licensing concerns.
 - Verify rights to contributed code, assets and benchmark fixtures. Keep the original MIT license and NOTICE. No private third-party source should be published without permission.
 - Choose a private contact/reporting route for both security and moderation. Current docs avoid publishing an unapproved personal email and provide GitHub-based fallback instructions.
 - Review repository Actions permissions and installed third-party integrations. Use hosted runners for untrusted PRs. Do not provide provider credentials to contributor CI.
@@ -22,7 +26,7 @@ Preparing this branch does not change repository visibility or publish a package
 
 ## At public launch
 
-- Explicitly approve the visibility change, then verify the public repository from a logged-out session.
+- Verify the new public repository from a logged-out session: no stale branches, no PRs, no Actions history.
 - Enable GitHub private vulnerability reporting and test that the reporting link is available. Enable available secret scanning, push protection, Dependabot alerts and code scanning.
 - Enable Discussions if maintainers want a general question area; keep the support guide aligned with the actual channel.
 - Confirm CodeQL and dependency review run successfully on the now-public repository.

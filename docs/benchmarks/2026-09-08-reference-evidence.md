@@ -15,7 +15,7 @@ These are serialized catalog bytes, not tokenizer counts. An agent that previous
 
 ## Offline replay
 
-Baseline: merged commit `3461e1c`. Candidate runtime: `3020a94`. Both used Node v26.0.0 and the same installed dependencies. Three alternating repetitions per fixture/version used fresh processes and independently prepared structural indexes, followed by immediate warm compiler queries. The recorded run started after the website build completed, with no concurrent builds or test suites launched by this task. OS/background application caches and load were not controlled.
+Baseline: merged commit `3461e1c`. Candidate runtime: `3020a94`. Both used Node v26.0.0 and the same installed dependencies. Three alternating repetitions per fixture/version used fresh processes and independently prepared structural indexes, followed by immediate warm compiler queries. The recorded run had no concurrent builds or test suites launched by this task. OS/background application caches and load were not controlled.
 
 All **24 timed queries passed** their checks: the small fixture returns exactly 13 call locations split 4+9, including barrel aliases and excluding unrelated same-named bindings; the large fixture counts 2,009 calls despite the 100-result display limit. Candidate per-file totals match those expected counts.
 
@@ -26,7 +26,7 @@ All **24 timed queries passed** their checks: the small fixture returns exactly 
 | 2,009 calls | Cold | 786.2 ms | 779.6 ms |
 | 2,009 calls | Warm | 264.1 ms | 268.2 ms |
 
-Compiler latency is essentially unchanged in this small replay; it is not evidence of a meaningful speedup. Indexing, module import, MCP transport, tool discovery and model reasoning are excluded from these timings. The generated fixtures are not the external app-a repository.
+Compiler latency is essentially unchanged in this small replay; it is not evidence of a meaningful speedup. Indexing, module import, MCP transport, tool discovery and model reasoning are excluded from these timings. The generated fixtures are not a private application repository.
 
 Default text output grew from 1,150 to 1,164 bytes (+1.2%) on the small fixture while adding labels and per-file counts. On the large fixture it shrank from 3,457 to 3,026 bytes (12.5% smaller) through snippet deduplication, with all 100 displayed occurrences retained. JSON keeps per-occurrence source context and grows with the new summary fields. Output bytes do not establish total agent-token savings.
 
@@ -42,4 +42,4 @@ The runner was exercised with a fake Codex executable to verify launch planning,
 
 ## Validation
 
-All **654 main tests pass on Node v26.0.0**. TypeScript build, website production build, documentation synchronization/link checks and diff whitespace checks pass. Scope validation recommended the build and relevant regression tests, which passed; its optional embedding request timed out and used keyword fallback. That embedding path is outside the offline compiler replay and remains relevant to end-to-end latency measurements.
+All **654 main tests pass on Node v26.0.0**. TypeScript build, documentation link checks and diff whitespace checks pass. Scope validation recommended the build and relevant regression tests, which passed; its optional embedding request timed out and used keyword fallback. That embedding path is outside the offline compiler replay and remains relevant to end-to-end latency measurements.

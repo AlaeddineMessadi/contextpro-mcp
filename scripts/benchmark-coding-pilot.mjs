@@ -15,13 +15,8 @@ const exec = promisify(execFile), here = dirname(fileURLToPath(import.meta.url))
 const flags = new Set(process.argv.slice(2));
 const output = resolve(process.env.CONTEXTPRO_PILOT_OUTPUT ?? '.contextpro/productivity-pilot');
 const manifestText = await readFile(process.env.CONTEXTPRO_PILOT_MANIFEST ?? join(here, 'fixtures/coding-pilot.json'), 'utf8');
-const validatorVersion = process.env.CONTEXTPRO_PILOT_VALIDATOR_VERSION ?? '2';
-if (!['1', '2'].includes(validatorVersion)) throw Error('Validator version must be 1 or 2');
-const validatorScript = validatorVersion === '1' ? 'pilot-text-preview.mjs' : 'pilot-text-preview-v2.mjs';
-const validatorText = await readFile(join(here, validatorScript), 'utf8')
-  + (validatorVersion === '2' ? await readFile(join(here, 'preview-rendering-contract.mjs'), 'utf8') : '');
 const manifest = JSON.parse(manifestText);
-const contractHash = createHash('sha256').update(manifestText).update(validatorText).digest('hex');
+const contractHash = createHash('sha256').update(manifestText).digest('hex');
 const repos = JSON.parse(await readFile(join(output, 'repos.json'), 'utf8'));
 const tasks = manifest.tasks.filter(task => !process.env.CONTEXTPRO_PILOT_TASK || task.id === process.env.CONTEXTPRO_PILOT_TASK);
 const repeats = Number(process.env.CONTEXTPRO_PILOT_REPEATS ?? 1);
@@ -43,7 +38,7 @@ if (flags.has('--prepare') || flags.has('--recheck') || flags.has('--run') || fl
   for (const name of ['preflight.json', 'plan.json', 'runs.json']) if (await existing(join(output, name))) {
     const saved = JSON.parse(await readFile(join(output, name), 'utf8'));
     const records = Array.isArray(saved) ? saved : [saved];
-    if (records.some(record => record.contractHash !== contractHash)) throw Error('Frozen campaign uses a different validator contract; select its explicit version or choose a fresh output directory.');
+    if (records.some(record => record.contractHash !== contractHash)) throw Error('Frozen campaign uses a different validator contract; choose a fresh output directory.');
   }
 }
 
@@ -78,7 +73,7 @@ async function archive(task, revision, target) {
   await exec('tar', ['-xf', tar, '-C', target]); await rm(tar);
   // Preserve build scripts. Remove instructions and retrospective benchmark/QA
   // reports symmetrically, never replace them with tool-specific answers.
-  for (const name of ['AGENTS.md', 'CLAUDE.md', 'INSTRUCTIONS.md', 'agent-guide.md', 'agent-instructions.md', '.claude', '.codex', 'docs/benchmarks', 'docs/LAUNCH_READINESS.md']) await rm(join(target, name), { recursive: true, force: true });
+  for (const name of ['AGENTS.md', 'CLAUDE.md', 'INSTRUCTIONS.md', 'agent-guide.md', 'agent-instructions.md', '.claude', '.codex', 'docs/benchmarks']) await rm(join(target, name), { recursive: true, force: true });
   async function dependencies(source, dest, depth = 0) {
     if (await existing(join(source, 'node_modules'))) await cloneDirectory(join(source, 'node_modules'), join(dest, 'node_modules'));
     if (depth >= 3) return;
@@ -114,14 +109,6 @@ async function validate(task, root, label) {
       result = await run(process.execPath, ['--test', ...task.tests], root, log);
     } else if (task.validator === 'vitest') {
       result = await run(process.execPath, ['node_modules/vitest/vitest.mjs', 'run', ...task.tests], root, log);
-    } else if (task.validator === 'app-d-browser') {
-      const build = await run(process.execPath, ['node_modules/next/dist/bin/next', 'build'], root, `${log}.build`, 300000, { NEXT_TELEMETRY_DISABLED: '1' });
-      if (build.code !== 0) return { passed: false, stage: 'build', ...build };
-      await writeFile(join(root, 'pilot.playwright.config.ts'), 'import base from "./playwright.config"; import {defineConfig} from "@playwright/test"; export default defineConfig({...base, projects:base.projects?.filter(p=>p.name==="desktop-chromium").map(p=>({...p,use:{...p.use,channel:"chrome"}}))});');
-      result = await run(process.execPath, ['node_modules/@playwright/test/cli.js', 'test', '--config=pilot.playwright.config.ts', ...task.tests, '--project=desktop-chromium', '--workers=1', '--retries=0', ...(task.testPattern ? ['--grep', task.testPattern] : [])], root, log, 300000,
-        { APP_D_E2E_PORT: '3219', NEXT_TELEMETRY_DISABLED: '1' });
-    } else if (task.validator === 'text-preview') {
-      result = await run(process.execPath, [join(here, validatorScript), root], root, log, 120000);
     } else if(task.validator === 'python') {
       result = await run(process.env.CONTEXTPRO_PILOT_PYTHON ?? 'python3',['-m','unittest','discover','-s','tests','-v'],root,log,120000);
     } else throw Error('Unknown validator');

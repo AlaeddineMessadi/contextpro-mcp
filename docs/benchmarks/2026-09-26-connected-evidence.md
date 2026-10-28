@@ -5,10 +5,12 @@ from completed coding tasks; response bytes are not billed tokens.
 
 ## Frozen contracts
 
-`scripts/fixtures/coding-pilot.json` fixes eight prompts, historical fixes and
-acceptance tests. Each task starts at its fix's first parent. The contract hash
-also includes `scripts/pilot-text-preview.mjs`. All eight validators failed before
-their historical fix and passed afterward before the campaign started.
+The campaign fixed eight prompts, historical fixes and
+acceptance tests. Each task starts at its fix's first parent. All eight validators
+failed before their historical fix and passed afterward before the campaign started.
+
+The published fixture keeps only the two contextpro tasks; six of the eight ran on
+private repositories. The results below are the original eight-task campaign.
 
 The baseline server is `7cf79035fa093772929218e3e517a0ede1b246bb`. The candidate
 is frozen separately. Build fingerprints are checked before and after trials.
@@ -27,11 +29,7 @@ a pair; this is not a clean lockfile installation. Raw events, source, patches
 and traces stay in the ignored local output directory.
 
 The routing validator omits its bundled-instructions assertion because those
-documents are excluded. app-d browser checks use the production test server
-and installed Chrome. The plain-text validator bundles the actual source panel
-and text/Markdown components, stubs unrelated previewers, and checks content,
-whitespace, integrity errors, retry, fallback and scroll anchoring in Chrome.
-It is a component contract test, not a database/authentication integration test.
+documents are excluded.
 
 Usage comes from provider-reported agent events; cached input is a subset of
 input and is not added twice. Missing counts remain unavailable. Server-side
@@ -46,8 +44,8 @@ single-run pairs are preliminary evidence, not a universal savings claim.
 
 ## Reproduction
 
-Create an output directory with `repos.json` mapping `contextpro`, `app-d`
-and `app-c` to absolute paths, and separately built server launchers at
+Create an output directory with `repos.json` mapping `contextpro` to its
+absolute path, and separately built server launchers at
 `<output>/<variant>/build/index.js`.
 
 ```sh
@@ -56,11 +54,6 @@ CONTEXTPRO_PILOT_OUTPUT=/absolute/output node scripts/benchmark-coding-pilot.mjs
 # Explicitly consumes coding-agent quota; never runs by default.
 CONTEXTPRO_PILOT_OUTPUT=/absolute/output node scripts/benchmark-coding-pilot.mjs --run
 ```
-
-New campaigns now default to validator v2 (see the repair follow-up below).
-Set `CONTEXTPRO_PILOT_VALIDATOR_VERSION=1` to reproduce this document's original
-frozen campaign. Version 2 requires a fresh output directory and new qualification;
-the runner rejects changes to an existing campaign's contract.
 
 `CONTEXTPRO_PILOT_CODEX` selects a specific CLI executable; its path and version
 are recorded with the campaign. `--recheck` requalifies validators. Do not prepare/recheck concurrently in one
@@ -101,10 +94,10 @@ its latency values are contended and are not used for the rollout gate.
 Named-definition source paths remain eligible even in a semantic-only
 experiment, while exact-name fast paths are separately marked.
 
-The broad visual replay archives app-a at
-`private-rev`. At a 5,000-unit budget including
+The broad visual replay archives a private repository (revision not published).
+At a 5,000-unit budget including
 metadata, baseline returned none of three expected files; candidate returned
-`WelcomeBanner` but omitted `HeroFigure` and `heroArtwork`. The issue remains
+one of the three expected UI files but omitted the other two. The issue remains
 open. This development replay does not demonstrate a coding-task speed gain.
 
 ## Coding-pilot results
@@ -135,8 +128,9 @@ condition. The rollout gate is **not met**; connected retrieval stays opt-in.
 These are strict acceptance results, with the validator limitations below;
 they do not establish that retrieval caused every task failure.
 
-The [sanitized trial report](2026-09-26-coding-pilot.json) contains all outcomes,
-provider usage, setup/validation time, native-read candidates and MCP traces.
+The sanitized trial report recorded all outcomes, provider usage,
+setup/validation time, native-read candidates and MCP traces. It is not
+published because six of the eight tasks ran on private repositories.
 In the table, every pair is **baseline / candidate**. Time includes independent
 validation. Tokens mean provider-reported input plus output, with cached input
 counted once. Unavailable counts are not estimated.
@@ -220,7 +214,7 @@ the held-out contract and recorded outcomes were not revised to accept this patc
 
 Final source changes are at `a7b6a6b` (subsequent commits contain report updates).
 All 11 applicable CI checks pass, including **722 main tests** across Node
-20/22/24/26 and macOS, both application builds, documentation, release metadata,
+20/22/24/26 and macOS, documentation, release metadata,
 package checks, dependency audits and secret scanning. The frozen candidate
 also passed 33 parser demos. Private-repository conditions skip CodeQL and
 dependency review; those skips are not counted as passes.
@@ -247,7 +241,7 @@ neighbors into graph seeds and counted repeated identifiers as independent file
 ranking votes. Both are repaired. The selector now shares bounded graph expansion
 across query facets, preserves multi-topic filenames and a selected implementation's
 local helpers, and downweights incidental generated reports for source requests.
-PR #27 review narrowed that last heuristic to known report directories: ordinary
+Review narrowed that last heuristic to known report directories: ordinary
 JSON configuration, Markdown content and CSV data retain full source weight.
 The regression failed before the repair and passes afterward, including bounded
 default/connected source packets. All 738 main tests pass, and the frozen visual
@@ -268,13 +262,13 @@ Frozen zero-vector development replays used the original queries and budgets:
 
 | Reproduction | Merged baseline | Repaired selector |
 | --- | --- | --- |
-| app-a `private-rev`, visual query, 5,000 units | WelcomeBanner only | WelcomeBanner, HeroFigure, heroArtwork |
-| app-b `private-rev`, cleanup query, 3,200 units | Migration and operator script | Migration, operator script and security test |
+| Private repository (revision not published), visual query, 5,000 units | One of three expected UI files | All three |
+| Private repository (revision not published), cleanup query, 3,200 units | Migration and operator script | Migration, operator script and security test |
 
 Each result repeated twice with alternating handler order on a fresh structural
 index. These checks assert source-file coverage, not complete task correctness.
-The broader app-b write-path query still misses requested paths at its 3,000-unit
-budget and remains open in the canonical issue log. General broad lexical recall
+The broader write-path query still misses requested paths at its 3,000-unit
+budget and remains open. General broad lexical recall
 and the default selector have not been declared fixed. Connected retrieval remains
 opt-in; the coding-pilot rollout gate and original outcomes have not changed.
 
@@ -284,14 +278,3 @@ states/presets, while retaining all expected positive evidence with fresh vector
 and in lexical/combined fallback. Semantic-only queries with absent or obsolete
 vectors correctly had no semantic evidence. `gemma4:latest` remains unavailable.
 No new coding-agent campaign or billing comparison was run.
-
-For future campaigns, `pilot-text-preview-v2.mjs` checks rendered newline/tab
-geometry and uses DOM text ranges for scroll anchors. It accepts both whole-text
-and per-line structures, including `break-spaces`. Fourteen isolated browser
-checks cover preserving/collapsing CSS modes, multiple tab sizes, truncation and
-scroll anchors. The historical before/fix pair still fails/passes respectively,
-and the fixed component also passes using `break-spaces`. The frozen v1 script
-and all 16 pilot outcomes remain unchanged. Reproduce the independent browser
-checks with `node scripts/test-preview-contract.mjs /absolute/app-c-root`;
-that root supplies Playwright and an installed Chrome is required. The v2 script
-and its browser helper are included in the new contract hash.

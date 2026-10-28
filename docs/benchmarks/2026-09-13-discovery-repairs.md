@@ -2,7 +2,7 @@
 
 This is regression verification, not a comparative performance benchmark.
 
-Repository: ContextPro MCP 1.3.0, branch `codex/evidence-retrieval-fixes`,
+Repository: ContextPro MCP 1.3.0, branch `evidence-retrieval-fixes`,
 base commit `77212b86bcd5b60ef8e5e2d65bb2c4b09cd77e0c`. Changes were local when measured.
 The September 9 parser, dispatch, validation, excerpt and reference fixes were
 already present and were preserved. No application source was modified.

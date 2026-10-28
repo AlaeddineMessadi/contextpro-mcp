@@ -5,7 +5,7 @@ import { deriveHeuristicLabel } from "../../build/tools/semantic-navigate.js";
 // Reproduce the Round-4 audit's cluster-labeling complaint:
 //  - import vocabulary ("invalidoperation" from `from decimal import InvalidOperation`) leaked into labels
 //  - bare repo name ("tradebot" x6) and raw path globs were emitted
-//  - feature dirs (fees/, esports/, venues/) were NOT recovered as labels
+//  - feature dirs (fees/, scanners/, venues/) were NOT recovered as labels
 // The clustering geometry co-locates a feature's files correctly, so the label SHOULD be the dir name.
 
 function file(relativePath, header = "", content = "") {
@@ -55,9 +55,9 @@ describe("cluster-label heuristic", () => {
     const cluster = {
       pathPattern: null,
       files: [
-        file("tradebot/maker/quote.py", "Maker quoting"),
-        file("tradebot/telegram/bot.py", "Telegram bot"),
-        file("tradebot/esports/scanner.py", "Esports scanner"),
+        file("tradebot/pricing/quote.py", "Quote pricing"),
+        file("tradebot/notify/bot.py", "Notify bot"),
+        file("tradebot/scanners/scanner.py", "Market scanner"),
       ],
     };
     const label = deriveHeuristicLabel(cluster, 2);
@@ -69,14 +69,14 @@ describe("cluster-label heuristic", () => {
     const cluster = {
       pathPattern: null,
       files: [
-        file("tradebot/esports/a.py", "from __future__ import annotations"),
-        file("tradebot/esports/b.py", "from __future__ import annotations"),
-        file("tradebot/esports/c.py", "from __future__ import annotations"),
+        file("tradebot/scanners/a.py", "from __future__ import annotations"),
+        file("tradebot/scanners/b.py", "from __future__ import annotations"),
+        file("tradebot/scanners/c.py", "from __future__ import annotations"),
       ],
     };
     const label = deriveHeuristicLabel(cluster, 0);
     assert.doesNotMatch(label, /[/*]/, `raw path glob leaked: "${label}"`);
-    assert.match(label, /esports/, `expected esports, got "${label}"`);
+    assert.match(label, /scanners/, `expected scanners, got "${label}"`);
   });
 
   it("honors an explicit pathPattern when the clusterer provides one", () => {

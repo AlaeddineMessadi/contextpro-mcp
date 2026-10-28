@@ -61,23 +61,13 @@ Cold compiler construction and structural indexing remain separate latency costs
 No general latency guarantee or reference completeness outside indexed scope is
 claimed.
 
-## Dependencies and landing checks
+## Dependencies
 
 - SDK minimum is 1.31.0; the lockfile installs 1.32.0 to address
   [GHSA-6qxp-vccf-f47h](https://github.com/advisories/GHSA-6qxp-vccf-f47h).
   The advisory affects HTTP OAuth clients, not SDK servers or stdio clients.
-- Both apps install Sharp 0.35.5 for
-  [GHSA-wq5f-xc86-pv6w](https://github.com/advisories/GHSA-wq5f-xc86-pv6w).
-  Landing narrowly overrides Miniflare's exact 0.35.4 pin; native image encoding
-  and both app builds pass.
-- Core/dashboard full audits and all production audits are clean. Landing still
-  has five development findings propagated from the unpatched
-  [Braces advisory](https://github.com/advisories/GHSA-vfj7-8cjw-p6xm).
-- Landing lint has zero errors and seven existing warnings. Theme initialization
-  uses React's external-store API; browser checks confirm toggling, persistence
-  after reload, return to light mode, and no captured console errors.
 
-Validation on Node 26: 829 core tests, 33 demos, 14 dashboard tests; core and both
-app builds; documentation, release metadata and package checks. A fresh configured
+Validation on Node 26: 829 core tests, 33 demos; core build; documentation,
+release metadata and package checks. A fresh configured
 MCP launcher verifies health and the bundled instruction resource. Restarting an
 already-running client is separate from compiling and verifying a fresh process.

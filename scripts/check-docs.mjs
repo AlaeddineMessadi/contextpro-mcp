@@ -1,20 +1,17 @@
 import { readFile, readdir, stat } from "node:fs/promises";
-import { execFileSync } from "node:child_process";
 import { dirname, resolve, relative, extname } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const files = ["CONTRIBUTING.md", "SECURITY.md", "SUPPORT.md", "CODE_OF_CONDUCT.md", "README.md", "INSTALL.md", "INSTRUCTIONS.md", "STATUS.md", "TODO.md", "agent-guide.md", "AGENTS.md", "CLAUDE.md", "landing/README.md", "dashboard/README.md"];
+const files = ["CONTRIBUTING.md", "SECURITY.md", "SUPPORT.md", "CODE_OF_CONDUCT.md", "README.md", "INSTALL.md", "INSTRUCTIONS.md", "STATUS.md", "agent-guide.md", "AGENTS.md", "CLAUDE.md"];
 async function collect(dir) {
   for (const entry of await readdir(resolve(root, dir), { withFileTypes: true })) {
     const path = `${dir}/${entry.name}`;
-    if (entry.isDirectory() && path !== "docs/archive") await collect(path);
+    if (entry.isDirectory()) await collect(path);
     else if (entry.isFile() && path.endsWith(".md")) files.push(path);
   }
 }
 await collect("docs");
-// Archived prose preserves original relative paths; validate its maintained index.
-files.push("docs/archive/README.md");
 const failures = [];
 const cache = new Map();
 async function read(path) {
@@ -50,10 +47,7 @@ for (const file of files) {
     }
   }
 }
-try {
-  execFileSync(process.execPath, [resolve(root, "scripts/sync-agent-instructions.mjs"), "--check"], { stdio: "inherit" });
-} catch { failures.push("Generated website instructions do not match INSTRUCTIONS.md."); }
 if (failures.length) {
   console.error(failures.join("\n"));
   process.exitCode = 1;
-} else console.log(`Checked ${files.length} current documentation files and generated website instructions.`);
+} else console.log(`Checked ${files.length} current documentation files.`);

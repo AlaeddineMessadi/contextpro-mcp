@@ -34,7 +34,7 @@ const MAX_FILES_PER_LEAF = 20;
 
 // Structural / layout directories that group code by KIND, not by FEATURE. A cluster sharing one of
 // these is not telling us anything about what the feature is, so they're excluded from dir-anchor
-// labeling. Feature folders (fees/, esports/, venues/) are deliberately NOT here.
+// labeling. Feature folders (fees/, scanners/, venues/) are deliberately NOT here.
 const STRUCTURAL_DIR_SEGMENTS = new Set([
   "src", "lib", "test", "tests", "spec", "specs", "__tests__", "dist", "build", "out",
   "node_modules", "vendor", "main", "app", "pkg", "internal", "common", "shared", "core",
@@ -147,12 +147,12 @@ export function deriveHeuristicLabel(cluster: { files: FileInfo[]; pathPattern: 
 
   // 1) STRONGEST signal: a directory segment shared by ≥60% of cluster files IS the feature name.
   //    The clustering geometry already co-locates a feature's files, so the directory they share
-  //    (`fees/`, `auth/`, `esports/`) is the most reliable label — far more so than header tokens,
+  //    (`fees/`, `auth/`, `scanners/`) is the most reliable label — far more so than header tokens,
   //    which leak import/stdlib vocabulary. We exclude the repo-root segment so a cluster that simply
   //    spans the whole repo can't be labeled with the bare project name.
   //
   //    A directory name is filtered ONLY against structural-layout dirs (src/, lib/, tests/, …) — NOT
-  //    the content stopword set. A folder named `esports/` or `decimal/` is a real feature label even
+  //    the content stopword set. A folder named `scanners/` or `decimal/` is a real feature label even
   //    though those words are stopworded as header tokens; a directory name is intrinsically meaningful.
   const repoRootSegment = inferRepoRootSegment(cluster.files);
   const dirSegmentCounts = new Map<string, number>();
@@ -172,7 +172,7 @@ export function deriveHeuristicLabel(cluster: { files: FileInfo[]; pathPattern: 
 
   // 2) TF-IDF over header docstrings. A word's score = freq-in-cluster × log(totalClusters / freq-in-corpus).
   //    Without TF-IDF, common words like "manager" or "config" tie. With TF-IDF, distinctive feature
-  //    nouns (e.g., "scanner", "venue", "esports") win.
+  //    nouns (e.g., "scanner", "venue", "fees") win.
   const clusterTermFreq = new Map<string, number>();
   for (const file of cluster.files) {
     if (!file.header) continue;

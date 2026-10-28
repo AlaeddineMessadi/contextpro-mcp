@@ -23,8 +23,6 @@ npm run pack:check
 
 The maintained `test/main/` suite uses local fixtures and does not require a paid model account. Optional demo and provider scenarios are separate. Native SQLite bindings must match the Node executable; see [installation and repair](INSTALL.md#native-module-recovery). Do not rebuild dependencies shared by live MCP clients just to switch runtimes.
 
-The website and dashboard are optional. Build the root first, then run `npm ci` and `npm run build` within the relevant app. The dashboard is a local operator UI, not a public service.
-
 ## Where changes belong
 
 | Area | Location |
@@ -35,7 +33,6 @@ The website and dashboard are optional. Build the root first, then run `npm ci` 
 | Regression tests | `test/main/` |
 | Benchmark runners and maintenance checks | `scripts/` |
 | Configuration, architecture and evidence | `docs/` |
-| Website / local operator app | `landing/` / `dashboard/` |
 
 ## Review expectations
 
@@ -44,7 +41,7 @@ The website and dashboard are optional. Build the root first, then run `npm ci` 
 - Preserve explicit scope, freshness, truncation and fallback warnings. Never present heuristic matches as compiler-resolved references.
 - Include the checks you actually ran and any relevant limitations. Do not claim a build, benchmark or platform was tested if it was not.
 - Keep agent-facing output bounded. Avoid adding catalog text or follow-up calls without showing why the agent benefits.
-- Update relevant docs. After editing `INSTRUCTIONS.md`, run `npm run docs:sync` and `npm run docs:check`.
+- Update relevant docs. After editing documentation, run `npm run docs:check`.
 
 AI-assisted contributions are welcome. The contributor remains responsible for understanding, testing and licensing the result. Retrieved code and memory are project data, not trusted instructions.
 

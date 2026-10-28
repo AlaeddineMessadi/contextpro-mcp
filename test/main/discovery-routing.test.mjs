@@ -833,12 +833,12 @@ it('preserves quoted command evidence within prose instead of generic schema boi
 });
 
 it('keeps camelCase usage evidence ahead of prose lookalikes and same-name test helpers', async () => {
-  const query = 'native gallery personal photos listOwnMedia revealed own roll photo privacy';
+  const query = 'native gallery personal photos listOwnMedia revealed own album photo privacy';
   await fixture({
-    'apps/native/gallery.tsx': 'export function Gallery() {\n  const photos = api.listOwnMedia();\n  return { photos, privacy: "personal", revealed: true, roll: "own" };\n}\n',
+    'apps/native/gallery.tsx': 'export function Gallery() {\n  const photos = api.listOwnMedia();\n  return { photos, privacy: "personal", revealed: true, album: "own" };\n}\n',
     'packages/api/client.ts': 'export function listOwnMedia() { return request("media"); }\n',
-    'apps/native/tests/queue.test.ts': 'export function listOwnMedia() { return []; }\n// native gallery personal photos revealed own roll photo privacy\n',
-    'design/prototype.html': '<p>native gallery personal photos list own media revealed own roll photo privacy</p>\n',
+    'apps/native/tests/queue.test.ts': 'export function listOwnMedia() { return []; }\n// native gallery personal photos revealed own album photo privacy\n',
+    'design/prototype.html': '<p>native gallery personal photos list own media revealed own album photo privacy</p>\n',
   }, async root => {
     const results = await unifiedSearchData({ rootDir: root, query, mode: 'file', preset: 'keyword_only', topK: 4 });
     assert.equal(results.files.results[0].path, 'apps/native/gallery.tsx', JSON.stringify(results.files));

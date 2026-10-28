@@ -15,7 +15,7 @@ All times below are UTC on the audit date.
 - 07:49:36: `status({})` returned the parent checkout root and branch. The agent's JSONL working directory identified the child worktree.
 - 07:49:56: `reindex({})` ran against the same implicit scope. It completed after approximately 25.6 seconds and skipped all 530 files.
 - The agent subsequently edited files using absolute child-worktree paths.
-- 08:00:01: `explain` of the relative application file returned the parent version, without the new rotation patch.
+- 08:00:01: `explain` of the relative application file returned the parent version, without the new feature patch.
 - 08:00:10: `grep` against that relative file found no new patch.
 - 08:00:26: targeted `reindex` without `root` returned zero indexed and one skipped file.
 - 08:00:31: forced targeted `reindex`, also without `root`, returned one indexed file and 274 extracted symbols.
@@ -62,11 +62,11 @@ No measured dollar savings can be established without the applicable provider/ac
 
 ## Correctness and retrieval findings
 
-- Both diffs use the flag-filtered exercise pool, satisfying the explicitly identified trap.
-- The ContextPro implementation checks the persisted toggle but omits the live subscription entitlement at the completion usage site. Its initial and later `explain` responses both included all three nearby existing entitlement guards. The relevant evidence was supplied; the agent did not apply it. This is an implementation/review failure, not evidence that retrieval hid the existing guards.
+- Both diffs use the flag-filtered item pool, satisfying the explicitly identified trap.
+- The ContextPro implementation checks the persisted toggle but omits the live subscription entitlement check at one usage site. Its initial and later `explain` responses both included all three nearby existing entitlement guards. The relevant evidence was supplied; the agent did not apply it. This is an implementation/review failure, not evidence that retrieval hid the existing guards.
 - The native implementation includes the live entitlement guard but hardcodes the new settings label and description in English.
 - The ContextPro implementation uses translation keys but only adds their English values. The three other inspected locales lack these new keys. It better preserves the translation mechanism, but it should not be described as fully translated.
-- The initial task_pack ranked generic challenge UI components at a reported 97% despite the query naming existing entitlement, storage, and settings integration points. This is useful evidence of retrieval-ranking weakness; ranking percentages should not be treated as verified probabilities of relevance.
+- The initial task_pack ranked unrelated UI components at a reported 97% despite the query naming existing entitlement, storage, and settings integration points. This is useful evidence of retrieval-ranking weakness; ranking percentages should not be treated as verified probabilities of relevance.
 - Passing different selected test sets does not establish that one implementation is more correct. Both returned code requiring review. No claim is made here that the reported test pass counts were independently reproduced.
 
 ## Requirements for a fair follow-up

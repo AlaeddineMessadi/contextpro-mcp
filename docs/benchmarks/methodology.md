@@ -4,7 +4,7 @@ Measure successful task completion, full provider usage and elapsed task time se
 
 ## Agent trials
 
-`scripts/benchmark-codex-pairs.mjs` uses fresh Codex sessions with the configured model and account. Without `--run` it only prints a plan. Defaults are two source-comprehension tasks, three repeats and a structurally seeded index: **12 agent sessions**. This corpus does not reproduce the external app-a tasks; retain their actual prompts, acceptance checks and call traces for that comparison.
+`scripts/benchmark-codex-pairs.mjs` uses fresh Codex sessions with the configured model and account. Without `--run` it only prints a plan. Defaults are two source-comprehension tasks, three repeats and a structurally seeded index: **12 agent sessions**. This corpus does not reproduce private-repository tasks; retain their actual prompts, acceptance checks and call traces for that comparison.
 
 ```sh
 CONTEXTPRO_BENCH_REPEATS=3 CONTEXTPRO_BENCH_INDEX_STATES=empty,seeded \

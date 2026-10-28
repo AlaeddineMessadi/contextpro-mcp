@@ -3,8 +3,6 @@
 
 # Build output
 build/
-**/.next/
-**/.open-next/
 dist/
 coverage/
 .nyc_output/
@@ -24,7 +22,6 @@ coverage/
 .contextpro/
 .contextplus/
 **/.turbo/
-**/.wrangler/
 npm-debug.log
 yarn-error.log
 *.log
@@ -46,7 +43,6 @@ Thumbs.db
 *.tsbuildinfo
 /graft/
 /.ignore
-extension.vsix
 *.mjs.bak
 # debug scripts (transient, never committed)
 /analyze-*.mjs
@@ -60,7 +56,5 @@ extension.vsix
 /trace-*.mjs
 /verify-*.mjs
 
-# npm lockfiles are canonical for the MCP and optional apps
+# The npm lockfile is canonical
 /bun.lock
-/landing/bun.lock
-/dashboard/bun.lock

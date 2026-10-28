@@ -49,7 +49,6 @@ const IGNORE_PREFIXES = [
   "node_modules/",
   "build/",
   "dist/",
-  "landing/.next/",
 ];
 
 function normalizeRelativePath(path: string): string {

@@ -56,7 +56,6 @@
     "test:all": "node --test test/main/*.test.mjs test/demo/*.demo.mjs",
     "typecheck": "tsc --noEmit",
     "bench:retrieval": "npm run build && node scripts/benchmark-retrieval.mjs",
-    "docs:sync": "node scripts/sync-agent-instructions.mjs",
     "docs:check": "node scripts/check-docs.mjs",
     "release:check": "node scripts/check-release.mjs",
     "pack:check": "node scripts/check-package.mjs"
@@ -76,10 +75,8 @@
     "zod": "^3.25.23"
   },
   "devDependencies": {
-    "@tailwindcss/postcss": "^4.3.3",
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^26.6.3",
-    "pyright": "1.1.414",
-    "tailwindcss": "^4.2.1"
+    "pyright": "1.1.414"
   }
 }

@@ -14,8 +14,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # One job instead of four: each job bills at least a full minute, and these
-  # checks take seconds.
+  # One job instead of four: these checks take seconds, so separate jobs only
+  # add startup overhead.
   scan:
     name: Secret scan and dependency audit
     runs-on: ubuntu-latest
@@ -40,14 +40,7 @@ jobs:
           package-manager-cache: false
       - name: Audit production dependencies
         if: ${{ !cancelled() }}
-        run: |
-          status=0
-          for dir in . landing dashboard; do
-            echo "::group::npm audit ($dir)"
-            (cd "$dir" && npm audit --omit=dev --audit-level=high) || status=1
-            echo "::endgroup::"
-          done
-          exit "$status"
+        run: npm audit --omit=dev --audit-level=high
 
   dependency-review:
     name: Dependency review

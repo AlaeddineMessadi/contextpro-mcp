@@ -1,5 +1,5 @@
-// tool_calls persistence tests — dashboard-readable tool-call history
-// FEATURE: A separate dashboard process reads real tool-call history across MCP
+// tool_calls persistence tests — externally readable tool-call history
+// FEATURE: External readers read real tool-call history across MCP
 // restarts, so tool invocations are persisted to the per-root DB.
 
 import { afterEach, beforeEach, describe, it } from "node:test";

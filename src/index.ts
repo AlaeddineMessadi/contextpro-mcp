@@ -455,7 +455,7 @@ server.resource(
 
 registerTools(server, ROOT_DIR, withRequestActivity);
 
-// Persist every tool call to the per-root DB so a separate dashboard process can
+// Persist every tool call to the per-root DB so external readers can
 // show real tool-call history across restarts. Best-effort and fire-and-forget:
 // getDB is async + cached, and a failure here must never disturb the tool itself.
 // Prune occasionally to keep the table bounded.

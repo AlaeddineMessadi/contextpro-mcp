@@ -60,12 +60,12 @@ it('broad visual facets retain a renderer and its local artwork dependency', asy
   try {
     await mkdir(join(root, 'components'));
     await mkdir(join(root, 'services'));
-    for (let i = 0; i < 12; i++) await writeFile(join(root, `services/exercise${i}.ts`), '// exercise exercise exercise\nexport const count = 1;');
-    await writeFile(join(root, 'components/Person.tsx'), 'import { shape } from "./drawing.js";\n// exercise renderer\nexport function Person() { return <svg>{shape}</svg>; }\n');
+    for (let i = 0; i < 12; i++) await writeFile(join(root, `services/widget${i}.ts`), '// widget widget widget\nexport const count = 1;');
+    await writeFile(join(root, 'components/Person.tsx'), 'import { shape } from "./drawing.js";\n// widget renderer\nexport function Person() { return <svg>{shape}</svg>; }\n');
     await writeFile(join(root, 'components/drawing.ts'), 'export const shape = "M0 0 L10 20";\n');
     await writeFile(join(root, 'components/Entry.tsx'), '// onboarding animation accent\nexport const Entry = () => <div>Welcome</div>;\n');
     await reindex({rootDir:root, noEmbed:true, autoHubs:false});
-    const query = 'onboarding animation exercise illustration theme accent';
+    const query = 'onboarding animation widget illustration theme accent';
     const packet = await retrieveEvidence({rootDir:root, query, preset:'keyword_only'});
     assert.ok(packet.candidates.some(item => item.path === 'components/Person.tsx'));
     assert.ok(packet.candidates.some(item => item.path === 'components/drawing.ts'));

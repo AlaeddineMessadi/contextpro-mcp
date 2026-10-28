@@ -20,7 +20,7 @@ ContextPro runs an MCP stdio server from `src/index.ts`. Each request resolves a
 
 Each project's `.contextpro/index.db` uses SQLite WAL and sqlite-vec. Schema v7 adds ctime to file fingerprints. Source rows, symbols, imports and calls are updated transactionally per file from the same source read. Index generations invalidate derived context. Background watching is backed by periodic reconciliation, which continues after watcher failure.
 
-The directory also holds configuration, memory-related state, artifacts and restore points. It must not be treated as one disposable cache. Native libraries live separately in an ABI-specific user cache. The workspace registry records known projects for routing and the dashboard.
+The directory also holds configuration, memory-related state, artifacts and restore points. It must not be treated as one disposable cache. Native libraries live separately in an ABI-specific user cache. The workspace registry records known projects for routing.
 
 No single operation atomically snapshots every file of an arbitrarily changing worktree. Explicit scope, stale/incomplete warnings and post-edit compiler/tests are part of the evidence contract.
 
@@ -32,4 +32,4 @@ Source mutations check expected revisions, reject disallowed paths/symlinks, ser
 
 ## Documentation surfaces
 
-`agent-instructions.md` is deliberately tiny because clients can repeat it in tool context. `agent-guide.md` is the on-demand MCP resource. `INSTRUCTIONS.md` is the concise project policy; both website surfaces consume one generated JSON representation of it. Historical plans and raw benchmarks are outside the runtime's normal instruction path.
+`agent-instructions.md` is deliberately tiny because clients can repeat it in tool context. `agent-guide.md` is the on-demand MCP resource. `INSTRUCTIONS.md` is the concise project policy. Raw benchmarks are outside the runtime's normal instruction path.

@@ -1,4 +1,4 @@
-# feature rotation workflow follow-up
+# Feature-flag workflow follow-up
 
 The user supplied a second isolated-worktree implementation comparison, followed
 by independent adversarial review. Reported implementation times were 1,032 seconds

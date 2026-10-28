@@ -4,7 +4,7 @@ ContextPro uses [Semantic Versioning](https://semver.org/). A patch fixes compat
 
 ## Release pull requests
 
-Use Conventional Commit style squash titles: `fix:`, `feat:`, `docs:` and so on. Mark breaking changes with `!` and a migration explanation. Release Please updates the root package version, lockfile and changelog through a reviewable PR. The optional apps remain private packages and are not published by this workflow.
+Use Conventional Commit style squash titles: `fix:`, `feat:`, `docs:` and so on. Mark breaking changes with `!` and a migration explanation. Release Please updates the root package version, lockfile and changelog through a reviewable PR.
 
 The checked-in manifest starts at the existing `1.3.0` metadata. That is not a claim that a registry release exists. Before enabling automation, choose the intended first public version and adjust the release PR if necessary. The bootstrap commit is the reviewed base before launch preparation; older private development history is not automatically imported into the new generated notes.
 

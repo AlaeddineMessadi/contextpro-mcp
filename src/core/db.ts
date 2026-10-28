@@ -236,7 +236,7 @@ CREATE TABLE IF NOT EXISTS meta (
   value TEXT
 );
 
--- Append-only telemetry of MCP tool invocations, so a separate dashboard process
+-- Append-only telemetry of MCP tool invocations, so external readers
 -- can show real history (which tools ran, when, latency, errors) across restarts.
 -- Created unconditionally (IF NOT EXISTS) so no schema-version bump is needed.
 CREATE TABLE IF NOT EXISTS tool_calls (

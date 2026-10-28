@@ -126,7 +126,7 @@ Literal symbol names in discovery queries prioritize their definitions; large
 bodies can still be partial, so inspect the returned ranges and omissions.
 Query discovery also combines named-identifier text matches with concrete path
 topics, and recognizes existing repository-relative directory prefixes such as
-`apps/mobile/app/host`. Up to eight additional candidates compete through bounded
+`apps/web/src/routes`. Up to eight additional candidates compete through bounded
 interior source windows in both selectors. These hints do not require chat calls
 and are disabled for semantic-only evaluation and exact target reads. Directory
 hints are preferences, not hard filters; linked evidence can come from elsewhere.

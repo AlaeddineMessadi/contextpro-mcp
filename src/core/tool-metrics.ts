@@ -32,8 +32,8 @@ const MAX_TRACKED_ROOTS = 50;
 
 /**
  * Optional persistence sink for tool calls. tool-metrics stays decoupled from the
- * DB layer (no import cycle); the server wires a DB-backed sink at startup so a
- * separate dashboard process can read tool-call history across restarts. Best-effort:
+ * DB layer (no import cycle); the server wires a DB-backed sink at startup so
+ * external readers can read tool-call history across restarts. Best-effort:
  * a sink that throws must never break the tool that was being timed.
  */
 export type ToolCallSink = (event: {

@@ -20,9 +20,9 @@ Reindex, quick refresh and targeted structural refresh hash and parse one source
 
 Status now checks changed indexed content as well as inventory changes. Failed or capped refreshes remain stale; successfully repairing a large batch no longer requests a redundant reindex merely because many files changed. If watching fails at initialization or later, periodic reconciliation continues polling.
 
-## Direct app-a replay
+## Direct private-application replay
 
-Target: `canEditItem` at `src/billing/featureLimits.ts:391` in the local app-a checkout used in the earlier incident investigation. A structural-only reindex preceded this replay: approximately 9.2 seconds, 534 discovered files, 331 processed and 203 skipped. The typed-reference scope contained 246 TS/JS files.
+Target: a feature-gate function in a private application's billing module, in a local checkout. A structural-only reindex preceded this replay: approximately 9.2 seconds, 534 discovered files, 331 processed and 203 skipped. The typed-reference scope contained 246 TS/JS files.
 
 Four sequential direct calls to `exactReferencesTool` ran in one Node v24.15.0 process, retaining the compiler worker. The first call had no compiler-service cache. All four returned the same category counts with no coverage warnings: **13 calls, three imports and one definition**. The 13-call count matches the earlier independently enumerated call locations. No source bodies or private conversation records are committed.
 

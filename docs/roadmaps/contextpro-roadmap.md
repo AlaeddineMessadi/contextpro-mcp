@@ -2,18 +2,18 @@
 
 ## October 5 development and teamwork delivery
 
-Baseline: `2448966b055e9d9b929e0596aabcaa528bc7aedf`. Preserve the earlier coding pilot and its unsuccessful rollout result.
+Preserve the earlier coding pilot and its unsuccessful rollout result.
 
 1. Adaptive change context and document discovery: implemented behind explicit `context.intent` or `CONTEXTPRO_ADAPTIVE_CONTEXT=true`; default promotion awaits matched coding trials.
 2. Shared local compute: request freshness reuse and opt-in daemon implemented; two-root refresh and crash/restart fallback tests pass. Two counterbalanced two-session measurements reduce sampled RSS by about 8–14% but increase paired warm median latency by 8–13%; default remains off. Configured Python analysis also routes through the shared service.
 3. Source-bound memory and immutable handoffs: implemented with lexical fallback, explicit supersession, configuration invalidation and historical validation receipts; targeted tests pass locally.
 4. Local task ownership, dependencies and advisory leases: implemented; competing-process, linked-worktree overlap, dependency-cycle and lease-expiry regressions pass locally.
 5. Validation receipts, TS/JS and Python diagnostics, compiler rename: implemented; real Pyright tests cover imports, aliases, shadowing, virtual environments and cross-file edits; stale TS previews reject newly added callers. No runtime downloads.
-6. Frozen native/current/candidate campaign: ten validators qualified; 12-attempt smoke completed with bundled Codex 0.160.0 (2/4 successes per arm; candidate worse on both measured ratios). Execution was interrupted after 22 recorded attempts; the residual trial and frozen conditions are preserved for a later resume toward 60. External bounded retrieval comparison completed; raw evidence and limits are retained under docs/benchmarks.
+6. Frozen native/current/candidate campaign: ten validators qualified; 12-attempt smoke completed with bundled Codex 0.160.0 (2/4 successes per arm; candidate worse on both measured ratios). Execution was interrupted after 22 recorded attempts; the residual trial and frozen conditions are preserved for a later resume. External bounded retrieval comparison completed; raw evidence and limits are retained under docs/benchmarks.
 
 The three local review findings are repaired: daemon freshness retains active ownership until completion, Python import edits invalidate cached caller diagnostics, and validation/memory evidence includes authored dot-configs. All 824 main tests pass on Node 26; the 30 focused daemon/compiler/evidence/walker checks also pass on Node 20. These fixes remain outside the frozen benchmark candidate.
 
-No speed or provider-usage improvement is established by unit-test success. Each phase records its local gates, review and release state separately. PR #42 is open; hosted checks are billing-blocked, publication/merge are pending, and desktop activation is separate. Rollback for adaptive retrieval is to omit `intent` and unset `CONTEXTPRO_ADAPTIVE_CONTEXT`; exact reads and the existing selector remain available.
+No speed or provider-usage improvement is established by unit-test success. Each phase records its local gates, review and release state separately. Publication is pending, and desktop activation is separate. Rollback for adaptive retrieval is to omit `intent` and unset `CONTEXTPRO_ADAPTIVE_CONTEXT`; exact reads and the existing selector remain available.
 
 Updated 2026-09-08. Optimize successful coding work for correctness, latency and measured cost. A mandatory MCP call on every lookup is not the objective.
 
@@ -34,4 +34,4 @@ Keep deterministic exact-set tests alongside matched agent trials. Hold model/se
 
 Track cold and warm latency, reference precision/recall, task success, retries, memory and disk growth. Compression that drops a required reference is a correctness failure even if the output is smaller. See the [benchmark index](../benchmarks/README.md).
 
-Historical designs remain in the [archive](../archive/README.md). They are not promises to add every proposed tool, model or transport.
+Earlier designs are not promises to add every proposed tool, model or transport.
