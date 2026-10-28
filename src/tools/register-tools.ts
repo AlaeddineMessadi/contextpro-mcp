@@ -99,14 +99,14 @@ export function registerTools(
   const catalog = new Map<string, { name: string; description: string; inputSchema: unknown; annotations: unknown; outputSchema?: unknown }>();
   const active = new Set<string>();
   const handles = new Map<string, { enable?: () => void; disable?: () => void }>();
-  const invocations = new Map<string, { schema: z.AnyZodObject; handler: (args: unknown) => Promise<CallToolResult> }>();
+  const invocations = new Map<string, { schema: z.ZodObject; handler: (args: unknown) => Promise<CallToolResult> }>();
   // This compatibility route must never dispatch source edits or destructive
   // maintenance under discovery's non-destructive annotation.
   const callable = new Set(["context", "exact_references", "search", "grep", "skeleton", "explain", "tree", "status", "health", "reindex", "blast_radius", "validate_scope", "efficiency_report", "task_pack", "repo_map", "feature_brief", "artifact_read", "team_status", "compiler_diagnostics", "rename_preview"]);
   const refreshCatalogCost = (): void => setToolSchemaTokens(Buffer.byteLength(JSON.stringify({ tools: [...catalog.values()].filter(tool => active.has(tool.name)) }), "utf8") / 4);
   const noteSchema = (name: string, description: string, shape: Record<string, unknown>, output?: unknown): void => {
     const entry = { name, description, inputSchema: toJsonSchemaCompat(z.object({ ...shape, root: rootArg } as z.ZodRawShape).strict()), annotations: annotationsForTool(name),
-      ...(output ? { outputSchema: toJsonSchemaCompat(output as z.AnyZodObject) } : {}) };
+      ...(output ? { outputSchema: toJsonSchemaCompat(output as z.ZodObject) } : {}) };
     catalog.set(name, entry);
     refreshCatalogCost();
   };
@@ -173,7 +173,7 @@ export function registerTools(
     query: z.string().max(500).optional().describe("Purpose, e.g. rename, tests, or memory."),
     enable: z.array(z.string()).max(6).optional().describe("Exact tool names to add to this session's catalog."),
     limit: z.number().int().min(1).max(10).optional().describe("Maximum discovery matches; default 5."),
-    call: z.object({ name: z.string(), arguments: z.record(z.unknown()).optional() }).strict().optional().describe("If the client cannot refresh tools, execute a supported read/index tool using its discovered schema. Pass root outside call; source edits are excluded."),
+    call: z.object({ name: z.string(), arguments: z.record(z.string(), z.unknown()).optional() }).strict().optional().describe("If the client cannot refresh tools, execute a supported read/index tool using its discovered schema. Pass root outside call; source edits are excluded."),
   };
   const discover = withRequestActivity(async ({ query, enable, limit }: { query?: string; enable?: string[]; limit?: number }) => {
     const unknown = (enable ?? []).filter(name => !catalog.has(name));
@@ -387,12 +387,12 @@ export function registerTools(
       format: z.enum(["text", "json"]).optional().describe("Return plain text or structured JSON. Default: text."),
     },
     z.object({
-      graph: z.record(z.unknown()).optional(),
-      nodes: z.array(z.record(z.unknown())).optional(),
-      edges: z.array(z.record(z.unknown())).optional(),
-      analysis: z.record(z.unknown()).optional(),
+      graph: z.record(z.string(), z.unknown()).optional(),
+      nodes: z.array(z.record(z.string(), z.unknown())).optional(),
+      edges: z.array(z.record(z.string(), z.unknown())).optional(),
+      analysis: z.record(z.string(), z.unknown()).optional(),
       fuzzyNote: z.string().nullable().optional(),
-      truncation: z.record(z.unknown()).optional(),
+      truncation: z.record(z.string(), z.unknown()).optional(),
       error: z.string().optional(),
     }),
     withRequestActivity(async (args: any) => {
@@ -798,7 +798,7 @@ export function registerTools(
       type: z.enum(["concept", "file", "symbol", "note"]).describe("Node type: concept (abstract ideas), file (source files), symbol (functions/classes), note (free-form)."),
       label: z.string().min(1).max(500).describe("Short identifier for the node. Used for deduplication with type."),
       content: z.string().min(1).max(16000).describe("Detailed content for the node. Used for embedding generation."),
-      metadata: z.record(z.string()).optional().describe("Optional key-value metadata pairs."),
+      metadata: z.record(z.string(), z.string()).optional().describe("Optional key-value metadata pairs."),
       scope: z.enum(["session", "project", "client", "global"]).optional().describe("Memory scope. Defaults to project."),
     },
     withRequestActivity(async ({ type, label, content, metadata, scope }) => ({
@@ -818,7 +818,7 @@ export function registerTools(
       target_id: z.string().min(1).describe("ID of the target memory node."),
       relation: z.enum(["relates_to", "depends_on", "implements", "references", "similar_to", "contains", "resolved_by", "contradicts"]).describe("Relationship type between nodes."),
       weight: z.number().optional().describe("Edge weight 0-1. Higher = stronger relationship. Default: 1.0."),
-      metadata: z.record(z.string()).optional().describe("Optional key-value metadata for the edge."),
+      metadata: z.record(z.string(), z.string()).optional().describe("Optional key-value metadata for the edge."),
     },
     withRequestActivity(async ({ source_id, target_id, relation, weight, metadata }) => ({
       content: [{
@@ -857,7 +857,7 @@ export function registerTools(
         type: z.enum(["concept", "file", "symbol", "note"]),
         label: z.string(),
         content: z.string(),
-        metadata: z.record(z.string()).optional(),
+        metadata: z.record(z.string(), z.string()).optional(),
       })).describe("Array of nodes to add. Each needs type, label, and content."),
       auto_link: z.boolean().optional().describe("Whether to auto-create similarity edges. Default: true."),
       scope: z.enum(["session", "project", "client", "global"]).optional().describe("Memory scope. Defaults to project."),

@@ -13,8 +13,6 @@ updates:
         versions: [">=0.21"] # 0.x minor updates change the parser API.
       - dependency-name: typescript
         update-types: [version-update:semver-major]
-      - dependency-name: zod
-        update-types: [version-update:semver-major]
     groups:
       compatible-dependencies:
         update-types: [minor, patch]

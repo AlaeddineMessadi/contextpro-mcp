@@ -4,6 +4,8 @@ All notable changes to this project are recorded here. The project follows [Sema
 
 ## [Unreleased]
 
+- Upgraded zod to 4.6.7 to resolve GHSA-mrhx-c7xc-m3w5 (memory exhaustion when validating oversized constrained collections); tool behavior is unchanged, and nested object schemas are now advertised without `additionalProperties: false`.
+- Updated transitive MCP SDK dependencies (body-parser, @hono/node-server, fast-uri, ip-address) to patched versions.
 - Removed the `landing/` website and `dashboard/` operator app, archived plans, `AUDIT.md`, `TODO.md`, scratch scripts, and raw benchmark data and runners recorded on private repositories. Benchmark reports keep their results with private projects anonymized.
 
 - Explicit documentation requests retain document priority and budget under review/debug/change intents; requests for implementation plus documentation keep their mixed source allocation.
