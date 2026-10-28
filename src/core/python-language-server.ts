@@ -4,7 +4,7 @@ import { readFile, realpath } from "node:fs/promises";
 import { resolve, relative } from "node:path";
 import { pathToFileURL, fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
-import { createMessageConnection, StreamMessageReader, StreamMessageWriter, type MessageConnection } from "vscode-jsonrpc/node.js";
+import { createMessageConnection, StreamMessageReader, StreamMessageWriter, type MessageConnection } from "vscode-jsonrpc/node";
 import pLimit from "p-limit";
 import { resolveProjectPath } from "./path-guard.js";
 import type { CompilerResult } from "./typescript-references.js";
@@ -56,7 +56,7 @@ async function sessionFor(root: string): Promise<Session> {
   connection.onRequest("workspace/configuration", (params: {items:Array<{section?:string}>}) => params.items.map(item => item.section === "python"
     ? { pythonPath: process.env.CONTEXTPRO_PYTHON_PATH } : { diagnosticMode: "openFilesOnly" }));
   connection.onRequest("client/registerCapability", () => null);
-  connection.onNotification("textDocument/publishDiagnostics", (params: {uri:string;version?:number;diagnostics:Diagnostic[]}) => session.diagnostics.set(params.uri, params));
+  connection.onNotification("textDocument/publishDiagnostics", (params: {uri:string;version?:number;diagnostics:Diagnostic[]}) => { session.diagnostics.set(params.uri, params); });
   connection.listen();
   await connection.sendRequest("initialize", { processId: process.pid, rootUri: pathToFileURL(root).href,
     workspaceFolders: [{uri:pathToFileURL(root).href,name:root}], capabilities: { workspace: { configuration: true }, textDocument: { publishDiagnostics: { versionSupport: true } } } });
