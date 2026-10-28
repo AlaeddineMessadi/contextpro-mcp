@@ -61,11 +61,11 @@
     "pack:check": "node scripts/check-package.mjs"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.31.0",
+    "@modelcontextprotocol/sdk": "^1.32.2",
     "better-sqlite3": "^12.10.0",
-    "ignore": "^7.0.10",
-    "ml-matrix": "^6.15.0",
-    "ollama": "^0.6.3",
+    "ignore": "^7.0.14",
+    "ml-matrix": "^6.15.1",
+    "ollama": "^0.6.4",
     "p-limit": "^7.3.3",
     "sqlite-vec": "^0.1.9",
     "tree-sitter-wasms": "^0.1.13",
@@ -76,7 +76,7 @@
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
-    "@types/node": "^26.6.3",
+    "@types/node": "^26.6.5",
     "pyright": "1.1.414"
   }
 }
