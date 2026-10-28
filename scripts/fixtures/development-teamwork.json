@@ -1,12 +1,12 @@
 {
   "version": 2,
-  "baselineServerCommit": "2448966b055e9d9b929e0596aabcaa528bc7aedf",
+  "baselineServerCommit": "028677ce06d2643c570cfeb7907d1d74afffdb18",
   "agentTimeoutMs": 600000,
   "tasks": [
     {
       "id": "contextpro-worktree-routing",
       "repository": "contextpro",
-      "fix": "69ea95572b8737a91c1684e77041e680b4ffa318",
+      "fix": "2dcdaa6fa74dafdd89065f1188c161cdecedfed0",
       "prompt": "Fix shared MCP worktree routing. When the connection root has linked worktrees, calls without an explicit root must reject ambiguous routing, including health and reindex. Explicit roots must route reads, search, reindex and health to that worktree, including edited working-tree bytes and concurrent calls. Health must still report diagnostics for the requested root when project configuration is invalid. Preserve standalone-repository default-root behavior.",
       "validator": "node",
       "tests": [
@@ -16,7 +16,7 @@
     {
       "id": "contextpro-grep-context",
       "repository": "contextpro",
-      "fix": "3b9eec9b219c296a2d720259be5bbcd7ba0b67b7",
+      "fix": "f53023cf92061eb8c8275079963ab790712a2f55",
       "prompt": "Improve grep source context. Add optional context_lines (0\u201310, default 0) and context_chars (40\u20131000, default 300) to the MCP grep schema and corresponding contextLines/contextChars handler options. Include bounded, deduplicated neighboring lines while preserving exact match counts and marking matching versus surrounding lines. Preserve literal matching, regex opt-in and existing glob behavior.",
       "validator": "node",
       "tests": [
