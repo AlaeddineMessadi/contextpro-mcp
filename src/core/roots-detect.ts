@@ -4,7 +4,7 @@
 // one this request belongs to. Degrades silently to the server's boot root when
 // the client advertises no usable roots (or lacks the capability entirely).
 
-import { resolve } from "path";
+import { isAbsolute, relative, resolve, sep } from "path";
 import { fileURLToPath } from "url";
 
 /** A function that returns the client's advertised root URIs (file:// strings). */
@@ -20,10 +20,8 @@ function fileUriToPath(uri: string): string | null {
 }
 
 function isInside(parent: string, child: string): boolean {
-  const p = resolve(parent);
-  const c = resolve(child);
-  if (c === p) return true;
-  return c.startsWith(p.endsWith("/") ? p : `${p}/`);
+  const rel = relative(parent, child);
+  return rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
 }
 
 /**

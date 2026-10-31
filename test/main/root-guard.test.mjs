@@ -83,6 +83,49 @@ describe("root guard", () => {
     }
   });
 
+  it("refuses home, its ancestors and non-repo home children; accepts repos below home", async () => {
+    const { mkdtemp, mkdir, rm } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const { dirname, join } = await import("node:path");
+    const mod = await import("../../build/core/root-guard.js");
+    const base = await mkdtemp(join(tmpdir(), "contextpro-ancestor-"));
+    const home = join(base, "users", "me");
+    const previousHome = process.env.HOME, previousAllow = process.env.CONTEXTPRO_ALLOW_UNSAFE_ROOT;
+    process.env.HOME = home;
+    delete process.env.CONTEXTPRO_ALLOW_UNSAFE_ROOT;
+    const check = (rootDir) => () => mod.validateSelectedRoot({ rootDir, source: "flag" });
+    try {
+      await mkdir(join(base, ".git"), { recursive: true });
+      await mkdir(join(home, "proj", ".git"), { recursive: true });
+      await mkdir(join(home, "Downloads"));
+      await mkdir(join(home, "a", "b"), { recursive: true });
+      const refused = [dirname(home), base, home, "/", join(home, "Downloads")];
+      for (const rootDir of refused) assert.throws(check(rootDir), /a folder that contains your home folder/, rootDir);
+      assert.doesNotThrow(check(join(home, "proj")));
+      assert.doesNotThrow(check(join(home, "a", "b")));
+      process.env.CONTEXTPRO_ALLOW_UNSAFE_ROOT = "true";
+      for (const rootDir of refused) assert.doesNotThrow(check(rootDir), rootDir);
+    } finally {
+      if (previousHome === undefined) delete process.env.HOME; else process.env.HOME = previousHome;
+      if (previousAllow === undefined) delete process.env.CONTEXTPRO_ALLOW_UNSAFE_ROOT; else process.env.CONTEXTPRO_ALLOW_UNSAFE_ROOT = previousAllow;
+      await rm(base, { recursive: true, force: true });
+    }
+  });
+
+  it("counts a child folder named ..foo as inside home", async () => {
+    const { join } = await import("node:path");
+    const mod = await import("../../build/core/root-guard.js");
+    const previousHome = process.env.HOME;
+    process.env.HOME = "/x/home";
+    try {
+      assert.equal(mod.isUnsafeRoot(join("/x/home", "..foo")), true, "a direct child is refused, not treated as outside");
+      assert.equal(mod.isUnsafeRoot(join("/x/home", "..foo", "proj")), false);
+      assert.equal(mod.isUnsafeRoot("/x/home2/proj"), false);
+    } finally {
+      if (previousHome === undefined) delete process.env.HOME; else process.env.HOME = previousHome;
+    }
+  });
+
   it("ignores an unexpanded client variable passed as --root", async () => {
     const mod = await import("../../build/core/root-guard.js");
     const selected = mod.selectRootDir("/tmp/cwd", [], "${workspaceFolder}");

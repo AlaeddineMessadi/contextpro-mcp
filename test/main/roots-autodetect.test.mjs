@@ -31,6 +31,17 @@ describe("roots auto-detection — selection logic", () => {
     assert.equal(picked, undefined);
   });
 
+  it("does not match a sibling that shares a name prefix", async () => {
+    const mod = await import("../../build/core/roots-detect.js");
+    assert.equal(mod.selectRootFromList(["file:///x/app", "file:///x/other"], "/x/app2/src"), undefined);
+    assert.equal(mod.selectRootFromList(["file:///x/app", "file:///x/app2"], "/x/app2/src"), "/x/app2");
+  });
+
+  it("counts a child folder named ..foo as inside its root", async () => {
+    const mod = await import("../../build/core/roots-detect.js");
+    assert.equal(mod.selectRootFromList(["file:///x/app", "file:///y"], "/x/app/..foo/file.ts"), "/x/app");
+  });
+
   it("decodes percent-encoded file URIs", async () => {
     const mod = await import("../../build/core/roots-detect.js");
     const picked = mod.selectRootFromList(["file:///repo/my%20wt"], "/x");
