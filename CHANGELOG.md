@@ -4,6 +4,8 @@ All notable changes to this project are recorded here. The project follows [Sema
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-10-31
+
 - `contextpro-mcp --help` and `--version` print usage and the version instead of starting a server on a folder named after the flag. Unknown options and a `--root` that does not exist now fail with a one-line error instead of creating directories.
 - `init` writes a minimal config (`CONTEXTPRO_TOOL_PROFILE=lean`, no Ollama settings). `init vscode` uses VS Code's `servers` format, and `init vscode`/`init cursor` pass `--root ${workspaceFolder}`; an unexpanded `${...}` root falls back to the launch directory.
 - A Git repository directly inside the home folder (for example `~/myapp`) is accepted as a project root.

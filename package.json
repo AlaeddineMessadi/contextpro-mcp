@@ -1,6 +1,6 @@
 {
   "name": "contextpro-mcp",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "description": "Local-first MCP code intelligence: bounded source context, exact references, and evidence-aware coding workflows.",
   "type": "module",
   "license": "MIT",
