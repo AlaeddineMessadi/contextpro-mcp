@@ -534,7 +534,7 @@ export async function reindex(options: ReindexOptions): Promise<string> {
     if (noEmbed) {
       lines.push(`  Embeddings: skipped (noEmbed=true or CONTEXTPRO_REINDEX_NO_EMBED set)`);
     } else if (embedError) {
-      lines.push(`  Embeddings: failed (${embedError.slice(0, 120)}); search will fall back to keyword ranking`);
+      lines.push(`  Embeddings: failed (${embedError.slice(0, 400)}); search will fall back to keyword ranking`);
     } else {
       lines.push(`  Embeddings: ${fileEmbedCount} files, ${identifierEmbedCount} identifiers, ${memoryEmbedCount} memories`);
     }

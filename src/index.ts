@@ -4,7 +4,7 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { readFileSync } from "fs";
+import { existsSync, readFileSync, statSync } from "fs";
 import { mkdir, readFile, stat, writeFile } from "fs/promises";
 import { dirname, join, resolve } from "path";
 import { fileURLToPath } from "url";
@@ -21,7 +21,7 @@ import { withToolTrace } from "./core/tool-trace.js";
 import { runtimeSessionId } from "./core/runtime-session.js";
 import { installAgentInstructions, mergeMcpConfig } from "./core/agent-setup.js";
 import { registerTools } from "./tools/register-tools.js";
-import { selectRootDir, validateSelectedRoot } from "./core/root-guard.js";
+import { isUnexpandedVariable, selectRootDir, validateSelectedRoot } from "./core/root-guard.js";
 import { resolveRequestRoot } from "./core/request-root.js";
 import { runWithRequestRoot } from "./core/request-context.js";
 import { resolveProjectPath } from "./core/path-guard.js";
@@ -179,6 +179,12 @@ function parseCliArgs(args: string[]): ParsedCliArgs {
       index += 1;
       continue;
     }
+    if (arg === "--no-agent-instructions") {
+      index += 1;
+      continue;
+    }
+    // Without this, a mistyped flag became the project root and got a .contextpro/ directory.
+    if (arg.startsWith("-")) throw new Error(`Unknown option "${arg}". Run contextpro-mcp --help for usage.`);
     parsed.positional.push(arg);
     index += 1;
   }
@@ -190,13 +196,48 @@ function parseCliArgs(args: string[]): ParsedCliArgs {
   return parsed;
 }
 
+const USAGE = `ContextPro ${PACKAGE_VERSION}: local MCP server for coding agents.
+
+Usage:
+  contextpro-mcp [--root <dir>]       Start the MCP server on stdio (root defaults to the current directory)
+  contextpro-mcp init [claude|cursor|vscode|windsurf|opencode] [--root <dir>] [--runner npx|bunx] [--no-agent-instructions]
+                                      Write the client's project MCP config and agent instructions
+  contextpro-mcp doctor [--root <dir>] [--fix]
+                                      Check storage and the native SQLite module
+  contextpro-mcp tree [--root <dir>]  Print the project's structure (alias: skeleton)
+  contextpro-mcp daemon start|status|stop
+  contextpro-mcp --version | --help
+
+Docs: https://github.com/AlaeddineMessadi/contextpro-mcp#readme`;
+const cliArgs = process.argv.slice(2);
+if (cliArgs.includes("--version") || cliArgs.includes("-v")) {
+  console.log(PACKAGE_VERSION);
+  process.exit(0);
+}
+if (cliArgs.includes("--help") || cliArgs.includes("-h") || cliArgs[0] === "help") {
+  console.log(USAGE);
+  process.exit(0);
+}
 if (process.argv[2] === "daemon") {
   try { console.log(JSON.stringify(await (await import("./core/local-daemon.js")).daemonCommand(process.argv[3] ?? "status"), null, 2)); }
   catch (error) { console.error((error as Error).message); process.exit(1); }
   process.exit(0);
 }
-const parsedCliArgs = parseCliArgs(process.argv.slice(2));
-const ROOT_DIR = validateSelectedRoot({ rootDir: parsedCliArgs.rootDir, source: parsedCliArgs.rootSource }).rootDir;
+function parseStartupOrExit(): { parsedCliArgs: ParsedCliArgs; ROOT_DIR: string } {
+  try {
+    const parsed = parseCliArgs(cliArgs);
+    if (parsed.flagRoot && isUnexpandedVariable(parsed.flagRoot)) console.error(`[contextpro/startup] ignoring unexpanded --root "${parsed.flagRoot}"; using ${parsed.rootDir}`);
+    const root = validateSelectedRoot({ rootDir: parsed.rootDir, source: parsed.rootSource }).rootDir;
+    if (!existsSync(root) || !statSync(root).isDirectory()) {
+      throw new Error(`Project root "${root}" does not exist or is not a directory. Pass --root <existing project directory>.`);
+    }
+    return { parsedCliArgs: parsed, ROOT_DIR: root };
+  } catch (error) {
+    console.error((error as Error).message);
+    process.exit(1);
+  }
+}
+const { parsedCliArgs, ROOT_DIR } = parseStartupOrExit();
 
 // Cache the client's advertised roots briefly so auto-detection doesn't round-trip
 // to the client on every single tool call. The TTL is short because a client can
@@ -315,26 +356,16 @@ function parseRunner(args: string[]): "npx" | "bunx" {
   return "npx";
 }
 
-function buildMcpConfig(runner: "npx" | "bunx") {
+function buildMcpConfig(runner: "npx" | "bunx", target: AgentTarget) {
   const commandArgs = runner === "npx" ? ["-y", "contextpro-mcp"] : ["contextpro-mcp"];
-  return JSON.stringify(
-    {
-      mcpServers: {
-        contextpro: {
-          command: runner,
-          args: commandArgs,
-          env: {
-            CONTEXTPRO_PROVIDER: "ollama",
-            CONTEXTPRO_EMBED_MODEL: "nomic-embed-text:latest",
-            CONTEXTPRO_EMBED_TRACKER: "lazy",
-            CONTEXTPRO_TOOL_PROFILE: "workflow",
-          },
-        },
-      },
-    },
-    null,
-    2,
-  );
+  const env = { CONTEXTPRO_TOOL_PROFILE: "lean" };
+  // VS Code and Cursor expand ${workspaceFolder}, so GUI launches outside the project still get the right root.
+  // VS Code reads `servers`; the other clients read `mcpServers`.
+  const workspaceRoot = ["--root", "${workspaceFolder}"];
+  const config = target === "vscode"
+    ? { servers: { contextpro: { type: "stdio", command: runner, args: [...commandArgs, ...workspaceRoot], env } } }
+    : { mcpServers: { contextpro: { command: runner, args: target === "cursor" ? [...commandArgs, ...workspaceRoot] : commandArgs, env } } };
+  return JSON.stringify(config, null, 2);
 }
 
 async function runDoctorCommand(args: string[]) {
@@ -353,12 +384,7 @@ function buildOpenCodeConfig(runner: "npx" | "bunx") {
           type: "local",
           command,
           enabled: true,
-          environment: {
-            CONTEXTPRO_PROVIDER: "ollama",
-            CONTEXTPRO_EMBED_MODEL: "nomic-embed-text:latest",
-            CONTEXTPRO_EMBED_TRACKER: "lazy",
-            CONTEXTPRO_TOOL_PROFILE: "workflow",
-          },
+          environment: { CONTEXTPRO_TOOL_PROFILE: "lean" },
         },
       },
     },
@@ -376,7 +402,7 @@ async function runInitCommand(args: string[]) {
   const outputPath = resolveProjectPath(root, AGENT_CONFIG_PATH[target], "MCP config");
   await withSourceMutation(root, async () => {
     const snapshot = captureSource(root, outputPath);
-    let content = target === "opencode" ? buildOpenCodeConfig(runner) : buildMcpConfig(runner);
+    let content = target === "opencode" ? buildOpenCodeConfig(runner) : buildMcpConfig(runner, target);
     try {
       const prior = await readFile(outputPath, "utf8");
       content = JSON.stringify(mergeMcpConfig(JSON.parse(prior), JSON.parse(content), target), null, 2);
@@ -474,12 +500,13 @@ setToolCallSink((event) => {
 
 async function main() {
   const args = process.argv.slice(2);
-  if (parsedCliArgs.command === "init") {
-    await runInitCommand(args.slice(1));
-    process.exit(0);
-  }
-  if (parsedCliArgs.command === "doctor") {
-    await runDoctorCommand(args.slice(1));
+  if (parsedCliArgs.command === "init" || parsedCliArgs.command === "doctor") {
+    try {
+      await (parsedCliArgs.command === "init" ? runInitCommand : runDoctorCommand)(args.slice(1));
+    } catch (error) {
+      console.error((error as Error).message);
+      process.exit(1);
+    }
     process.exit(0);
   }
   if (parsedCliArgs.command === "skeleton" || parsedCliArgs.command === "tree") {

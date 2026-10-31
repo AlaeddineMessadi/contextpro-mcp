@@ -4,7 +4,31 @@ Defaults below describe this checkout's MCP launch path. Set environment variabl
 
 ## Profiles
 
-`CONTEXTPRO_TOOL_PROFILE` defaults to `workflow` (14 initial tools). `lean` advertises `context`, `exact_references` and `discover_tools`; `core` includes common editing/graph operations; `full` advertises everything. Existing custom profiles survive `init`. Discovering or enabling tools does not execute them. Enabling returns schemas; hosts without catalog updates can use `discover_tools({root,call:{name,arguments}})` for tools marked `callable` (reads and indexing, never source edits). The target schema and normal request routing still apply. Use `full` for other experts on those hosts.
+`CONTEXTPRO_TOOL_PROFILE` selects the tools advertised at startup. The quick start recommends `lean`; the server default when no profile is set is `workflow`.
+
+| Profile | Initial interface |
+| --- | --- |
+| `lean` | 3 tools: `context`, `exact_references`, `discover_tools` |
+| `workflow` (default) | 14 tools for discovery, reads, impact and validation |
+| `core` | 39 tools: common workflows plus editing and graphs |
+| `full` | All 68 registered tools, including 5 deprecated aliases |
+
+Existing custom profiles survive `init`. Discovering or enabling tools does not execute them. `discover_tools(enable:[...])` returns schemas; hosts without catalog updates can use `discover_tools({root,call:{name,arguments}})` for tools marked `callable` (reads and indexing, never source edits). Put `root` only at the top level, not inside `call.arguments`. The target schema and normal request routing still apply. Use `full` for other experts on those hosts.
+
+### Which tool for which task
+
+| Task | Start with | What to check |
+| --- | --- | --- |
+| Locate unfamiliar code and read it | `context(query:...)` | Retrieval is a ranked selection, not an exhaustive search |
+| Read several known targets | `context(targets:[...])` | Follow explicit omissions if more source is needed |
+| Find TS/JS references | `exact_references` | Declared scope, reference kinds and truncation |
+| Inspect an exported API | Discover `skeleton`, then use `exported_only:true` | Signatures do not prove behavior |
+| Assess a change | Discover `blast_radius` or `validate_scope` | Text matches are candidates; recommended checks still need to run |
+| Preserve a decision | Discover `memory_record_task` | Keep supporting evidence and revisit stale assumptions |
+| Inspect compiler errors or rename a binding | Discover `compiler_diagnostics` / `rename_preview` | TS/JS compiler or configured Pyright; inspect before `rename_apply` |
+| Record executed checks | `validate_scope`, then discover `validation_record` | Run checks in the coding host; receipts become stale when inputs change |
+
+Tool schemas are the argument reference. The [agent guide](../agent-guide.md) has call examples, batching and context reuse.
 
 ## Providers
 
@@ -133,7 +157,10 @@ events are separate from the coding agent's usage and are not billing estimates.
 Set `CONTEXTPRO_TOOL_TRACE_PATH` to an absolute local JSONL path before starting the server. Tracing is off by default and adds no MCP response text. Each event records tool arguments, status, a session/request ID, total server duration, preparation (root verification/freshness/waits), handler execution and postprocessing. Spans can overlap; their sum is not elapsed agent time.
 
 The trace caps each argument payload at 8 KiB and the file at 64 MiB, redacts common credential/content keys and requires a private regular destination file (created with mode 0600). Query strings and paths can still contain private information; keep raw traces local. Write failures are best-effort and produce a stderr warning. A missing or partial trace is unavailable evidence, not zero execution time. See the [benchmark procedure](https://github.com/AlaeddineMessadi/contextpro-mcp/blob/main/docs/benchmarks/methodology.md).
+
 ## Experimental development context
+
+Experimental connected retrieval (`CONTEXTPRO_CONNECTED_CONTEXT=true`) combines ranked source, one-hop imports/callers and relevant tests in `context` and `task_pack`. It remains opt-in while task-level performance is evaluated. Discover `feature_brief` for a cached, source-cited feature map; model-written interpretations require a separate opt-in.
 
 `contextpro daemon start|status|stop` manages an optional private local compute service. Set `CONTEXTPRO_DAEMON=true` in each MCP process to share freshness/indexing, TypeScript compiler work and configured Python analysis. Build, Node ABI and provider/runtime configuration must match. Incompatibility, crashes and unavailable services fall back to local computation. The service expires after five idle minutes; Windows currently uses local compute because a private Unix socket is required. `CONTEXTPRO_RUNTIME_DIR` overrides the default `~/.contextpro/runtime` directory for isolated installations. Stop a running service using its original build/configuration before upgrading it.
 
@@ -142,6 +169,8 @@ The trace caps each argument payload at 8 KiB and the file at 64 MiB, redacts co
 Change/debug/review requests reuse the connected evidence retriever for implementations, callers, dependencies and tests. Configuration and contract candidates are labelled by path; these are structural/textual hints, not compiler proof. Missing evidence and output omissions do not establish absence. Response budgets and source delta IDs retain their existing contracts.
 
 These intents also inspect at most twelve matching task-risk candidates lexically and return up to two current records within the existing output budget. Notes cite their memory IDs and remain textual claims. Stale, unverified and superseded risk notes are excluded; unavailable and omitted risk evidence are explicit. Changed notes invalidate context reuse. Ordinary lookup requests do not perform this memory search.
+
+None of these features establishes a measured coding-speed improvement.
 
 ## Verifiable memory and host checks
 

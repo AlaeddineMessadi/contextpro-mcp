@@ -69,7 +69,7 @@ function lexicalFallbackNotice(db: ContextPlusDB): string {
     : error ? `last embedding build failed: ${detail(error)}`
     : db.getMeta("last_embed_skipped") === "true" ? "corpus embeddings were skipped by a structural-only refresh"
     : "no file vectors are stored";
-  return cause ? `Discovery used lexical fallback: ${cause}. Configure the intended embedding model; run reindex with this root and no_embed:false (unset CONTEXTPRO_REINDEX_NO_EMBED).`
+  return cause ? `Discovery used lexical fallback: ${cause}. Configure the intended embedding model; run reindex with this root and no_embed:false (unset CONTEXTPRO_REINDEX_NO_EMBED). In the lean profile, enable it first with discover_tools(enable:["reindex"]).`
     : "Discovery used lexical fallback or weak semantic evidence for this query; vectors exist, but the query signal was weak or unavailable. Check provider health or refine the query; a weak match alone does not require rebuilding the index.";
 }
 

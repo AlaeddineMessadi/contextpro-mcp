@@ -60,4 +60,33 @@ describe("root guard", () => {
     if (previousLegacy === undefined) delete process.env.CONTEXTPLUS_ALLOW_UNSAFE_ROOT;
     else process.env.CONTEXTPLUS_ALLOW_UNSAFE_ROOT = previousLegacy;
   });
+
+  it("accepts a Git repository directly in the home folder but not a plain folder there", async () => {
+    const { mkdtemp, mkdir, rm } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const mod = await import("../../build/core/root-guard.js");
+    const home = await mkdtemp(join(tmpdir(), "contextpro-home-"));
+    const previousHome = process.env.HOME, previousAllow = process.env.CONTEXTPRO_ALLOW_UNSAFE_ROOT;
+    process.env.HOME = home;
+    delete process.env.CONTEXTPRO_ALLOW_UNSAFE_ROOT;
+    try {
+      await mkdir(join(home, "myapp", ".git"), { recursive: true });
+      await mkdir(join(home, "Downloads"));
+      assert.equal(mod.validateSelectedRoot({ rootDir: join(home, "myapp"), source: "flag" }).rootDir, join(home, "myapp"));
+      assert.throws(() => mod.validateSelectedRoot({ rootDir: join(home, "Downloads"), source: "flag" }), /Unsafe project root/);
+      assert.throws(() => mod.validateSelectedRoot({ rootDir: home, source: "cwd" }), /Unsafe project root/);
+    } finally {
+      if (previousHome === undefined) delete process.env.HOME; else process.env.HOME = previousHome;
+      if (previousAllow !== undefined) process.env.CONTEXTPRO_ALLOW_UNSAFE_ROOT = previousAllow;
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it("ignores an unexpanded client variable passed as --root", async () => {
+    const mod = await import("../../build/core/root-guard.js");
+    const selected = mod.selectRootDir("/tmp/cwd", [], "${workspaceFolder}");
+    assert.equal(selected.rootDir, "/tmp/cwd");
+    assert.equal(selected.source, "cwd");
+  });
 });

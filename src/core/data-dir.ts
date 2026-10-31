@@ -1,6 +1,6 @@
 // Canonical ContextPro project storage and one-way migration from legacy names.
 
-import { cp, mkdir, rename, rm, stat } from "fs/promises";
+import { cp, mkdir, rename, rm, stat, writeFile } from "fs/promises";
 import { join } from "path";
 import { resolveProjectPath } from "./path-guard.js";
 
@@ -49,5 +49,11 @@ export async function ensureContextProDir(rootDir: string): Promise<string | nul
   const migratedFrom = await migrateLegacyProjectData(rootDir);
   await mkdir(resolveProjectPath(rootDir, join(CONTEXTPRO_DIR, "backups")), { recursive: true });
   await mkdir(resolveProjectPath(rootDir, join(CONTEXTPRO_DIR, "hubs")), { recursive: true });
+  // Local index state must not be committed; "wx" never overwrites a user-edited file.
+  try {
+    await writeFile(resolveProjectPath(rootDir, join(CONTEXTPRO_DIR, ".gitignore")), "*\n", { flag: "wx" });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+  }
   return migratedFrom;
 }

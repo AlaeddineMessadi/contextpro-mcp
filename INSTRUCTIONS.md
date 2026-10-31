@@ -4,7 +4,7 @@ Append the following policy to your client's project rules, such as `AGENTS.md` 
 
 ## Choose the smallest useful request
 
-Use ContextPro for unfamiliar repository discovery, structural context and cross-file evidence. With the lean profile, use `context(query:...)` to find and read evidence together, or `context(targets:[...])` to batch known source targets. With the default workflow profile, use `task_pack` or compact `search`; use `explain` for known symbols and `skeleton(exported_only:true)` for TS/JS public APIs.
+Use ContextPro for unfamiliar repository discovery, structural context and cross-file evidence. With the lean profile, use `context(query:...)` to find and read evidence together, or `context(targets:[...])` to batch known source targets. With the workflow profile (the server default when no profile is set; init installs lean), use `task_pack` or compact `search`; use `explain` for known symbols and `skeleton(exported_only:true)` for TS/JS public APIs.
 
 Pass the absolute active repository/worktree as `root` on every call. For `context`, use `max_tokens` from 512 to 12000 (default 4000, estimated UTF-8 bytes/4) and at most six exact targets. Include a known relative directory and concrete route or symbol names in discovery questions. Directory and named-usage hints influence ranking; they are not exhaustive scope or compiler references. Ask explicitly for an overview when you want a UI inventory. If evidence is omitted, narrow to exact targets or a native scope search instead of repeating the same broad query.
 
