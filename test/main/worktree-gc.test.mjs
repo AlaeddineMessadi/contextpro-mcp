@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtemp, realpath, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -46,13 +46,15 @@ describe("dead worktree GC", () => {
     // Give the worktree an index dir, then physically remove the worktree + prune.
     const router = await import("../../build/core/workspace-router.js");
     await router.resolveWorkspace(wt, base);
-    await writeFile(join(wt, ".contextpro-marker"), "x"); // ensure dir is tracked
-    await rm(wt, { recursive: true, force: true });
+    await writeFile(join(wt, ".contextpro-marker"), "x"); // untracked file: remove needs --force
+    await git(base, "worktree", "remove", "--force", wt);
     await git(base, "worktree", "prune");
 
     const mod = await import("../../build/core/worktree-gc.js");
     const result = await mod.garbageCollectDeadWorktrees(base);
-    assert.ok(result.removedWorkspaces >= 0);
+    assert.equal(result.removedWorkspaces, 1);
+    assert.deepEqual(result.removedDirs, [join(wt, ".contextpro")]);
+    assert.equal(result.error, undefined);
     // The router should no longer report the dead worktree.
     const stillKnown = router.listActiveWorkspaces().map((w) => w.rootDir);
     assert.ok(!stillKnown.includes(wt), `router still knows dead worktree ${wt}`);
@@ -65,5 +67,44 @@ describe("dead worktree GC", () => {
     await mod.garbageCollectDeadWorktrees(base);
     assert.equal(await exists(base), true);
     assert.ok(router.listActiveWorkspaces().map((w) => w.rootDir).includes(base));
+  });
+
+  it("removes nothing when git cannot list worktrees", async () => {
+    const router = await import("../../build/core/workspace-router.js");
+    await router.resolveWorkspace(wt, base);
+    await mkdir(join(wt, ".contextpro"), { recursive: true });
+    await writeFile(join(wt, ".contextpro", "index.db"), "x");
+    const mod = await import("../../build/core/worktree-gc.js");
+
+    const emptyBin = await mkdtemp(join(scratch, "nogit-"));
+    const savedPath = process.env.PATH;
+    let result;
+    try {
+      process.env.PATH = emptyBin;
+      result = await mod.garbageCollectDeadWorktrees(base);
+    } finally {
+      process.env.PATH = savedPath;
+    }
+    assert.ok(result.error, "expected an error when git is unavailable");
+    assert.equal(result.removedWorkspaces, 0);
+    assert.deepEqual(result.removedDirs, []);
+    assert.equal(await exists(join(wt, ".contextpro", "index.db")), true);
+    assert.ok(router.listActiveWorkspaces().map((w) => w.rootDir).includes(wt));
+  });
+
+  it("skips a worktree git no longer lists while its checkout still exists", async () => {
+    const router = await import("../../build/core/workspace-router.js");
+    await router.resolveWorkspace(wt, base);
+    await mkdir(join(wt, ".contextpro"), { recursive: true });
+    await writeFile(join(wt, ".contextpro", "index.db"), "x");
+    await rm(join(base, ".git", "worktrees", "wt"), { recursive: true, force: true });
+    assert.equal(await exists(join(wt, ".git")), true);
+
+    const mod = await import("../../build/core/worktree-gc.js");
+    const result = await mod.garbageCollectDeadWorktrees(base);
+    assert.equal(result.removedWorkspaces, 0);
+    assert.deepEqual(result.removedDirs, []);
+    assert.equal(await exists(join(wt, ".contextpro", "index.db")), true);
+    assert.ok(router.listActiveWorkspaces().map((w) => w.rootDir).includes(wt));
   });
 });

@@ -302,8 +302,8 @@ export function registerTools(
     "gc",
     "Garbage-collect orphaned on-disk data: artifact .json payloads and restore-point backup folders " +
     "that have been evicted from their manifests (by the LRU caps) but never deleted from disk, plus " +
-    "indexes of git worktrees that no longer exist. Safe — only removes files no longer referenced by " +
-    "any manifest or live worktree. Reports files removed and bytes reclaimed.",
+    "indexes of git worktrees that no longer exist. Worktree indexes are removed only when the checkout is gone, " +
+    "and worktrees are skipped entirely when git cannot list them. Reports files removed and bytes reclaimed.",
     {},
     withRequestActivity(async () => {
       const [artifacts, restorePoints, deadWorktrees] = await Promise.all([
@@ -319,7 +319,7 @@ export function registerTools(
           text: `Garbage collection complete.\n`
             + `  Artifacts: removed ${artifacts.deletedFiles} orphaned file(s), freed ${(artifacts.freedBytes / 1024).toFixed(1)} KB\n`
             + `  Restore points: removed ${restorePoints.deletedPoints} orphaned backup(s), freed ${(restorePoints.freedBytes / 1024).toFixed(1)} KB\n`
-            + `  Dead worktrees: removed ${deadWorktrees.removedWorkspaces} stale index(es)\n`
+            + `  Dead worktrees: removed ${deadWorktrees.removedWorkspaces} stale index(es)${deadWorktrees.error ? ` (skipped: ${deadWorktrees.error})` : ""}\n`
             + `  Total reclaimed: ${kb} KB`,
         }],
       };
