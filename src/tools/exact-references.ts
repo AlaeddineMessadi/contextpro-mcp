@@ -170,7 +170,9 @@ function formatReferencePayload(input: {
       ]
     : [];
   if (input.references.length === 0) {
-    return [...ambiguityLines, ...warnings.map(w => `Warning: ${w}`), `No exact references found for "${input.symbolName}"${input.target ? ` from ${input.target.file}:${input.target.line}` : ""}.`].join("\n");
+    // Files the compiler could not check make an empty result unproven, not "no references".
+    const unchecked = warnings.some(w => w.includes("could not be checked"));
+    return [...ambiguityLines, ...warnings.map(w => `Warning: ${w}`), `${unchecked ? "Unverified: " : ""}No exact references found for "${input.symbolName}"${input.target ? ` from ${input.target.file}:${input.target.line}` : ""}.${unchecked ? " Some files were not checked; install the project's dependencies (for example npm install) and retry." : ""}`].join("\n");
   }
   const lines = [
     `Exact references for "${input.symbolName}": ${input.references.length} returned of ${total} matched occurrences${truncated ? " (TRUNCATED)" : ""}`,

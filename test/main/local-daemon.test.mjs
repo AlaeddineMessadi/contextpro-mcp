@@ -50,6 +50,7 @@ it('shared service isolates roots, refreshes edits, and falls back after a crash
     if(before.runtime===undefined) delete process.env.CONTEXTPRO_RUNTIME_DIR; else process.env.CONTEXTPRO_RUNTIME_DIR=before.runtime;
     if(before.daemon===undefined) delete process.env.CONTEXTPRO_DAEMON; else process.env.CONTEXTPRO_DAEMON=before.daemon;
     if(before.pyright===undefined) delete process.env.CONTEXTPRO_PYRIGHT_COMMAND; else process.env.CONTEXTPRO_PYRIGHT_COMMAND=before.pyright;
-    await rm(temp,{recursive:true,force:true});
+    // The stopped daemon may still be removing its IPC files; retry instead of failing on ENOTEMPTY.
+    await rm(temp,{recursive:true,force:true,maxRetries:10,retryDelay:100});
   }
 });

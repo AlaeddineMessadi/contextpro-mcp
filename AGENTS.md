@@ -18,7 +18,8 @@ For an exact name or literal, use grep or explain directly. Use skeleton
 (exported_only: true for TS/JS public APIs) for contracts. Before changing
 shared code, inspect blast_radius (textual candidates). For TS/JS renames use
 exact_references for binding-resolved results. After edits, call validate_scope and run the
-recommended checks. Subagents must pass their absolute worktree root on every call.
+recommended checks. In the lean profile, enable these workflow tools with discover_tools first.
+Subagents must pass their absolute worktree root on every call.
 A shell cd or worktree change does not retarget a shared MCP server.
 
 exact_references is immediately available in lean and workflow profiles; no discovery

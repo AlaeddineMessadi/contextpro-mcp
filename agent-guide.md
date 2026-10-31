@@ -4,7 +4,7 @@ Use ContextPro as the first interface for understanding an unfamiliar repository
 ranked, bounded context. Use native file/search tools when they are cheaper for a
 known exact target or when retrieved context is incomplete.
 
-## Lean workflow (opt-in)
+## Lean workflow (recommended; installed by init)
 
 Set `CONTEXTPRO_TOOL_PROFILE=lean` for three advertised tools: `context`, `exact_references` and
 `discover_tools`. Call `exact_references` directly for TS/JS caller questions. Start with `context(query:"your repository question")`: search,
@@ -37,6 +37,37 @@ read in the task prompt when known, for example:
 The batch accepts up to six targets. It can reduce separate tool calls even when
 no discovery is needed. A single tiny known read may be simpler natively; tool
 availability or an instruction alone does not establish that an agent used it.
+
+## Example calls
+
+These use ContextPro's own repository. In another project, use paths and
+declaration names observed in its source rather than guessed symbols.
+
+```js
+context({
+  root: "/absolute/path/to/contextpro-mcp",
+  query: "src/core/agent-setup.ts mergeAgentInstructions preserve existing project rules",
+  intent: "change",
+  max_tokens: 2500
+})
+context({
+  root: "/absolute/path/to/contextpro-mcp",
+  targets: [{file: "src/core/agent-setup.ts", symbol: "mergeAgentInstructions"}],
+  max_tokens: 1500
+})
+// Use compiler references when binding identity or cross-file callers matter.
+exact_references({
+  root: "/absolute/path/to/contextpro-mcp",
+  file: "src/core/agent-setup.ts",
+  symbol_name: "mergeAgentInstructions",
+  limit: 20
+})
+```
+
+These are task-dependent choices, not a checklist: stop when enough evidence is
+available. If a broad query favors documentation, read the discovered source
+symbol or a narrow line range directly. For a UI inventory, ask explicitly for an
+overview. For a bug, name the affected symbol and source area.
 
 ## Choose the next call from the evidence
 
@@ -135,7 +166,7 @@ prefixes and identifiers do not invent paths or prove absence. For an omitted
 route, guard or implementation, follow up with exact targets or native scope search.
 Literal UI phrases, including Unicode text, use full-source local text search;
 matching lines get priority in the returned source windows. Quotes can delimit
-the phrase. Existing summary-only indexes rebuild automatically on refresh.
+the phrase. A named component or compound error code supplies additional local text evidence. Existing summary-only indexes rebuild automatically on refresh.
 Repository orientation queries also include structural entry points, import hubs,
 their dependencies and a root README when available. File mentions within an
 overview supplement that orientation instead of narrowing it to the named files.

@@ -16,6 +16,8 @@ Results have different baselines and must not be combined into one savings claim
 | [Direct reference evidence](2026-09-08-reference-evidence.md) | One-call protocol checks, cold/warm compiler replay, output/catalog bytes | No measured agent token or billing savings |
 | [Reference/freshness foundation](2026-09-08-reference-foundation.md) | Correct reference counts and cold/warm direct tool timings | No paired agent/native trial or billing measurement |
 
+The connected-evidence pilot compares two ContextPro builds, not ContextPro against native tools: on eight paired coding tasks (six on private repositories) the previous build passed 1 of 8 and the connected-retrieval candidate 0 of 8.
+
 See the [repeatable benchmark procedure](methodology.md) for alternating agent trials, tool phase traces and offline cold/warm compiler replays.
 
 Adjacent JSON files retain raw results for public or synthetic corpora; raw data from private repositories is withheld. Provider-usage trials and character/token estimates are labeled in their reports. Do not overwrite old results after moving a file; rerun into a new dated record and capture the source revision and method.

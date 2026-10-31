@@ -1,10 +1,10 @@
 # Contributing to ContextPro
 
-Small, reviewable improvements are welcome: a reproducible bug, a language fixture, clearer documentation or a measured performance improvement all help.
+Small, reviewable improvements are welcome. Useful contributions include small bug reproductions, language fixtures, reference-completeness tests, realistic benchmarks, clearer setup guides and performance fixes with before/after evidence.
 
 ## Start a contribution
 
-Check existing issues and pull requests before starting. For a large feature, open an issue describing the user problem and a concrete example so we can discuss scope. Small fixes can go straight to a pull request. There is no contributor agreement to sign; contributions are submitted under the repository's [MIT license](LICENSE). Preserve existing attribution and identify the source and license of reused material.
+Check existing [issues](https://github.com/AlaeddineMessadi/contextpro-mcp/issues) and pull requests before starting, and see the [roadmap](docs/roadmaps/contextpro-roadmap.md) for planned work. For a large feature, open an issue describing the user problem and a concrete example so we can discuss scope. Small fixes can go straight to a pull request. There is no contributor agreement to sign; contributions are submitted under the repository's [MIT license](LICENSE). Preserve existing attribution and identify the source and license of reused material.
 
 Use [private reporting](SECURITY.md) for vulnerabilities. Do not put secrets, private source code, personal paths or raw account transcripts in public issues. Follow the [code of conduct](CODE_OF_CONDUCT.md).
 
@@ -21,7 +21,7 @@ npm run release:check
 npm run pack:check
 ```
 
-The maintained `test/main/` suite uses local fixtures and does not require a paid model account. Optional demo and provider scenarios are separate. Native SQLite bindings must match the Node executable; see [installation and repair](INSTALL.md#native-module-recovery). Do not rebuild dependencies shared by live MCP clients just to switch runtimes.
+The maintained `test/main/` suite uses local fixtures and does not require a paid model account. Optional demo and provider scenarios are separate. Native SQLite bindings must match the Node executable; see [installation and repair](INSTALL.md#native-module-recovery). Do not rebuild dependencies shared by live MCP clients just to switch runtimes. [Maintenance](docs/maintenance.md) explains safe cleanup and runtime-specific testing. For questions, see [support](SUPPORT.md).
 
 ## Where changes belong
 

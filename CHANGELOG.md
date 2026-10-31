@@ -4,6 +4,13 @@ All notable changes to this project are recorded here. The project follows [Sema
 
 ## [Unreleased]
 
+- `contextpro-mcp --help` and `--version` print usage and the version instead of starting a server on a folder named after the flag. Unknown options and a `--root` that does not exist now fail with a one-line error instead of creating directories.
+- `init` writes a minimal config (`CONTEXTPRO_TOOL_PROFILE=lean`, no Ollama settings). `init vscode` uses VS Code's `servers` format, and `init vscode`/`init cursor` pass `--root ${workspaceFolder}`; an unexpanded `${...}` root falls back to the launch directory.
+- A Git repository directly inside the home folder (for example `~/myapp`) is accepted as a project root.
+- ContextPro writes `.contextpro/.gitignore`, so its local index state stays out of Git without editing the project's `.gitignore`.
+- An empty `exact_references` result is labelled unverified when the compiler could not check some files, with a hint to install the project's dependencies.
+- The README is now a one-minute quick start with verified commands for Claude Code, Codex, Cursor and OpenCode; internals moved to the configuration and agent guides.
+
 ## [1.4.0] - 2026-10-29
 
 - Upgraded zod to 4.6.7 to resolve GHSA-mrhx-c7xc-m3w5 (memory exhaustion when validating oversized constrained collections); tool behavior is unchanged, and nested object schemas are now advertised without `additionalProperties: false`.
