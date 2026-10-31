@@ -3,6 +3,7 @@
 // (or inherit the server's boot root); this resolves it to a workspace and hands
 // back the args with `root` stripped so handlers see their normal shape.
 
+import { isAbsolute } from "path";
 import { resolveWorkspace, type ResolvedWorkspace } from "./workspace-router.js";
 import { resolveAutoRoot, type RootsProvider } from "./roots-detect.js";
 import { requireExplicitRootForSharedWorktrees } from "./worktree-root-guard.js";
@@ -32,6 +33,11 @@ export async function resolveRequestRoot(
   const safeArgs = args ?? {};
   const rawRoot = safeArgs.root;
   const explicitRoot = typeof rawRoot === "string" && rawRoot.trim().length > 0 ? rawRoot : undefined;
+  // A relative root would resolve against the server's cwd, and count as explicit for the worktree guard.
+  if (explicitRoot && !isAbsolute(explicitRoot)) {
+    const shown = explicitRoot.length > 120 ? `${explicitRoot.slice(0, 117)}...` : explicitRoot;
+    throw new Error(`root must be an absolute path, got "${shown}". Pass the absolute directory of the checkout you are working in.`);
+  }
 
   // Auto-detect from the client's roots only when no explicit root was passed and
   // a provider is available; otherwise fall straight through to the boot root.

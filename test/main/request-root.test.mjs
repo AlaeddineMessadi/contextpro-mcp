@@ -49,6 +49,41 @@ describe("request-root resolution", () => {
     });
   });
 
+  it("rejects a relative per-call root instead of resolving it against the server cwd", async () => {
+    const mod = await import("../../build/core/request-root.js");
+    for (const root of [".", "../wt", "wt", "~/x"]) {
+      await assert.rejects(() => mod.resolveRequestRoot({ root }, baseRepo), (error) => {
+        assert.match(error.message, /root must be an absolute path/);
+        assert.ok(error.message.includes(root));
+        return true;
+      });
+    }
+    await assert.rejects(() => mod.resolveRequestRoot({}, baseRepo), /Ambiguous worktree/);
+  });
+
+  it("errors on a missing root and creates nothing there", async () => {
+    const mod = await import("../../build/core/request-root.js");
+    const ghost = join(scratch, "ghost");
+    await assert.rejects(() => mod.resolveRequestRoot({ root: ghost }, baseRepo), /does not exist or is not a directory/);
+    await assert.rejects(() => stat(ghost), { code: "ENOENT" });
+  });
+
+  it("errors on a client root whose directory is missing", async () => {
+    const mod = await import("../../build/core/request-root.js");
+    const ghost = join(scratch, "ghost");
+    await assert.rejects(() => mod.resolveRequestRoot({}, baseRepo, {
+      rootsProvider: async () => [new URL(`file://${ghost}`).href],
+    }), /does not exist or is not a directory/);
+    await assert.rejects(() => stat(ghost), { code: "ENOENT" });
+  });
+
+  it("errors on a Windows-style client root URI on non-Windows hosts", { skip: process.platform === "win32" }, async () => {
+    const mod = await import("../../build/core/request-root.js");
+    await assert.rejects(() => mod.resolveRequestRoot({}, baseRepo, {
+      rootsProvider: async () => ["file:///c%3A/x"],
+    }), /does not exist or is not a directory/);
+  });
+
   it("routes an explicit root arg to the worktree workspace", async () => {
     const mod = await import("../../build/core/request-root.js");
     const ws = await mod.resolveRequestRoot({ root: worktreeDir }, baseRepo);
