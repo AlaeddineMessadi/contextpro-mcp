@@ -92,6 +92,36 @@ describe("dead worktree GC", () => {
     assert.ok(router.listActiveWorkspaces().map((w) => w.rootDir).includes(wt));
   });
 
+  it("removes the index of a pruned worktree whose folder was left behind without .git", async () => {
+    const router = await import("../../build/core/workspace-router.js");
+    await router.resolveWorkspace(wt, base);
+    await git(base, "worktree", "remove", "--force", wt);
+    await git(base, "worktree", "prune");
+    await mkdir(join(wt, ".contextpro"), { recursive: true });
+    await writeFile(join(wt, ".contextpro", "index.db"), "x");
+
+    const mod = await import("../../build/core/worktree-gc.js");
+    const result = await mod.garbageCollectDeadWorktrees(base);
+    assert.equal(result.removedWorkspaces, 1);
+    assert.equal(await exists(join(wt, ".contextpro")), false);
+  });
+
+  it("gc tool reports why dead worktrees were skipped when git cannot list them", async () => {
+    const { McpServer } = await import("@modelcontextprotocol/sdk/server/mcp.js");
+    const { registerTools } = await import("../../build/tools/register-tools.js");
+    const server = new McpServer({ name: "gc-test", version: "0" });
+    registerTools(server, base, (handler) => handler);
+    const savedPath = process.env.PATH;
+    let result;
+    try {
+      process.env.PATH = await mkdtemp(join(scratch, "nogit-"));
+      result = await server._registeredTools.gc.handler({});
+    } finally {
+      process.env.PATH = savedPath;
+    }
+    assert.match(result.content[0].text, /Dead worktrees: removed 0 stale index\(es\) \(skipped: git worktree list failed/);
+  });
+
   it("skips a worktree git no longer lists while its checkout still exists", async () => {
     const router = await import("../../build/core/workspace-router.js");
     await router.resolveWorkspace(wt, base);

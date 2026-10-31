@@ -44,4 +44,22 @@ describe("root guard git ceiling", () => {
     const { detectWorktreeInfo } = await import("../../build/core/project-config.js");
     assert.equal((await detectWorktreeInfo(join(home, "proj", "sub"))).worktreeRoot, join(home, "proj"));
   });
+
+  it("sets no ceiling with CONTEXTPRO_ALLOW_UNSAFE_ROOT or an empty HOME", async () => {
+    const ceiling = process.env.GIT_CEILING_DIRECTORIES;
+    try {
+      process.env.GIT_CEILING_DIRECTORIES = "";
+      process.env.CONTEXTPRO_ALLOW_UNSAFE_ROOT = "true";
+      await import("../../build/core/root-guard.js?allow");
+      assert.equal(process.env.GIT_CEILING_DIRECTORIES, "");
+      delete process.env.CONTEXTPRO_ALLOW_UNSAFE_ROOT;
+      process.env.HOME = "";
+      await import("../../build/core/root-guard.js?empty-home");
+      assert.equal(process.env.GIT_CEILING_DIRECTORIES, "", "the cwd must not become the ceiling");
+    } finally {
+      process.env.HOME = home;
+      delete process.env.CONTEXTPRO_ALLOW_UNSAFE_ROOT;
+      process.env.GIT_CEILING_DIRECTORIES = ceiling;
+    }
+  });
 });

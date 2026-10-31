@@ -5,6 +5,7 @@
 
 import { resolve } from "path";
 import { realpath, stat } from "fs/promises";
+import { closeDB } from "./db.js";
 import { detectWorktreeInfo } from "./project-config.js";
 import { validateSelectedRoot } from "./root-guard.js";
 import { seedWorktreeFromBase } from "./worktree-seed.js";
@@ -23,6 +24,8 @@ export interface ResolvedWorkspace {
 }
 
 const workspaces = new Map<string, ResolvedWorkspace>();
+
+const isDirectory = (path: string): Promise<boolean> => stat(path).then((s) => s.isDirectory(), () => false);
 
 function normalizeRequestRoot(requestRoot: string | undefined, defaultRoot?: string): string {
   const candidate = requestRoot && requestRoot.trim().length > 0 ? requestRoot : defaultRoot;
@@ -50,8 +53,16 @@ export async function resolveWorkspace(
   // alias and its real directory, including projects without Git metadata.
   const normalized = await realpath(requested).catch(() => requested);
   // Before the cache: a deleted root must not be served from cache, nor have .contextpro recreated in it.
-  if (!(await stat(normalized).then((s) => s.isDirectory(), () => false))) {
-    forgetWorkspace(requested);
+  if (!(await isDirectory(normalized))) {
+    const stale = workspaces.get(requested);
+    if (stale && !(await isDirectory(stale.rootDir))) {
+      // Same teardown as gc: a checkout re-created at this path must not reuse the deleted index's handle.
+      closeDB(stale.rootDir);
+      forgetWorkspace(stale.rootDir);
+      (await import("./index-reconcile.js")).forgetReconcileStatCache(stale.rootDir);
+    } else {
+      workspaces.delete(requested); // a deleted subfolder of a live checkout: keep the checkout's entry
+    }
     throw new Error(`Project root "${requested}" does not exist or is not a directory. Pass an existing absolute directory as root.`);
   }
   const cached = workspaces.get(normalized);

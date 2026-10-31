@@ -133,6 +133,40 @@ describe("workspace-router", () => {
     assert.equal(mod.listActiveWorkspaces().length, 0);
   });
 
+  it("errors on a root that is a file", async () => {
+    const mod = await import("../../build/core/workspace-router.js");
+    const file = join(scratch, "file");
+    await writeFile(file, "x");
+    await assert.rejects(() => mod.resolveWorkspace(file), /not a directory/);
+  });
+
+  it("closes a deleted worktree's index so one re-created at the same path gets a fresh one", async () => {
+    const mod = await import("../../build/core/workspace-router.js");
+    const db = await import("../../build/core/db.js");
+    await mod.resolveWorkspace(worktreeDir);
+    const first = await db.getDB(worktreeDir);
+    await git(baseRepo, "worktree", "remove", "--force", worktreeDir);
+    await assert.rejects(() => mod.resolveWorkspace(worktreeDir), /does not exist/);
+    await git(baseRepo, "worktree", "add", "-q", "-f", worktreeDir, "x");
+    await mod.resolveWorkspace(worktreeDir);
+    try {
+      assert.notEqual(await db.getDB(worktreeDir), first, "the handle to the deleted index.db was reused");
+      assert.ok((await stat(join(worktreeDir, ".contextpro", "index.db"))).isFile());
+    } finally {
+      db.closeDB(worktreeDir);
+    }
+  });
+
+  it("keeps a live checkout when only a subfolder it was resolved from is deleted", async () => {
+    const mod = await import("../../build/core/workspace-router.js");
+    const sub = join(baseRepo, "sub");
+    await mkdir(sub);
+    assert.equal((await mod.resolveWorkspace(sub)).rootDir, baseRepo);
+    await rm(sub, { recursive: true });
+    await assert.rejects(() => mod.resolveWorkspace(sub), /does not exist/);
+    assert.deepEqual(mod.listActiveWorkspaces().map((w) => w.rootDir), [baseRepo]);
+  });
+
   describe("roots that Git widens to its toplevel", { skip: process.platform === "win32" }, () => {
     it("throws, not narrows, when the toplevel is the home folder", async () => {
       const mod = await import("../../build/core/workspace-router.js");

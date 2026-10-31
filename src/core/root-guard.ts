@@ -39,10 +39,17 @@ export function selectRootDir(cwd: string, positional: string[], flagRoot?: stri
   return { rootDir: normalize(cwd), source: "cwd" };
 }
 
+// An empty or relative HOME would resolve against the cwd and make it act as the home folder.
+function homeDir(): string | null {
+  const home = homedir();
+  return isAbsolute(home) ? normalize(home) : null;
+}
+
 export function isUnsafeRoot(rootDir: string): boolean {
   const normalized = normalize(rootDir);
-  const home = normalize(homedir());
+  const home = homeDir();
   if (dirname(normalized) === normalized) return true;
+  if (!home) return false;
   // Home and every folder that contains it (/home, /Users hold every user's home folder).
   if (isInside(normalized, home)) return true;
   if (isInside(home, normalized)) return relative(home, normalized).split(sep).length <= 1;
@@ -52,8 +59,11 @@ export function isUnsafeRoot(rootDir: string): boolean {
 // A Git repository directly in the home folder (~/myapp) is a project; ~/Downloads is not.
 function isHomeChildRepository(rootDir: string): boolean {
   const normalized = normalize(rootDir);
-  const home = normalize(homedir());
-  return normalized !== home && dirname(normalized) === home && existsSync(join(normalized, ".git"));
+  const home = homeDir();
+  if (!home) return false;
+  // relative(), not string equality: on Windows the drive letter case can differ from homedir().
+  const rel = relative(home, normalized);
+  return rel !== "" && isInside(home, normalized) && !rel.includes(sep) && existsSync(join(normalized, ".git"));
 }
 
 function allowUnsafeRootEnabled(): boolean {
@@ -64,9 +74,9 @@ function allowUnsafeRootEnabled(): boolean {
 // Stop every git child process from climbing into a home-folder repo (dotfiles) from a non-repo folder below it.
 // A "/" ceiling (HOME=/ in some containers) is kept: git 2.43 still finds /workspace from below it.
 if (!allowUnsafeRootEnabled()) {
-  const home = normalize(homedir());
+  const home = homeDir();
   const existing = process.env.GIT_CEILING_DIRECTORIES ?? "";
-  if (!existing.split(delimiter).includes(home)) process.env.GIT_CEILING_DIRECTORIES = existing ? `${existing}${delimiter}${home}` : home;
+  if (home && !existing.split(delimiter).includes(home)) process.env.GIT_CEILING_DIRECTORIES = existing ? `${existing}${delimiter}${home}` : home;
 }
 
 export function validateSelectedRoot(selection: RootSelection): RootSelection {
