@@ -32,17 +32,23 @@ claude   # start it in the repository root and approve "contextpro" once
 **Codex:**
 
 ```sh
-codex mcp add contextpro --env CONTEXTPRO_TOOL_PROFILE=lean -- npx -y contextpro-mcp --root /absolute/path/to/project
+codex mcp add contextpro --env CONTEXTPRO_TOOL_PROFILE=lean -- npx -y contextpro-mcp
 ```
 
-**Cursor and other clients that read `mcpServers` JSON** (`.cursor/mcp.json` or the client's config file):
+Codex starts the server in the folder where you start `codex`, so start it in your project.
+
+**Cursor:** run `npx -y contextpro-mcp init cursor` in your project. It writes `.cursor/mcp.json` with the workspace folder as the root.
+
+**Other clients that read `mcpServers` JSON** (in the project's own config file):
 
 ```json
 { "mcpServers": { "contextpro": {
     "command": "npx",
-    "args": ["-y", "contextpro-mcp", "--root", "/absolute/path/to/project"],
+    "args": ["-y", "contextpro-mcp"],
     "env": { "CONTEXTPRO_TOOL_PROFILE": "lean" } } } }
 ```
+
+Never put a fixed `--root` in a global config: every project would then use that one repository.
 
 **OpenCode:** run `npx -y contextpro-mcp init opencode`, then `opencode mcp list`.
 
