@@ -3,7 +3,7 @@
 // request belongs to (its own root + the shared base checkout) lazily and cache it,
 // so parallel agents in different worktrees each hit the correct index.
 
-import { resolve } from "path";
+import { dirname, join, resolve, sep } from "path";
 import { realpath, stat } from "fs/promises";
 import { closeDB } from "./db.js";
 import { detectWorktreeInfo } from "./project-config.js";
@@ -26,6 +26,14 @@ export interface ResolvedWorkspace {
 const workspaces = new Map<string, ResolvedWorkspace>();
 
 const isDirectory = (path: string): Promise<boolean> => stat(path).then((s) => s.isDirectory(), () => false);
+
+// A widened alias is stale once a folder between it and the cached toplevel got its own .git (worktree add into an empty dir, git init, submodule).
+async function becameOwnCheckout(path: string, cachedRoot: string): Promise<boolean> {
+  for (let dir = path; dir.startsWith(cachedRoot + sep); dir = dirname(dir)) {
+    if (await stat(join(dir, ".git")).then(() => true, () => false)) return true;
+  }
+  return false;
+}
 
 function normalizeRequestRoot(requestRoot: string | undefined, defaultRoot?: string): string {
   const candidate = requestRoot && requestRoot.trim().length > 0 ? requestRoot : defaultRoot;
@@ -65,7 +73,11 @@ export async function resolveWorkspace(
     }
     throw new Error(`Project root "${requested}" does not exist or is not a directory. Pass an existing absolute directory as root.`);
   }
-  const cached = workspaces.get(normalized);
+  let cached = workspaces.get(normalized);
+  if (cached && cached.rootDir !== normalized && (await becameOwnCheckout(normalized, cached.rootDir))) {
+    workspaces.delete(normalized);
+    cached = undefined;
+  }
   if (cached) {
     // Routing must be checked for every request: worktrees may have appeared
     // since this metadata was cached, or the prior caller passed an explicit root.

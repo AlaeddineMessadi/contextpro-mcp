@@ -45,10 +45,13 @@ function homeDir(): string | null {
   return isAbsolute(home) ? normalize(home) : null;
 }
 
+// Git's own directory (.git, .git/worktrees/<name>) is not a checkout: git cannot resolve a toplevel there.
+const insideGitDir = (normalized: string): boolean => normalized.split(sep).includes(".git");
+
 export function isUnsafeRoot(rootDir: string): boolean {
   const normalized = normalize(rootDir);
   const home = homeDir();
-  if (dirname(normalized) === normalized) return true;
+  if (dirname(normalized) === normalized || insideGitDir(normalized)) return true;
   if (!home) return false;
   // Home and every folder that contains it (/home, /Users hold every user's home folder).
   if (isInside(normalized, home)) return true;
@@ -63,7 +66,7 @@ function isHomeChildRepository(rootDir: string): boolean {
   if (!home) return false;
   // relative(), not string equality: on Windows the drive letter case can differ from homedir().
   const rel = relative(home, normalized);
-  return rel !== "" && isInside(home, normalized) && !rel.includes(sep) && existsSync(join(normalized, ".git"));
+  return rel !== "" && isInside(home, normalized) && !rel.includes(sep) && !insideGitDir(normalized) && existsSync(join(normalized, ".git"));
 }
 
 function allowUnsafeRootEnabled(): boolean {
@@ -85,6 +88,6 @@ export function validateSelectedRoot(selection: RootSelection): RootSelection {
   if (isHomeChildRepository(selection.rootDir)) return selection;
   const sourceHint = selection.source === "flag" ? "--root" : selection.source === "positional" ? "positional argument" : "process.cwd()";
   throw new Error(
-    `Unsafe project root "${selection.rootDir}" (source: ${sourceHint}). ContextPro refuses to start at the filesystem root, your home folder, a folder that contains your home folder, or a folder directly inside your home folder that is not a Git repository, because it would create .contextpro/ and SQLite databases there. Pass --root <project-path> to a real project, or set CONTEXTPRO_ALLOW_UNSAFE_ROOT=true to override.`,
+    `Unsafe project root "${selection.rootDir}" (source: ${sourceHint}). ContextPro refuses to start at the filesystem root, your home folder, a folder that contains your home folder, a folder inside .git, or a folder directly inside your home folder that is not a Git repository, because it would create .contextpro/ and SQLite databases there. Pass --root <project-path> to a real project, or set CONTEXTPRO_ALLOW_UNSAFE_ROOT=true to override.`,
   );
 }
