@@ -4,7 +4,8 @@
 // so parallel agents in different worktrees each hit the correct index.
 
 import { resolve } from "path";
-import { realpath } from "fs/promises";
+import { realpath, stat } from "fs/promises";
+import { closeDB } from "./db.js";
 import { detectWorktreeInfo } from "./project-config.js";
 import { validateSelectedRoot } from "./root-guard.js";
 import { seedWorktreeFromBase } from "./worktree-seed.js";
@@ -23,6 +24,8 @@ export interface ResolvedWorkspace {
 }
 
 const workspaces = new Map<string, ResolvedWorkspace>();
+
+const isDirectory = (path: string): Promise<boolean> => stat(path).then((s) => s.isDirectory(), () => false);
 
 function normalizeRequestRoot(requestRoot: string | undefined, defaultRoot?: string): string {
   const candidate = requestRoot && requestRoot.trim().length > 0 ? requestRoot : defaultRoot;
@@ -49,6 +52,19 @@ export async function resolveWorkspace(
   // Startup canonicalizes symlinks too. Keep one identity/cache entry for an
   // alias and its real directory, including projects without Git metadata.
   const normalized = await realpath(requested).catch(() => requested);
+  // Before the cache: a deleted root must not be served from cache, nor have .contextpro recreated in it.
+  if (!(await isDirectory(normalized))) {
+    const stale = workspaces.get(requested);
+    if (stale && !(await isDirectory(stale.rootDir))) {
+      // Same teardown as gc: a checkout re-created at this path must not reuse the deleted index's handle.
+      closeDB(stale.rootDir);
+      forgetWorkspace(stale.rootDir);
+      (await import("./index-reconcile.js")).forgetReconcileStatCache(stale.rootDir);
+    } else {
+      workspaces.delete(requested); // a deleted subfolder of a live checkout: keep the checkout's entry
+    }
+    throw new Error(`Project root "${requested}" does not exist or is not a directory. Pass an existing absolute directory as root.`);
+  }
   const cached = workspaces.get(normalized);
   if (cached) {
     // Routing must be checked for every request: worktrees may have appeared
@@ -59,9 +75,16 @@ export async function resolveWorkspace(
   }
 
   // Guard before touching git or the filesystem for storage.
-  validateSelectedRoot({ rootDir: normalized, source: requestRoot ? "flag" : "cwd" });
+  const source = requestRoot ? "flag" : "cwd";
+  validateSelectedRoot({ rootDir: normalized, source });
 
   const info = await detectWorktreeInfo(normalized);
+  // Git may widen the request to its toplevel (e.g. a dotfiles repo in HOME); re-check that root and never narrow.
+  try {
+    validateSelectedRoot({ rootDir: info.worktreeRoot, source });
+  } catch (error) {
+    throw new Error(`Request root widened from ${normalized} to its Git toplevel ${info.worktreeRoot}. ${(error as Error).message}`);
+  }
   const workspace: ResolvedWorkspace = {
     rootDir: info.worktreeRoot,
     baseRoot: info.baseRoot,

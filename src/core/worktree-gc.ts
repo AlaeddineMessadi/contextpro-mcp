@@ -4,7 +4,7 @@
 // remove its on-disk .contextpro/ overlay so stale indexes don't accumulate.
 
 import { execFile } from "child_process";
-import { rm } from "fs/promises";
+import { rm, stat } from "fs/promises";
 import { join, resolve } from "path";
 import { promisify } from "util";
 import { CONTEXTPRO_DIR } from "./data-dir.js";
@@ -17,13 +17,20 @@ const execFileAsync = promisify(execFile);
 export interface WorktreeGcResult {
   removedWorkspaces: number;
   removedDirs: string[];
+  /** Set when git could not list worktrees; nothing was removed or forgotten. */
+  error?: string;
 }
 
 /**
  * Live worktree roots reported by git (`git worktree list --porcelain`), including
  * the main checkout. Paths are realpath-resolved to match how the router keys them.
+ * Returns null when git cannot list them (callers must not treat that as "none live");
+ * the failure message is passed to onError.
  */
-export async function listLiveWorktrees(baseRoot: string): Promise<string[]> {
+export async function listLiveWorktrees(
+  baseRoot: string,
+  onError?: (message: string) => void,
+): Promise<string[] | null> {
   try {
     const { stdout } = await execFileAsync("git", ["worktree", "list", "--porcelain"], {
       cwd: baseRoot,
@@ -36,19 +43,35 @@ export async function listLiveWorktrees(baseRoot: string): Promise<string[]> {
       }
     }
     return roots;
+  } catch (err) {
+    onError?.(err instanceof Error ? err.message : String(err));
+    return null;
+  }
+}
+
+async function exists(path: string): Promise<boolean> {
+  try {
+    await stat(path);
+    return true;
   } catch {
-    return [resolve(baseRoot)];
+    return false;
   }
 }
 
 /**
  * Remove indexes for worktrees the router knows about but git no longer lists.
- * The main checkout is never removed. Best-effort and idempotent: a worktree
- * whose directory is already gone simply has its router entry dropped.
+ * The main checkout is never removed. If git cannot list worktrees nothing is
+ * touched, and a worktree whose checkout `.git` still exists is never touched
+ * even when git does not list it (pruned admin entry). Best-effort and idempotent.
  */
 export async function garbageCollectDeadWorktrees(baseRoot: string): Promise<WorktreeGcResult> {
   const base = resolve(baseRoot);
-  const live = new Set(await listLiveWorktrees(base));
+  let gitError = "";
+  const liveRoots = await listLiveWorktrees(base, (m) => { gitError = m; });
+  if (!liveRoots) {
+    return { removedWorkspaces: 0, removedDirs: [], error: `git worktree list failed: ${gitError}`.replace(/\s+/g, " ").slice(0, 200) };
+  }
+  const live = new Set(liveRoots);
   const removedDirs: string[] = [];
   let removedWorkspaces = 0;
 
@@ -56,6 +79,7 @@ export async function garbageCollectDeadWorktrees(baseRoot: string): Promise<Wor
     if (!ws.isWorktree) continue; // never GC the base checkout
     if (ws.baseRoot !== base) continue; // only this repo family
     if (live.has(ws.rootDir)) continue; // still alive
+    if (await exists(join(ws.rootDir, ".git"))) continue; // checkout on disk: git just lost track of it
 
     // Dead worktree: close its DB handle, forget it, and reclaim its overlay dir.
     closeDB(ws.rootDir);
