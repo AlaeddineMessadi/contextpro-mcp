@@ -88,6 +88,6 @@ export function validateSelectedRoot(selection: RootSelection): RootSelection {
   if (isHomeChildRepository(selection.rootDir)) return selection;
   const sourceHint = selection.source === "flag" ? "--root" : selection.source === "positional" ? "positional argument" : "process.cwd()";
   throw new Error(
-    `Unsafe project root "${selection.rootDir}" (source: ${sourceHint}). ContextPro refuses to start at the filesystem root, your home folder, a folder that contains your home folder, a folder inside .git, or a folder directly inside your home folder that is not a Git repository, because it would create .contextpro/ and SQLite databases there. Pass --root <project-path> to a real project, or set CONTEXTPRO_ALLOW_UNSAFE_ROOT=true to override.`,
+    `Unsafe project root "${selection.rootDir}" (source: ${sourceHint}). ContextPro will not index the filesystem root, your home folder, a folder that contains your home folder, a folder inside .git, or a folder directly inside your home folder that is not a Git repository, because it would create .contextpro/ and SQLite databases there. Pass --root <project-path> to a real project, or set CONTEXTPRO_ALLOW_UNSAFE_ROOT=true to override.`,
   );
 }

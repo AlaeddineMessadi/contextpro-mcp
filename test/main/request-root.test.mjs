@@ -186,3 +186,12 @@ describe("request-root resolution", () => {
     if (prev !== undefined) process.env.CONTEXTPRO_ALLOW_UNSAFE_ROOT = prev;
   });
 });
+
+describe("currentRoot", () => {
+  it("uses the request root, then the fallback, and throws without either (an unbound server)", async () => {
+    const { currentRoot, runWithRequestRoot } = await import("../../build/core/request-context.js");
+    assert.equal(currentRoot("/boot"), "/boot");
+    assert.equal(await runWithRequestRoot("/req", async () => currentRoot(undefined)), "/req");
+    assert.throws(() => currentRoot(undefined), /No project root/);
+  });
+});

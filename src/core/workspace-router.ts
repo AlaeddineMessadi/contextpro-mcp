@@ -26,11 +26,14 @@ export interface ResolvedWorkspace {
 const workspaces = new Map<string, ResolvedWorkspace>();
 
 const isDirectory = (path: string): Promise<boolean> => stat(path).then((s) => s.isDirectory(), () => false);
+const isFile = (path: string): Promise<boolean> => stat(path).then((s) => s.isFile(), () => false);
 
 // A widened alias is stale once a folder between it and the cached toplevel got its own .git (worktree add into an empty dir, git init, submodule).
 async function becameOwnCheckout(path: string, cachedRoot: string): Promise<boolean> {
   for (let dir = path; dir.startsWith(cachedRoot + sep); dir = dirname(dir)) {
-    if (await stat(join(dir, ".git")).then(() => true, () => false)) return true;
+    // Like git: a .git file (worktree, submodule) or a .git dir with HEAD; git skips an empty .git and so must we, or we re-resolve every call.
+    const dotGit = join(dir, ".git");
+    if (await stat(dotGit).then((s) => s.isFile() || isFile(join(dotGit, "HEAD")), () => false)) return true;
   }
   return false;
 }

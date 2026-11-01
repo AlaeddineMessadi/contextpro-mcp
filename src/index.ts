@@ -13,7 +13,7 @@ import { createEmbeddingTrackerController } from "./core/embedding-tracker.js";
 import { createIdleMonitor, getIdleShutdownMs, getParentPollMs, isBrokenPipeError, runCleanup, startParentMonitor } from "./core/process-lifecycle.js";
 import { getContextTree } from "./tools/context-tree.js";
 import { quickRefresh, waitForIndexingCompletion } from "./tools/reindex.js";
-import { detectWorktreeInfo, ensureProjectConfig, registerWorkspace, verifyProjectContext } from "./core/project-config.js";
+import { detectGitRoot, ensureProjectConfig, registerWorkspace, verifyProjectContext } from "./core/project-config.js";
 import { formatStartupHealthReport, runStartupHealthCheck } from "./core/startup-health.js";
 import { formatDoctorReport, runDoctor } from "./core/doctor.js";
 import { recordToolTiming, setToolCallSink } from "./core/tool-metrics.js";
@@ -200,7 +200,8 @@ function parseCliArgs(args: string[]): ParsedCliArgs {
 const USAGE = `ContextPro ${PACKAGE_VERSION}: local MCP server for coding agents.
 
 Usage:
-  contextpro-mcp [--root <dir>]       Start the MCP server on stdio (root defaults to the Git toplevel of the current directory)
+  contextpro-mcp [--root <dir>]       Start the MCP server on stdio (root defaults to the Git toplevel of the current directory;
+                                      started in /, home or another unsafe folder, it has no root and each call needs root)
   contextpro-mcp init [claude|cursor|vscode|windsurf|opencode] [--root <dir>] [--runner npx|bunx] [--no-agent-instructions]
                                       Write the client's project MCP config and agent instructions
   contextpro-mcp doctor [--root <dir>] [--fix]
@@ -229,14 +230,15 @@ async function parseStartupOrExit(): Promise<{ parsedCliArgs: ParsedCliArgs; ROO
   let parsed: ParsedCliArgs | undefined;
   try {
     parsed = parseCliArgs(cliArgs);
-    if (parsed.flagRoot && isUnexpandedVariable(parsed.flagRoot)) console.error(`[contextpro/startup] ignoring unexpanded --root "${parsed.flagRoot}"; using ${parsed.rootDir}`);
+    if (parsed.flagRoot && isUnexpandedVariable(parsed.flagRoot)) console.error(`[contextpro/startup] ignoring unexpanded --root "${parsed.flagRoot}"; falling back to the launch directory ${parsed.rootDir}`);
     const root = validateSelectedRoot({ rootDir: parsed.rootDir, source: parsed.rootSource }).rootDir;
     if (!existsSync(root) || !statSync(root).isDirectory()) {
       throw new Error(`Project root "${root}" does not exist or is not a directory. Pass --root <existing project directory>.`);
     }
-    if (parsed.command) return { parsedCliArgs: parsed, ROOT_DIR: root };
-    // Requests widen to the Git toplevel with this same function; start there so .contextpro and the tracker match them.
-    const top = (await detectWorktreeInfo(root)).worktreeRoot;
+    // doctor checks the root the server would bind; init and tree keep the folder they were given.
+    if (parsed.command && parsed.command !== "doctor") return { parsedCliArgs: parsed, ROOT_DIR: root };
+    // Requests widen to this same Git toplevel (detectWorktreeInfo's worktreeRoot); one spawn, as each can wait 4 s before connect.
+    const top = await detectGitRoot(root);
     try {
       validateSelectedRoot({ rootDir: top, source: parsed.rootSource });
     } catch (error) {
@@ -245,7 +247,8 @@ async function parseStartupOrExit(): Promise<{ parsedCliArgs: ParsedCliArgs; ROO
     return { parsedCliArgs: parsed, ROOT_DIR: top };
   } catch (error) {
     // Clients often launch servers from home: serve per-call roots instead of exiting. An explicit root is a typo.
-    if (parsed && !parsed.command && parsed.rootSource === "cwd") return { parsedCliArgs: parsed, ROOT_DIR: undefined, unboundReason: (error as Error).message };
+    // Only the why: UNBOUND_FIX carries the advice, and the error's own override would index this launch folder.
+    if (parsed && !parsed.command && parsed.rootSource === "cwd") return { parsedCliArgs: parsed, ROOT_DIR: undefined, unboundReason: (error as Error).message.split(" Pass --root")[0] };
     console.error((error as Error).message);
     process.exit(1);
   }
@@ -283,7 +286,8 @@ function withRequestActivity<TArgs, TResult>(
       resolution = await resolveRequestRoot(args as Record<string, unknown>, ROOT_DIR, {
         rootsProvider: clientRoots.list,
         // An explicit --root outranks a client root that is not a Git project (e.g. the client's launch folder).
-        acceptClientRoot: !ROOT_DIR ? isSafeRoot : parsedCliArgs.rootSource === "cwd" ? undefined : clientRoots.isGitWorkTree,
+        acceptClientRoot: !ROOT_DIR ? isSafeRoot : parsedCliArgs.rootSource === "cwd" ? undefined
+          : async (dir) => isSafeRoot(dir) && await clientRoots.isGitWorkTree(dir),
         launchDir: parsedCliArgs.rootDir,
       });
     } catch (error) {
@@ -387,7 +391,7 @@ function buildMcpConfig(runner: "npx" | "bunx", target: AgentTarget) {
 
 async function runDoctorCommand(args: string[]) {
   const parsed = parseCliArgs(["doctor", ...args]);
-  const report = await runDoctor(parsed.rootDir, parsed.fix === true);
+  const report = await runDoctor(ROOT_DIR ?? parsed.rootDir, parsed.fix === true);
   process.stdout.write(formatDoctorReport(report) + "\n");
 }
 

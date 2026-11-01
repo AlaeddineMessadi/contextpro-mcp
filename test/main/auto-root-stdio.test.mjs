@@ -2,7 +2,7 @@ import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { mkdtemp, mkdir, writeFile, realpath, rm } from 'node:fs/promises';
+import { chmod, mkdtemp, mkdir, readFile, writeFile, realpath, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { tmpdir } from 'node:os';
@@ -18,8 +18,19 @@ const targets = [{ file: 'api.ts', start: 1, end: 1 }];
 const hasProjectIndex = dir => ['config.json', 'index.db'].some(name => existsSync(join(dir, '.contextpro', name)));
 
 let scratch, home;
-const env = () => ({ ...process.env, HOME: home, CONTEXTPRO_TOOL_PROFILE: 'full', CONTEXTPRO_REINDEX_NO_EMBED: 'true', CONTEXTPRO_EMBED_TRACKER: 'lazy',
-  CONTEXTPRO_ALLOW_UNSAFE_ROOT: '', GIT_CEILING_DIRECTORIES: '' });
+const env = (h = home, extra = {}) => ({ ...process.env, HOME: h, CONTEXTPRO_TOOL_PROFILE: 'full', CONTEXTPRO_REINDEX_NO_EMBED: 'true', CONTEXTPRO_EMBED_TRACKER: 'lazy',
+  CONTEXTPRO_ALLOW_UNSAFE_ROOT: '', GIT_CEILING_DIRECTORIES: '', ...extra });
+
+// A `git` first on PATH that logs each call's arguments, then runs the real git.
+async function gitShim(name) {
+  const bin = join(scratch, `${name}-bin`), log = join(scratch, `${name}.log`);
+  const realGit = execFileSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim();
+  await mkdir(bin);
+  await writeFile(log, '');
+  await writeFile(join(bin, 'git'), `#!/bin/sh\necho "$*" >> "${log}"\nexec "${realGit}" "$@"\n`);
+  await chmod(join(bin, 'git'), 0o755);
+  return { env: { PATH: `${bin}:${process.env.PATH}` }, calls: async () => (await readFile(log, 'utf8')).split('\n').filter(Boolean) };
+}
 
 async function makeRepo(dir) {
   await mkdir(dir, { recursive: true });
@@ -31,14 +42,14 @@ async function makeRepo(dir) {
 }
 
 // roots: undefined (no roots capability) or a function returning the URIs (or a promise) per roots/list request.
-async function start({ cwd, args = [], roots }) {
+async function start({ cwd, args = [], roots, home: h, extraEnv }) {
   const client = new Client({ name: 'auto-root', version: '1' }, roots ? { capabilities: { roots: { listChanged: true } } } : {});
   const stats = { listRoots: 0 };
   if (roots) client.setRequestHandler(ListRootsRequestSchema, async () => {
     stats.listRoots++;
     return { roots: (await roots()).map(dir => ({ uri: pathToFileURL(dir).href })) };
   });
-  const transport = new StdioClientTransport({ command: process.execPath, args: [SERVER, ...args], cwd, env: env(), stderr: 'pipe' });
+  const transport = new StdioClientTransport({ command: process.execPath, args: [SERVER, ...args], cwd, env: env(h, extraEnv), stderr: 'pipe' });
   let diagnostics = '';
   transport.stderr?.on('data', chunk => { diagnostics += chunk; });
   try { await client.connect(transport); } catch (error) { throw new Error(`${error.message}\n${diagnostics}`); }
@@ -61,7 +72,7 @@ async function withServer(options, fn) {
   finally { await server.close(); }
 }
 
-const exitCode = (cwd, args) => spawnSync(process.execPath, [SERVER, ...args], { cwd, env: env(), input: '', timeout: 20000, encoding: 'utf8' });
+const exitCode = (cwd, args, h) => spawnSync(process.execPath, [SERVER, ...args], { cwd, env: env(h), input: '', timeout: 20000, encoding: 'utf8' });
 
 before(async () => {
   scratch = await realpath(await mkdtemp(join(tmpdir(), 'contextpro-auto-root-')));
@@ -102,6 +113,50 @@ describe('startup root is the Git toplevel', { timeout: 60000 }, () => {
     });
     assert.equal(existsSync(join(sub, '.contextpro')), false);
   });
+
+  it('doctor in a subfolder checks the toplevel the server binds and writes nothing in the subfolder', async () => {
+    const repo = await makeRepo(join(scratch, 'p03-doctor'));
+    const sub = join(repo, 'sub');
+    await mkdir(sub);
+    for (const [cwd, args] of [[sub, ['doctor']], [scratch, ['doctor', '--root', sub]]]) {
+      const doctor = exitCode(cwd, args);
+      assert.equal(doctor.status, 0, doctor.stderr);
+      assert.match(doctor.stdout, new RegExp(`Root: ${repo}\\n`));
+    }
+    assert.equal(existsSync(join(sub, '.contextpro')), false);
+  });
+
+  it('finds the toplevel with one git call, so a hung git still lets startup finish within 30 s', async () => {
+    const repo = await makeRepo(join(scratch, 'p03-spawns'));
+    await mkdir(join(repo, 'sub'));
+    const shim = await gitShim('p03-spawns');
+    await withServer({ cwd: join(repo, 'sub'), extraEnv: shim.env }, async () => {
+      // Each git call before the handshake can wait out its 4 s timeout: 7 x 4 s stays under a 30 s client startup timeout.
+      const calls = await shim.calls();
+      assert.ok(calls.length <= 7, calls.join('\n'));
+    });
+  });
+
+  it('re-checks the widened toplevel: a toplevel holding home leaves the server unbound, or exits for --root', async () => {
+    const base = join(scratch, 'p03-wide');
+    const wideHome = join(base, 'home'), other = join(base, 'other');
+    await mkdir(wideHome, { recursive: true });
+    await mkdir(other);
+    git(base, 'init', '-q');
+    await withServer({ cwd: other, home: wideHome }, async ({ health }) => {
+      const report = await health();
+      assert.equal(report.status, 'unbound');
+      assert.match(report.reason, new RegExp(`widened from ${other} to its Git toplevel ${base}\\. Unsafe project root`));
+    });
+    const explicit = exitCode(scratch, ['--root', other], wideHome);
+    assert.equal(explicit.status, 1, explicit.stderr);
+    assert.match(explicit.stderr, /widened from .* to its Git toplevel/);
+    const doctor = exitCode(other, ['doctor'], wideHome);
+    assert.equal(doctor.status, 1, doctor.stderr);
+    assert.match(doctor.stderr, /widened from .* to its Git toplevel/);
+    assert.equal(hasProjectIndex(base), false);
+    assert.equal(hasProjectIndex(other), false);
+  });
 });
 
 describe('unbound start from an unsafe launch directory', { timeout: 90000 }, () => {
@@ -114,6 +169,8 @@ describe('unbound start from an unsafe launch directory', { timeout: 90000 }, ()
       assert.equal(report.rootDir, null);
       assert.equal(report.launchDir, home);
       assert.match(report.reason, /Unsafe project root/);
+      // The override would index this launch folder; the fix field carries the advice.
+      assert.doesNotMatch(report.reason, /CONTEXTPRO_ALLOW_UNSAFE_ROOT|refuses to start/);
       assert.match(report.fix, /root:<absolute project path>/);
       const status = await call('status', {});
       assert.ok(!status.isError, text(status));
@@ -181,9 +238,12 @@ describe('client roots versus an explicit --root', { timeout: 60000 }, () => {
     const dev = join(scratch, 'p12-dev');
     const repo1 = await makeRepo(join(dev, 'repo1'));
     const repoB = await makeRepo(join(scratch, 'p12-b'));
-    await withServer({ cwd: scratch, args: ['--root', repo1], roots: () => [dev] }, async ({ health }) => {
+    const shim = await gitShim('p12-veto');
+    await withServer({ cwd: scratch, args: ['--root', repo1], roots: () => [dev], extraEnv: shim.env }, async ({ health, stats }) => {
       assert.equal((await health()).rootDir, repo1);
       assert.equal((await health()).rootDir, repo1);
+      // The Git check on a client root is cached with the roots list (one each, even if a slow run outlives its 5 s), not repeated per call.
+      assert.equal((await shim.calls()).filter(line => line.includes('--is-inside-work-tree')).length, stats.listRoots);
     });
     assert.equal(existsSync(join(dev, '.contextpro')), false);
     await withServer({ cwd: scratch, args: ['--root', repo1], roots: () => [repoB] }, async ({ health }) => {
@@ -191,6 +251,25 @@ describe('client roots versus an explicit --root', { timeout: 60000 }, () => {
     });
     await withServer({ cwd: repo1, roots: () => [dev] }, async ({ health }) => {
       assert.equal((await health()).rootDir, dev);
+    });
+  });
+
+  it('a client root that is an unsafe Git repository (a dotfiles home) does not override --root', async () => {
+    const dotfilesHome = await makeRepo(join(scratch, 'p12-dotfiles-home'));
+    const repo = await makeRepo(join(scratch, 'p12-proj'));
+    await withServer({ cwd: dotfilesHome, home: dotfilesHome, args: ['--root', repo], roots: () => [dotfilesHome] }, async ({ call, health }) => {
+      assert.equal((await health()).rootDir, repo);
+      const read = await call('context', { targets });
+      assert.ok(!read.isError, text(read));
+    });
+    assert.equal(hasProjectIndex(dotfilesHome), false);
+  });
+
+  it('with several client roots, picks the one holding the startup root, not the launch folder', async () => {
+    const repo = await makeRepo(join(scratch, 'p12-multi'));
+    const launch = await makeRepo(join(scratch, 'p12-multi-launch'));
+    await withServer({ cwd: launch, args: ['--root', repo], roots: () => [launch, repo] }, async ({ health }) => {
+      assert.equal((await health()).rootDir, repo);
     });
   });
 });
@@ -223,6 +302,24 @@ describe('roots/list robustness', { timeout: 60000 }, () => {
       assert.equal(stats.listRoots, 1);
       current = repoC;
       await client.sendRootsListChanged();
+      assert.equal((await health()).rootDir, repoC);
+      assert.equal(stats.listRoots, 2);
+    });
+  });
+
+  it('does not cache a roots/list answer that a roots/list_changed made stale while in flight', async () => {
+    const repo = await makeRepo(join(scratch, 'p13-race-boot'));
+    const repoB = await makeRepo(join(scratch, 'p13-race-b'));
+    const repoC = await makeRepo(join(scratch, 'p13-race-c'));
+    let current = repoB;
+    // The answer is the roots at request time, delivered after the change notification.
+    const roots = () => { const answer = [current]; return new Promise(resolve => setTimeout(() => resolve(answer), 300)); };
+    await withServer({ cwd: scratch, args: ['--root', repo], roots }, async ({ client, health, stats }) => {
+      const inFlight = health();
+      while (stats.listRoots === 0) await new Promise(resolve => setTimeout(resolve, 10));
+      current = repoC;
+      await client.sendRootsListChanged();
+      assert.equal((await inFlight).rootDir, repoB);
       assert.equal((await health()).rootDir, repoC);
       assert.equal(stats.listRoots, 2);
     });

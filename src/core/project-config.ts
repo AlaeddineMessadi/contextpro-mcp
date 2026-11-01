@@ -120,7 +120,7 @@ async function writeJsonFile(path: string, value: unknown): Promise<void> {
   await writeFile(path, JSON.stringify(value, null, 2) + "\n", "utf-8");
 }
 
-async function detectGitRoot(rootDir: string): Promise<string> {
+export async function detectGitRoot(rootDir: string): Promise<string> {
   try {
     const { stdout } = await execFileAsync("git", ["rev-parse", "--show-toplevel"], {
       cwd: rootDir,

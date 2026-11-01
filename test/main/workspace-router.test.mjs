@@ -179,6 +179,19 @@ describe("workspace-router", () => {
       assert.equal(second.resolvedAt, first.resolvedAt);
     });
 
+    it("keeps the cache across an empty .git that git ignores, until git init fills it", async () => {
+      const mod = await import("../../build/core/workspace-router.js");
+      const sub = join(baseRepo, "sub");
+      const deep = join(sub, "deep");
+      await mkdir(join(sub, ".git"), { recursive: true });
+      await mkdir(deep, { recursive: true });
+      const first = await mod.resolveWorkspace(deep);
+      assert.equal(first.rootDir, baseRepo);
+      assert.equal(await mod.resolveWorkspace(deep), first);
+      await git(baseRepo, "init", "-q", sub);
+      assert.equal((await mod.resolveWorkspace(deep)).rootDir, sub);
+    });
+
     it("routes to the new worktree once git adds one into the empty folder", async () => {
       const mod = await import("../../build/core/workspace-router.js");
       const slot = join(baseRepo, ".worktrees", "feat");
