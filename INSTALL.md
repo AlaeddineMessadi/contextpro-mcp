@@ -133,13 +133,13 @@ Expect `Before: ok | storage=true | dbOpen=true` and `After: ok | …`. "Fix App
 In the client, a first read looks like this. Use a line range: a whole file larger than `max_tokens` is omitted rather than cut.
 
 ```js
-context({ root: "/absolute/path/to/project", targets: [{ file: "src/index.ts", start: 1, end: 40 }], max_tokens: 1500 })
+context({ targets: [{ file: "src/index.ts", start: 1, end: 40 }], max_tokens: 1500 })
 ```
 
 Replace `src/index.ts` with a file in your project. For callers of a symbol:
 
 ```js
-exact_references({ root: "/absolute/path/to/project", file: "src/lib/foo.ts", symbol_name: "foo" })
+exact_references({ file: "src/lib/foo.ts", symbol_name: "foo" })
 ```
 
 Without Ollama, `context()` results include a "Discovery used lexical fallback" notice. That is expected and doesn't affect `exact_references`.
@@ -216,7 +216,7 @@ Do not rebuild shared `node_modules` merely to satisfy one client: clients using
 - **`Unsafe project root`:** `--root`, a per-call `root`, or the Git toplevel of either is one of those folders. Point it at your project. If your project sits directly in your home folder and is not a Git repository, move it one level deeper, run `git init`, or set `CONTEXTPRO_ALLOW_UNSAFE_ROOT=true`.
 - **`exact_references` finds nothing and warns that files could not be checked:** install the target project's dependencies (`npm install`) and retry.
 - **Tools absent after a startup failure:** run the configured command directly to read stderr. From source, `ERR_MODULE_NOT_FOUND` with a missing `node_modules` means the checkout is incomplete: run `npm ci` and `npm run build` with the configured Node, then restart the client. Keep the checkout's dependencies and build while clients use it.
-- **Wrong repository or worktree:** subagents must pass their absolute worktree `root` on every call. A shell `cd` does not retarget a shared MCP server. Linked worktrees require explicit roots, including for `reindex`. Client-advertised roots may describe the parent agent.
+- **Wrong repository or worktree:** omit `root` only in the folder the session started in; anywhere else, and on every subagent call, pass the absolute path. A shell `cd` does not retarget a shared MCP server. Linked worktrees require explicit roots, including for `reindex`. Client-advertised roots may describe the parent agent.
 - **Local state:** `.contextpro/` in the project holds the index, memory and restore points. It is not entirely disposable; follow [maintenance](docs/maintenance.md) before deleting it. `~/.contextpro` holds the workspace registry and `~/.cache/contextpro` the native-binding cache.
 - **Stale embeddings:** check provider and model settings, then reindex. Interactive search does not rebuild the whole vector corpus.
 - **Slow or failed calls:** inspect `health` and `status`; use bounded results and keyword-only discovery when the provider is unavailable. Do not loop on connection errors.

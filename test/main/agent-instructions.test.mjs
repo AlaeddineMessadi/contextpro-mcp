@@ -12,6 +12,17 @@ describe("agent instructions", () => {
     }
   });
 
+  it("tells agents when to omit root and to always pass it from a subagent", async () => {
+    const { CONTEXTPRO_PROJECT_INSTRUCTIONS: block } = await import("../../build/core/agent-setup.js");
+    const texts = await Promise.all(["agent-instructions.md", "agent-guide.md", "INSTRUCTIONS.md"].map(file => readFile(join(process.cwd(), file), "utf8")));
+    for (const text of [block, ...texts]) {
+      assert.match(text.replace(/\s+/g, " "), /every subagent call/);
+      assert.doesNotMatch(text.replace(/\s+/g, " "), /active (root|repository\/worktree)[^.]* on every call/);
+    }
+    const readme = await readFile(join(process.cwd(), "README.md"), "utf8");
+    assert.doesNotMatch(readme, /absolute\/path\/to\/project/);
+  });
+
   it("keeps the detailed workflow in the on-demand instructions resource", async () => {
     const guide = await readFile(join(process.cwd(), "agent-guide.md"), "utf8");
     for (const required of ["task_pack", "search", "skeleton", "blast_radius", "validate_scope", "reindex"]) {

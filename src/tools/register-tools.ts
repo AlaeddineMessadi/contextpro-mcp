@@ -77,7 +77,7 @@ const rootArg = z
   .string()
   .optional()
   .describe(
-    "Absolute project root. Required with linked worktrees; subagents must pass their own worktree root on every call.",
+    "Absolute project root. Omit only where this session started; required elsewhere and on every subagent call.",
   );
 
 export function registerTools(
@@ -152,7 +152,7 @@ export function registerTools(
     return registered;
   };
 
-  server.tool("context", "Read up to six known files, symbols, or line ranges together with targets:[{file,symbol?,start?,end?}], without search or embeddings. Use query for discovery plus source in one call. Returns bounded, deduplicated source with explicit omissions. Pass the absolute project root. Prefer a batch over separate reads when useful; stop when evidence suffices.", {
+  server.tool("context", "Read up to six known files, symbols, or line ranges together with targets:[{file,symbol?,start?,end?}], without search or embeddings. Use query for discovery plus source in one call. Returns bounded, deduplicated source with explicit omissions. Prefer a batch over separate reads when useful; stop when evidence suffices.", {
     intent: z.enum(["auto", "lookup", "change", "debug", "review", "overview"]).optional().describe("Query-only opt-in adaptive retrieval. Change/debug/review include bounded connected evidence; auto infers intent."),
     query: z.string().max(2000).optional().describe("Discovery query, at most 2000 characters. Use a literal symbol name to prioritize its definition."),
     targets: z.array(z.object({ file: z.string().max(240), symbol: z.string().max(200).optional(), start: z.number().int().min(1).optional(), end: z.number().int().min(1).optional() }).strict()).min(1).max(6).optional().describe("Exact reads: 1–6 file/symbol/line targets per call. Split larger batches."),
