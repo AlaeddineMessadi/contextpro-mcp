@@ -4,6 +4,8 @@ All notable changes to this project are recorded here. The project follows [Sema
 
 ## [Unreleased]
 
+## [1.6.0] - 2026-11-01
+
 - Agent instructions and the `root` argument now say to omit `root` only in the folder the session started in, and to pass an absolute path anywhere else and on every subagent call. They also say file paths are relative to the Git toplevel. Run `contextpro-mcp init` again to update the managed section in your project rules.
 - The server binds the Git toplevel of the launch directory or `--root`, so starting in a subfolder no longer creates a second index there. `doctor` checks the same root; `init` and `tree` still use the folder they are given.
 - Started without `--root` in `/`, the home folder, a folder that contains it, or a non-Git folder directly inside it, the server stays up without a default root (`status=unbound`) instead of exiting. Calls then need a per-call `root` or a single safe client root. An explicit unsafe `--root` still exits.
