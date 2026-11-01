@@ -197,7 +197,10 @@ shared MCP server. When the effective Git repository has linked worktrees, an
 omitted root is rejected with a request to specify it explicitly. A single client
 root can still describe the parent agent, so it does not bypass this guard.
 Linked checkouts require root even when attached to a bare Git store.
-For a single main checkout, the server uses client roots then its boot root. Separate
+For a single main checkout, the server uses the client root (of several, the one
+holding its boot root), then its boot root. With `--root`, a client root that is
+unsafe or outside a Git work tree is ignored. A server started in an unsafe folder
+has no boot root (`status` reports `unbound`): pass root on every call. Separate
 clones cannot be detected through shared Git metadata; still pass root explicitly.
 Each worktree has an isolated index. If source appears stale, verify the selected
 root against a native read before rebuilding or changing provider settings.

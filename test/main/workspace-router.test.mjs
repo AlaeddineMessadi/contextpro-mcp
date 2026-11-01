@@ -167,6 +167,71 @@ describe("workspace-router", () => {
     assert.deepEqual(mod.listActiveWorkspaces().map((w) => w.rootDir), [baseRepo]);
   });
 
+  describe("a subfolder aliased to its parent checkout", () => {
+    it("keeps hitting the cache while no .git appears below the toplevel", async () => {
+      const mod = await import("../../build/core/workspace-router.js");
+      const deep = join(baseRepo, "sub", "deep");
+      await mkdir(deep, { recursive: true });
+      const first = await mod.resolveWorkspace(deep);
+      assert.equal(first.rootDir, baseRepo);
+      const second = await mod.resolveWorkspace(deep);
+      assert.equal(second, first);
+      assert.equal(second.resolvedAt, first.resolvedAt);
+    });
+
+    it("keeps the cache across an empty .git that git ignores, until git init fills it", async () => {
+      const mod = await import("../../build/core/workspace-router.js");
+      const sub = join(baseRepo, "sub");
+      const deep = join(sub, "deep");
+      await mkdir(join(sub, ".git"), { recursive: true });
+      await mkdir(deep, { recursive: true });
+      const first = await mod.resolveWorkspace(deep);
+      assert.equal(first.rootDir, baseRepo);
+      assert.equal(await mod.resolveWorkspace(deep), first);
+      await git(baseRepo, "init", "-q", sub);
+      assert.equal((await mod.resolveWorkspace(deep)).rootDir, sub);
+    });
+
+    it("routes to the new worktree once git adds one into the empty folder", async () => {
+      const mod = await import("../../build/core/workspace-router.js");
+      const slot = join(baseRepo, ".worktrees", "feat");
+      await mkdir(slot, { recursive: true });
+      assert.equal((await mod.resolveWorkspace(slot)).rootDir, baseRepo);
+      await git(baseRepo, "worktree", "add", "-q", slot, "-b", "feat");
+      const ws = await mod.resolveWorkspace(slot);
+      assert.equal(ws.rootDir, slot);
+      assert.equal(ws.baseRoot, baseRepo);
+      assert.equal(ws.isWorktree, true);
+      assert.equal(await mod.resolveWorkspace(slot), ws);
+    });
+
+    it("routes to the new repository once git init runs in the folder or in a folder between", async () => {
+      const mod = await import("../../build/core/workspace-router.js");
+      const sub = join(baseRepo, "sub");
+      const deep = join(sub, "deep");
+      await mkdir(deep, { recursive: true });
+      assert.equal((await mod.resolveWorkspace(sub)).rootDir, baseRepo);
+      assert.equal((await mod.resolveWorkspace(deep)).rootDir, baseRepo);
+      await git(baseRepo, "init", "-q", sub);
+      const own = await mod.resolveWorkspace(sub);
+      assert.equal(own.rootDir, sub);
+      assert.equal(own.isWorktree, false);
+      assert.equal((await mod.resolveWorkspace(deep)).rootDir, sub);
+    });
+  });
+
+  it("refuses a root inside a git directory and creates nothing there", async () => {
+    const mod = await import("../../build/core/workspace-router.js");
+    const adminDir = join(baseRepo, ".git", "worktrees", "wt-x");
+    await withEnv(noUnsafeOverride, async () => {
+      for (const root of [join(baseRepo, ".git"), adminDir]) {
+        await assert.rejects(() => mod.resolveWorkspace(root), /Unsafe project root.*a folder inside \.git/);
+        await assert.rejects(() => stat(join(root, ".contextpro")), { code: "ENOENT" });
+      }
+    });
+    assert.equal(mod.listActiveWorkspaces().length, 0);
+  });
+
   describe("roots that Git widens to its toplevel", { skip: process.platform === "win32" }, () => {
     it("throws, not narrows, when the toplevel is the home folder", async () => {
       const mod = await import("../../build/core/workspace-router.js");

@@ -21,7 +21,9 @@ export function runWithRequestRoot<T>(rootDir: string, fn: () => Promise<T>): Pr
 
 export const requestFreshness = (): Map<string, Promise<IndexFreshnessResult>> | undefined => storage.getStore()?.freshness;
 
-/** The active request root, or `fallback` when no request context is established. */
-export function currentRoot(fallback: string): string {
-  return storage.getStore()?.rootDir ?? fallback;
+/** The active request root, or `fallback` outside a request; throws when neither exists (an unbound server). */
+export function currentRoot(fallback?: string): string {
+  const root = storage.getStore()?.rootDir ?? fallback;
+  if (!root) throw new Error("No project root: called outside a tool request, and the server started without a default root.");
+  return root;
 }

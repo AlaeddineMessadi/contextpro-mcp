@@ -13,7 +13,7 @@ import { createEmbeddingTrackerController } from "./core/embedding-tracker.js";
 import { createIdleMonitor, getIdleShutdownMs, getParentPollMs, isBrokenPipeError, runCleanup, startParentMonitor } from "./core/process-lifecycle.js";
 import { getContextTree } from "./tools/context-tree.js";
 import { quickRefresh, waitForIndexingCompletion } from "./tools/reindex.js";
-import { ensureProjectConfig, registerWorkspace, verifyProjectContext } from "./core/project-config.js";
+import { detectGitRoot, ensureProjectConfig, registerWorkspace, verifyProjectContext } from "./core/project-config.js";
 import { formatStartupHealthReport, runStartupHealthCheck } from "./core/startup-health.js";
 import { formatDoctorReport, runDoctor } from "./core/doctor.js";
 import { recordToolTiming, setToolCallSink } from "./core/tool-metrics.js";
@@ -22,7 +22,8 @@ import { runtimeSessionId } from "./core/runtime-session.js";
 import { installAgentInstructions, mergeMcpConfig } from "./core/agent-setup.js";
 import { registerTools } from "./tools/register-tools.js";
 import { isUnexpandedVariable, selectRootDir, validateSelectedRoot } from "./core/root-guard.js";
-import { resolveRequestRoot } from "./core/request-root.js";
+import { NoProjectRootError, resolveRequestRoot } from "./core/request-root.js";
+import { createClientRoots } from "./core/roots-detect.js";
 import { runWithRequestRoot } from "./core/request-context.js";
 import { resolveProjectPath } from "./core/path-guard.js";
 import { captureSource, publishSource, withSourceMutation } from "./core/source-mutation.js";
@@ -199,7 +200,8 @@ function parseCliArgs(args: string[]): ParsedCliArgs {
 const USAGE = `ContextPro ${PACKAGE_VERSION}: local MCP server for coding agents.
 
 Usage:
-  contextpro-mcp [--root <dir>]       Start the MCP server on stdio (root defaults to the current directory)
+  contextpro-mcp [--root <dir>]       Start the MCP server on stdio (root defaults to the Git toplevel of the current directory;
+                                      started in /, home or another unsafe folder, it has no root and each call needs root)
   contextpro-mcp init [claude|cursor|vscode|windsurf|opencode] [--root <dir>] [--runner npx|bunx] [--no-agent-instructions]
                                       Write the client's project MCP config and agent instructions
   contextpro-mcp doctor [--root <dir>] [--fix]
@@ -223,44 +225,53 @@ if (process.argv[2] === "daemon") {
   catch (error) { console.error((error as Error).message); process.exit(1); }
   process.exit(0);
 }
-function parseStartupOrExit(): { parsedCliArgs: ParsedCliArgs; ROOT_DIR: string } {
+// ROOT_DIR is undefined when the server starts "unbound": every call then needs a root.
+async function parseStartupOrExit(): Promise<{ parsedCliArgs: ParsedCliArgs; ROOT_DIR: string | undefined; unboundReason?: string }> {
+  let parsed: ParsedCliArgs | undefined;
   try {
-    const parsed = parseCliArgs(cliArgs);
-    if (parsed.flagRoot && isUnexpandedVariable(parsed.flagRoot)) console.error(`[contextpro/startup] ignoring unexpanded --root "${parsed.flagRoot}"; using ${parsed.rootDir}`);
+    parsed = parseCliArgs(cliArgs);
+    if (parsed.flagRoot && isUnexpandedVariable(parsed.flagRoot)) console.error(`[contextpro/startup] ignoring unexpanded --root "${parsed.flagRoot}"; falling back to the launch directory ${parsed.rootDir}`);
     const root = validateSelectedRoot({ rootDir: parsed.rootDir, source: parsed.rootSource }).rootDir;
     if (!existsSync(root) || !statSync(root).isDirectory()) {
       throw new Error(`Project root "${root}" does not exist or is not a directory. Pass --root <existing project directory>.`);
     }
-    return { parsedCliArgs: parsed, ROOT_DIR: root };
+    // doctor checks the root the server would bind; init and tree keep the folder they were given.
+    if (parsed.command && parsed.command !== "doctor") return { parsedCliArgs: parsed, ROOT_DIR: root };
+    // Requests widen to this same Git toplevel (detectWorktreeInfo's worktreeRoot); one spawn, as each can wait 4 s before connect.
+    const top = await detectGitRoot(root);
+    try {
+      validateSelectedRoot({ rootDir: top, source: parsed.rootSource });
+    } catch (error) {
+      throw new Error(`Project root widened from ${root} to its Git toplevel ${top}. ${(error as Error).message}`);
+    }
+    return { parsedCliArgs: parsed, ROOT_DIR: top };
   } catch (error) {
+    // Clients often launch servers from home: serve per-call roots instead of exiting. An explicit root is a typo.
+    // Only the why: UNBOUND_FIX carries the advice, and the error's own override would index this launch folder.
+    if (parsed && !parsed.command && parsed.rootSource === "cwd") return { parsedCliArgs: parsed, ROOT_DIR: undefined, unboundReason: (error as Error).message.split(" Pass --root")[0] };
     console.error((error as Error).message);
     process.exit(1);
   }
 }
-const { parsedCliArgs, ROOT_DIR } = parseStartupOrExit();
+const { parsedCliArgs, ROOT_DIR, unboundReason } = await parseStartupOrExit();
+const UNBOUND_FIX = "Pass root:<absolute project path> on each call, start the client in the project, or add --root to this project's MCP config.";
 
-// Cache the client's advertised roots briefly so auto-detection doesn't round-trip
-// to the client on every single tool call. The TTL is short because a client can
-// add/remove workspace roots mid-session.
-const ROOTS_CACHE_TTL_MS = 5000;
-let rootsCache: { uris: string[]; at: number } | null = null;
-
-async function getClientRoots(): Promise<string[]> {
-  const now = Date.now();
-  if (rootsCache && now - rootsCache.at < ROOTS_CACHE_TTL_MS) return rootsCache.uris;
-  // Only the client advertising the roots capability can answer; otherwise this
-  // throws and resolveAutoRoot falls back to the boot root.
-  const caps = server.server.getClientCapabilities?.();
-  if (!caps?.roots) throw new Error("client does not support roots capability");
-  const result = await server.server.listRoots();
-  const uris = (result.roots ?? []).map((r) => r.uri).filter((u): u is string => typeof u === "string");
-  rootsCache = { uris, at: now };
-  return uris;
+function unboundReport(args: unknown): { content: Array<{ type: "text"; text: string }> } {
+  const report = { status: "unbound", rootDir: null, launchDir: parsedCliArgs.rootDir, reason: unboundReason, fix: UNBOUND_FIX };
+  const text = (args as { format?: string } | undefined)?.format === "json"
+    ? JSON.stringify(report, null, 2)
+    : `ContextPro status=unbound: no default project root.\n  launch dir: ${report.launchDir}\n  reason: ${report.reason}\n  fix: ${report.fix}`;
+  return { content: [{ type: "text", text }] };
 }
+
+// Unbound, the client's root is usually the same unsafe launch folder: treat it as no root.
+const isSafeRoot = (dir: string): boolean => {
+  try { validateSelectedRoot({ rootDir: dir, source: "cwd" }); return true; } catch { return false; }
+};
 
 function withRequestActivity<TArgs, TResult>(
   handler: (args: TArgs) => Promise<TResult>,
-  options?: { useEmbeddingTracker?: boolean; toolName?: string; waitForIndexing?: boolean; ensureFreshIndex?: boolean; skipProjectVerification?: boolean },
+  options?: { useEmbeddingTracker?: boolean; toolName?: string; waitForIndexing?: boolean; ensureFreshIndex?: boolean; skipProjectVerification?: boolean; unbound?: "run" | "report" },
 ): (args: TArgs) => Promise<TResult> {
   return async (args: TArgs): Promise<TResult> => withToolTrace(options?.toolName ?? "unknown", args, async (trace) => {
     const started = Date.now();
@@ -270,10 +281,20 @@ function withRequestActivity<TArgs, TResult>(
     // arg → the MCP client's advertised roots (auto-detected) → the server's boot
     // ROOT_DIR. The resolved root is made active for the handler via
     // AsyncLocalStorage, and `root` is stripped so handlers see their normal args.
-    const resolution = await resolveRequestRoot(args as Record<string, unknown>, ROOT_DIR, {
-      rootsProvider: getClientRoots,
-      requestCwd: process.cwd(),
-    });
+    let resolution: Awaited<ReturnType<typeof resolveRequestRoot>>;
+    try {
+      resolution = await resolveRequestRoot(args as Record<string, unknown>, ROOT_DIR, {
+        rootsProvider: clientRoots.list,
+        // An explicit --root outranks a client root that is not a Git project (e.g. the client's launch folder).
+        acceptClientRoot: !ROOT_DIR ? isSafeRoot : parsedCliArgs.rootSource === "cwd" ? undefined
+          : async (dir) => isSafeRoot(dir) && await clientRoots.isGitWorkTree(dir),
+        launchDir: parsedCliArgs.rootDir,
+      });
+    } catch (error) {
+      // No project: discovery still runs and health/status describe the unbound state; no root DB is touched.
+      if (!(error instanceof NoProjectRootError) || !options?.unbound) throw error;
+      return options.unbound === "run" ? handler(args) : unboundReport(args) as TResult;
+    }
     const effectiveRoot = resolution.rootDir;
     trace.rootResolved(effectiveRoot, typeof (args as Record<string, unknown> | undefined)?.root === "string"
       && String((args as Record<string, unknown>).root).trim().length > 0);
@@ -370,7 +391,7 @@ function buildMcpConfig(runner: "npx" | "bunx", target: AgentTarget) {
 
 async function runDoctorCommand(args: string[]) {
   const parsed = parseCliArgs(["doctor", ...args]);
-  const report = await runDoctor(parsed.rootDir, parsed.fix === true);
+  const report = await runDoctor(ROOT_DIR ?? parsed.rootDir, parsed.fix === true);
   process.stdout.write(formatDoctorReport(report) + "\n");
 }
 
@@ -443,6 +464,7 @@ const server = new McpServer({
   capabilities: { logging: {} },
   ...(agentInstructions && { instructions: agentInstructions }),
 });
+const clientRoots = createClientRoots(server.server);
 
 server.resource(
   "contextpro_instructions",
@@ -520,25 +542,30 @@ async function main() {
     closeDB(targetRoot);
     process.exit(0);
   }
-  const migratedFrom = await ensureContextProDir(ROOT_DIR);
-  if (migratedFrom) console.error(`[contextpro/startup] migrated ${migratedFrom}/ to ${CONTEXTPRO_DIR}/`);
-  const projectConfig = await ensureProjectConfig({
-    rootDir: ROOT_DIR,
-    projectId: parsedCliArgs.projectId ?? process.env.CONTEXTPRO_PROJECT_ID ?? process.env.CONTEXTPLUS_PROJECT_ID,
-    clientId: parsedCliArgs.clientId ?? process.env.CONTEXTPRO_CLIENT_ID ?? process.env.CONTEXTPLUS_CLIENT_ID,
-    sessionSource: parsedCliArgs.sessionSource ?? process.env.CONTEXTPRO_SESSION_SOURCE ?? process.env.CONTEXTPLUS_SESSION_SOURCE ?? "mcp",
-  });
-  await registerWorkspace(projectConfig);
-  const startupHealth = await runStartupHealthCheck(ROOT_DIR);
-  console.error(formatStartupHealthReport(startupHealth));
-  const trackerController = createEmbeddingTrackerController({
-    rootDir: ROOT_DIR,
-    mode: process.env.CONTEXTPRO_EMBED_TRACKER ?? process.env.CONTEXTPLUS_EMBED_TRACKER,
-    debounceMs: Number.parseInt(process.env.CONTEXTPRO_EMBED_TRACKER_DEBOUNCE_MS ?? process.env.CONTEXTPLUS_EMBED_TRACKER_DEBOUNCE_MS ?? "700", 10),
-    maxFilesPerTick: Number.parseInt(process.env.CONTEXTPRO_EMBED_TRACKER_MAX_FILES ?? process.env.CONTEXTPLUS_EMBED_TRACKER_MAX_FILES ?? "8", 10),
-    reconcileIntervalMs: Number.parseInt(process.env.CONTEXTPRO_RECONCILE_INTERVAL_MS ?? process.env.CONTEXTPLUS_RECONCILE_INTERVAL_MS ?? "30000", 10),
-    reconcileMaxFiles: Number.parseInt(process.env.CONTEXTPRO_RECONCILE_MAX_FILES ?? process.env.CONTEXTPLUS_RECONCILE_MAX_FILES ?? "40", 10),
-  });
+  let trackerController = { ensureStarted: () => { }, stop: () => { } };
+  if (ROOT_DIR) {
+    const migratedFrom = await ensureContextProDir(ROOT_DIR);
+    if (migratedFrom) console.error(`[contextpro/startup] migrated ${migratedFrom}/ to ${CONTEXTPRO_DIR}/`);
+    const projectConfig = await ensureProjectConfig({
+      rootDir: ROOT_DIR,
+      projectId: parsedCliArgs.projectId ?? process.env.CONTEXTPRO_PROJECT_ID ?? process.env.CONTEXTPLUS_PROJECT_ID,
+      clientId: parsedCliArgs.clientId ?? process.env.CONTEXTPRO_CLIENT_ID ?? process.env.CONTEXTPLUS_CLIENT_ID,
+      sessionSource: parsedCliArgs.sessionSource ?? process.env.CONTEXTPRO_SESSION_SOURCE ?? process.env.CONTEXTPLUS_SESSION_SOURCE ?? "mcp",
+    });
+    await registerWorkspace(projectConfig);
+    const startupHealth = await runStartupHealthCheck(ROOT_DIR);
+    console.error(formatStartupHealthReport(startupHealth));
+    trackerController = createEmbeddingTrackerController({
+      rootDir: ROOT_DIR,
+      mode: process.env.CONTEXTPRO_EMBED_TRACKER ?? process.env.CONTEXTPLUS_EMBED_TRACKER,
+      debounceMs: Number.parseInt(process.env.CONTEXTPRO_EMBED_TRACKER_DEBOUNCE_MS ?? process.env.CONTEXTPLUS_EMBED_TRACKER_DEBOUNCE_MS ?? "700", 10),
+      maxFilesPerTick: Number.parseInt(process.env.CONTEXTPRO_EMBED_TRACKER_MAX_FILES ?? process.env.CONTEXTPLUS_EMBED_TRACKER_MAX_FILES ?? "8", 10),
+      reconcileIntervalMs: Number.parseInt(process.env.CONTEXTPRO_RECONCILE_INTERVAL_MS ?? process.env.CONTEXTPLUS_RECONCILE_INTERVAL_MS ?? "30000", 10),
+      reconcileMaxFiles: Number.parseInt(process.env.CONTEXTPRO_RECONCILE_MAX_FILES ?? process.env.CONTEXTPLUS_RECONCILE_MAX_FILES ?? "40", 10),
+    });
+  } else {
+    console.error(`[contextpro/startup] no default project root, tools need a root per call: ${unboundReason} ${UNBOUND_FIX}`);
+  }
   const transport = new StdioServerTransport();
   await server.connect(transport);
 
@@ -613,7 +640,7 @@ async function main() {
   });
 
   noteServerActivity();
-  console.error(`ContextPro MCP server running on stdio | root: ${ROOT_DIR}`);
+  console.error(`ContextPro MCP server running on stdio | root: ${ROOT_DIR ?? `none (started in ${parsedCliArgs.rootDir}; pass root on each call)`}`);
 }
 
 main().catch((error) => {

@@ -4,6 +4,17 @@ All notable changes to this project are recorded here. The project follows [Sema
 
 ## [Unreleased]
 
+- The server binds the Git toplevel of the launch directory or `--root`, so starting in a subfolder no longer creates a second index there. `doctor` checks the same root; `init` and `tree` still use the folder they are given.
+- Started without `--root` in `/`, the home folder, a folder that contains it, or a non-Git folder directly inside it, the server stays up without a default root (`status=unbound`) instead of exiting. Calls then need a per-call `root` or a single safe client root. An explicit unsafe `--root` still exits.
+- A client root that is unsafe or outside a Git work tree no longer overrides an explicit `--root`. With several client roots, the server picks the one holding its startup root, not the folder it was launched in.
+- A client that never answers `roots/list` slows one call by about 2 s instead of stalling every call, and `roots/list_changed` takes effect at once.
+- A subfolder that becomes its own checkout (`git worktree add`, `git init`, a submodule) stops routing to the parent repository without a restart. Roots inside `.git` are refused.
+- A relative per-call `root` is rejected instead of resolving against the server's folder and skipping the worktree check. A `root` that does not exist is an error instead of getting a `.contextpro/`.
+- Git no longer climbs from a non-repository folder below the home folder into a dotfiles repository in it. A folder that contains the home folder is refused, and so is a per-call `root` whose Git toplevel is unsafe.
+- `gc` no longer deletes live worktree indexes when Git cannot list worktrees.
+- A request for a deleted worktree closes its index, so a checkout re-created at that path no longer writes to the deleted `index.db`.
+- On Windows, a Git repository directly in the home folder is accepted when the drive letter case differs. An empty or relative `HOME` no longer makes the current folder act as home.
+
 ## [1.5.0] - 2026-10-31
 
 - `contextpro-mcp --help` and `--version` print usage and the version instead of starting a server on a folder named after the flag. Unknown options and a `--root` that does not exist now fail with a one-line error instead of creating directories.

@@ -112,6 +112,33 @@ describe("root guard", () => {
     }
   });
 
+  it("refuses a path with a .git segment unless the override is set", async () => {
+    const { mkdtemp, mkdir, rm } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const mod = await import("../../build/core/root-guard.js");
+    const home = await mkdtemp(join(tmpdir(), "contextpro-gitdir-"));
+    const previousHome = process.env.HOME, previousAllow = process.env.CONTEXTPRO_ALLOW_UNSAFE_ROOT;
+    process.env.HOME = home;
+    delete process.env.CONTEXTPRO_ALLOW_UNSAFE_ROOT;
+    const check = (rootDir) => () => mod.validateSelectedRoot({ rootDir, source: "flag" });
+    try {
+      // ~/.git/.git would satisfy the home-child-repository exemption.
+      await mkdir(join(home, ".git", ".git"), { recursive: true });
+      await mkdir(join(home, "proj", ".git", "worktrees", "wt"), { recursive: true });
+      const refused = ["/x/proj/.git", "/x/proj/.git/worktrees/wt", join(home, "proj", ".git"), join(home, "proj", ".git", "worktrees", "wt"), join(home, ".git")];
+      for (const rootDir of refused) assert.throws(check(rootDir), /a folder inside \.git/, rootDir);
+      for (const rootDir of ["/x/proj", "/x/proj/.github", "/x/proj/foo.git", "/x/proj/.gitmodules"]) assert.doesNotThrow(check(rootDir), rootDir);
+      assert.doesNotThrow(check(join(home, "proj")));
+      process.env.CONTEXTPRO_ALLOW_UNSAFE_ROOT = "true";
+      for (const rootDir of refused) assert.doesNotThrow(check(rootDir), rootDir);
+    } finally {
+      if (previousHome === undefined) delete process.env.HOME; else process.env.HOME = previousHome;
+      if (previousAllow === undefined) delete process.env.CONTEXTPRO_ALLOW_UNSAFE_ROOT; else process.env.CONTEXTPRO_ALLOW_UNSAFE_ROOT = previousAllow;
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
   it("counts a child folder named ..foo as inside home", async () => {
     const { join } = await import("node:path");
     const mod = await import("../../build/core/root-guard.js");

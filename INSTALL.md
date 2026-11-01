@@ -11,7 +11,9 @@ The examples use the unpinned package so they don't go stale. Teams that want re
 
 ## Connect your client
 
-The "project root" is the repository ContextPro indexes. Without `--root`, the root is the directory the client starts the server in. ContextPro refuses to start in `/` or in your home folder itself. A project folder directly inside your home folder (for example `~/myapp`) is accepted when it is a Git repository (has `.git`); a non-repository folder there (for example `~/Downloads`) is refused unless `CONTEXTPRO_ALLOW_UNSAFE_ROOT=true`. Global configs and GUI apps often start servers from your home folder, so they should pass `--root`.
+The "project root" is the repository ContextPro indexes: the Git toplevel of `--root` or, without `--root`, of the directory the client starts the server in. Outside Git it is that folder itself. A project folder directly inside your home folder (for example `~/myapp`) is accepted when it is a Git repository (has `.git`).
+
+Started without `--root` in `/`, your home folder, a folder that contains it, or a non-repository folder directly inside it (for example `~/Downloads`), the server has no default root: `health` and `status` report `unbound`, and each call must pass `root` unless the client advertises a single project root. An explicit `--root` to one of those folders stops the server unless `CONTEXTPRO_ALLOW_UNSAFE_ROOT=true`. GUI apps often start servers from your home folder, so their project config should pass `--root`.
 
 ### Claude Code
 
@@ -33,7 +35,7 @@ npx -y contextpro-mcp init claude   # writes .mcp.json, AGENTS.md and CLAUDE.md
 claude
 ```
 
-Claude Code asks once to approve servers from a project `.mcp.json`. Until you start `claude` in the project and accept, `claude mcp list` shows "Pending approval". The generated config has no `--root`, so the root is the directory where you start `claude`: start it in the repository root. Started in a subdirectory, ContextPro silently indexes only that subdirectory. The same applies to any config without `--root`, such as OpenCode's `opencode.json`.
+Claude Code asks once to approve servers from a project `.mcp.json`. Until you start `claude` in the project and accept, `claude mcp list` shows "Pending approval". The generated config has no `--root`, so the root is the Git repository containing the directory where you start `claude`; a subdirectory still binds the whole repository. The same applies to any config without `--root`, such as OpenCode's `opencode.json`.
 
 ### Codex
 
@@ -41,7 +43,7 @@ Claude Code asks once to approve servers from a project `.mcp.json`. Until you s
 codex mcp add contextpro --env CONTEXTPRO_TOOL_PROFILE=lean -- npx -y contextpro-mcp
 ```
 
-Codex reads `~/.codex/config.toml` by default (`$CODEX_HOME/config.toml` if set). That config is shared by every project, so don't add `--root` to it: every Codex session would then use that one repository. Codex starts the server in the folder where you start `codex`, so start it in your repository root. Started from your home folder, ContextPro refuses to start rather than index it. The command writes:
+Codex reads `~/.codex/config.toml` by default (`$CODEX_HOME/config.toml` if set). That config is shared by every project, so don't add `--root` to it: every Codex session would then use that one repository. Codex starts the server in the folder where you start `codex`, so start it in your repository. Started from your home folder, ContextPro has no default root: each call must pass `root:<absolute project path>`, or restart `codex` in the repository. The command writes:
 
 ```toml
 [mcp_servers.contextpro]
@@ -72,7 +74,7 @@ For other clients, put this in the project's own config file:
 }
 ```
 
-Add `--root` only if the client starts servers outside the project, and then prefer the client's workspace variable (such as `${workspaceFolder}`) over a fixed path. Never put a fixed `--root` in a global or user-level config: every project would then use that one repository. If a client passes an unexpanded `${...}` variable as `--root`, ContextPro ignores it and uses the launch directory.
+Add `--root` only if the client starts servers outside the project, and then prefer the client's workspace variable (such as `${workspaceFolder}`) over a fixed path. Never put a fixed `--root` in a global or user-level config: every project would then use that one repository. If a client passes an unexpanded `${...}` variable as `--root`, ContextPro ignores it and starts as if there were no `--root`.
 
 ### OpenCode
 
@@ -210,7 +212,8 @@ Do not rebuild shared `node_modules` merely to satisfy one client: clients using
 ## Worktrees and common problems
 
 - **`npm warn deprecated prebuild-install@7.1.3` from npx:** expected; it comes from a native dependency and does not affect ContextPro.
-- **`Unsafe project root` at startup:** the server was started in `/`, in your home folder, or in a non-Git folder directly inside it, usually without `--root`. Start the client in your project folder, or add `--root` to that project's own config (never to a global one). If your project sits directly in your home folder and is not a Git repository, move it one level deeper, run `git init`, or set `CONTEXTPRO_ALLOW_UNSAFE_ROOT=true`.
+- **`status=unbound` or `No project root`:** the client started the server in `/`, in your home folder, or in a non-Git folder directly inside it, so it has no default root. Start the client in your project folder, pass `root` on each call, or add `--root` to that project's own config (never to a global one).
+- **`Unsafe project root`:** `--root`, a per-call `root`, or the Git toplevel of either is one of those folders. Point it at your project. If your project sits directly in your home folder and is not a Git repository, move it one level deeper, run `git init`, or set `CONTEXTPRO_ALLOW_UNSAFE_ROOT=true`.
 - **`exact_references` finds nothing and warns that files could not be checked:** install the target project's dependencies (`npm install`) and retry.
 - **Tools absent after a startup failure:** run the configured command directly to read stderr. From source, `ERR_MODULE_NOT_FOUND` with a missing `node_modules` means the checkout is incomplete: run `npm ci` and `npm run build` with the configured Node, then restart the client. Keep the checkout's dependencies and build while clients use it.
 - **Wrong repository or worktree:** subagents must pass their absolute worktree `root` on every call. A shell `cd` does not retarget a shared MCP server. Linked worktrees require explicit roots, including for `reindex`. Client-advertised roots may describe the parent agent.

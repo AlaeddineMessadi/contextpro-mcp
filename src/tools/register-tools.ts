@@ -50,7 +50,8 @@ import { getEfficiencyReport } from "./efficiency-report.js";
 
 type ActivityWrapper = <TArgs, TResult>(
   handler: (args: TArgs) => Promise<TResult>,
-  options?: { useEmbeddingTracker?: boolean; toolName?: string; waitForIndexing?: boolean; ensureFreshIndex?: boolean; skipProjectVerification?: boolean },
+  // unbound: with no project root, "run" the handler without one or "report" the unbound state instead of failing.
+  options?: { useEmbeddingTracker?: boolean; toolName?: string; waitForIndexing?: boolean; ensureFreshIndex?: boolean; skipProjectVerification?: boolean; unbound?: "run" | "report" },
 ) => (args: TArgs) => Promise<TResult>;
 
 const MAX_ARTIFACT_LIST_KEY_CHARS = 240;
@@ -81,13 +82,13 @@ const rootArg = z
 
 export function registerTools(
   serverInput: McpServer,
-  bootRoot: string,
+  bootRoot: string | undefined,
   withRequestActivity: ActivityWrapper,
 ): void {
   // Per-request effective root, evaluated at handler execution time.
   // withRequestActivity establishes the resolved worktree root via
   // AsyncLocalStorage for the duration of each handler; outside a request
-  // (CLI/direct callers) this falls back to the server's boot root.
+  // (CLI/direct callers) this falls back to the server's boot root, and throws without one.
   const rootDir = (): string => currentRoot(bootRoot);
 
   // Wrap server.tool so every registered tool automatically accepts the optional
@@ -193,7 +194,7 @@ export function registerTools(
     return { content: [{ type: "text" as const, text: JSON.stringify({ enabled: enable ?? [], matches: found,
       schemas: (enable ?? []).map(name => ({ ...catalog.get(name), callable: callable.has(name) })),
       next: "Call an enabled tool normally. If unavailable in your client, use discover_tools({root,call:{name,arguments}}) for tools marked callable." }) }] };
-  }, { toolName: "discover_tools", waitForIndexing: false, skipProjectVerification: true });
+  }, { toolName: "discover_tools", waitForIndexing: false, skipProjectVerification: true, unbound: "run" });
   server.tool("discover_tools", "Discover or enable experts and return their schemas. If the client cannot refresh its catalog, call runs a supported read/index tool; never source edits.", discoveryShape,
     async (args: z.infer<z.ZodObject<typeof discoveryShape>> & { root?: string }) => {
       if (!args.call) return discover(args);
@@ -251,7 +252,7 @@ export function registerTools(
           text: format === "json" ? JSON.stringify(report, null, 2) : formatStartupHealthReport(report),
         }],
       };
-    }, { toolName: "health", waitForIndexing: false, skipProjectVerification: true }),
+    }, { toolName: "health", waitForIndexing: false, skipProjectVerification: true, unbound: "report" }),
   );
 
   server.tool(
@@ -953,7 +954,7 @@ export function registerTools(
         type: "text" as const,
         text: await getStatus({ rootDir: rootDir(), format }),
       }],
-    }), { toolName: "status", waitForIndexing: false }),
+    }), { toolName: "status", waitForIndexing: false, unbound: "report" }),
   );
 
   server.tool(
