@@ -21,7 +21,7 @@ Just for you, in one project:
 
 ```sh
 cd your-project
-claude mcp add contextpro -e CONTEXTPRO_TOOL_PROFILE=lean -- npx -y contextpro-mcp --root "$PWD"
+claude mcp add contextpro -e CONTEXTPRO_TOOL_PROFILE=lean -- npx -y contextpro-mcp
 claude mcp list   # contextpro: ... ✔ Connected
 ```
 
@@ -116,14 +116,14 @@ printf '%s\n' \
   '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"smoke","version":"0"}}}' \
   '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
   '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' \
-  | CONTEXTPRO_TOOL_PROFILE=lean npx -y contextpro-mcp --root "$PWD" 2>/dev/null | grep -o '"name":"[a-z_]*"'
+  | CONTEXTPRO_TOOL_PROFILE=lean npx -y contextpro-mcp 2>/dev/null | grep -o '"name":"[a-z_]*"'
 # expect four lines: "name":"contextpro" (the server info), then "name":"context", "name":"discover_tools", "name":"exact_references"
 ```
 
 Check storage with `doctor`:
 
 ```sh
-npx -y contextpro-mcp doctor --root /absolute/path/to/project
+npx -y contextpro-mcp doctor
 ```
 
 Expect `Before: ok | storage=true | dbOpen=true` and `After: ok | …`. "Fix Applied: no" only means you didn't pass `--fix`.

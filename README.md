@@ -16,7 +16,7 @@ Requirements: Node.js 20–26 (24 LTS recommended). No API key or Ollama needed.
 
 ```sh
 cd your-project
-claude mcp add contextpro -e CONTEXTPRO_TOOL_PROFILE=lean -- npx -y contextpro-mcp --root "$PWD"
+claude mcp add contextpro -e CONTEXTPRO_TOOL_PROFILE=lean -- npx -y contextpro-mcp
 claude mcp list   # contextpro: ... ✔ Connected
 ```
 

@@ -20,7 +20,7 @@ describe("agent instructions", () => {
       assert.doesNotMatch(text.replace(/\s+/g, " "), /active (root|repository\/worktree)[^.]* on every call/);
     }
     const readme = await readFile(join(process.cwd(), "README.md"), "utf8");
-    assert.doesNotMatch(readme, /absolute\/path\/to\/project/);
+    assert.doesNotMatch(readme, /absolute\/path\/to\/project|--root "\$PWD"/);
   });
 
   it("keeps the detailed workflow in the on-demand instructions resource", async () => {
