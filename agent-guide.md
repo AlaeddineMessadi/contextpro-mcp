@@ -127,7 +127,7 @@ Pass this to `discover_tools` after reading the enabled tool's schema. The fallb
 supports source reads, references, validation planning, status/health, and reindex;
 it excludes source edits and destructive maintenance. It uses the target's normal
 root routing, validation, freshness and metrics. Put `root` only at the top level.
-Use only `root` and `call` for execution; do not mix discovery controls such as
+Use only `call`, plus `root` if needed, for execution; do not mix discovery controls such as
 `query`, `enable` or `limit` into that request. Budgets are tool-specific:
 `max_tokens` is accepted by `context`, not `status` or `exact_references`.
 For other experts, configure `CONTEXTPRO_TOOL_PROFILE=full` before startup.
@@ -189,9 +189,11 @@ phase timings for performance diagnosis.
 ## Routing and freshness
 
 Every tool accepts `root`. Omit it only while you work in the folder this session
-started in. Pass the absolute path anywhere else (another worktree, clone,
-repository or added folder), after an `Ambiguous worktree` or `No project root`
-error, and on every subagent call. Never pass a relative path. A subagent passes
+started in. Pass the absolute path of the checkout you are working in anywhere
+else (another worktree, clone, repository or added folder), on every call after an
+`Ambiguous worktree` or `No project root` error, and on every subagent call. Never
+pass a relative root. File paths are relative to the Git toplevel, even from a
+subfolder. A subagent passes
 its absolute worktree root on every call, including discovery and reindex, because
 it shares the parent's connection: a shell `cd` does not retarget a shared MCP
 server. When the effective Git repository has linked worktrees, an

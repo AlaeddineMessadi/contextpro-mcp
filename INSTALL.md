@@ -136,7 +136,7 @@ In the client, a first read looks like this. Use a line range: a whole file larg
 context({ targets: [{ file: "src/index.ts", start: 1, end: 40 }], max_tokens: 1500 })
 ```
 
-Replace `src/index.ts` with a file in your project. For callers of a symbol:
+Replace `src/index.ts` with a file in your project, relative to the Git toplevel. For callers of a symbol:
 
 ```js
 exact_references({ file: "src/lib/foo.ts", symbol_name: "foo" })
@@ -144,7 +144,7 @@ exact_references({ file: "src/lib/foo.ts", symbol_name: "foo" })
 
 Without Ollama, `context()` results include a "Discovery used lexical fallback" notice. That is expected and doesn't affect `exact_references`.
 
-To inspect the index, enable `status` with `discover_tools(enable:["status"])`. If the tool doesn't appear (some clients don't refresh their tool list), call it through `discover_tools({ root, call: { name: "status", arguments: {} } })`. For first-time indexing, or drift that needs a rebuild, enable and call `reindex`; `no_embed:true` builds structural data without embeddings. This is installation diagnosis, not something to run on every task.
+To inspect the index, enable `status` with `discover_tools(enable:["status"])`. If the tool doesn't appear (some clients don't refresh their tool list), call it through `discover_tools({ call: { name: "status", arguments: {} } })`. For first-time indexing, or drift that needs a rebuild, enable and call `reindex`; `no_embed:true` builds structural data without embeddings. This is installation diagnosis, not something to run on every task.
 
 ## Optional setup
 

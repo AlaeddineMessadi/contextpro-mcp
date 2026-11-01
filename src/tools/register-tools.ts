@@ -155,7 +155,7 @@ export function registerTools(
   server.tool("context", "Read up to six known files, symbols, or line ranges together with targets:[{file,symbol?,start?,end?}], without search or embeddings. Use query for discovery plus source in one call. Returns bounded, deduplicated source with explicit omissions. Prefer a batch over separate reads when useful; stop when evidence suffices.", {
     intent: z.enum(["auto", "lookup", "change", "debug", "review", "overview"]).optional().describe("Query-only opt-in adaptive retrieval. Change/debug/review include bounded connected evidence; auto infers intent."),
     query: z.string().max(2000).optional().describe("Discovery query, at most 2000 characters. Use a literal symbol name to prioritize its definition."),
-    targets: z.array(z.object({ file: z.string().max(240), symbol: z.string().max(200).optional(), start: z.number().int().min(1).optional(), end: z.number().int().min(1).optional() }).strict()).min(1).max(6).optional().describe("Exact reads: 1–6 file/symbol/line targets per call. Split larger batches."),
+    targets: z.array(z.object({ file: z.string().max(240).describe("Relative to the Git toplevel."), symbol: z.string().max(200).optional(), start: z.number().int().min(1).optional(), end: z.number().int().min(1).optional() }).strict()).min(1).max(6).optional().describe("Exact reads: 1–6 file/symbol/line targets per call. Split larger batches."),
     max_tokens: z.number().int().min(512).max(12000).optional().describe("Integer response budget: 512–12000, UTF-8 bytes/4; default 4000. Raise within this range or narrow targets if omitted."),
     previous_context_id: z.string().regex(/^source_context-[a-f0-9]{14}$/).optional().describe("Query mode only: source_context ID from a complete packet you still hold. Returns source changes; omit after compaction. Exact targets are stateless."),
   }, withRequestActivity(async ({ query, targets, max_tokens, previous_context_id, intent }) => ({
@@ -199,7 +199,7 @@ export function registerTools(
     async (args: z.infer<z.ZodObject<typeof discoveryShape>> & { root?: string }) => {
       if (!args.call) return discover(args);
       const fail = (text: string) => ({ isError: true, content: [{ type: "text" as const, text }] });
-      if (args.enable || args.query || args.limit !== undefined) return fail("Use call alone with root; discover the schema first.");
+      if (args.enable || args.query || args.limit !== undefined) return fail("Use call alone, plus root if needed; discover the schema first.");
       if (!callable.has(args.call.name)) return fail("This tool cannot be dispatched. Enable it and use a client with tool refresh or the full profile.");
       const invocation = invocations.get(args.call.name)!;
       if (Object.hasOwn(args.call.arguments ?? {}, "root")) return fail("Pass root at the top level, not inside call.arguments.");

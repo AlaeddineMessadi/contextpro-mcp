@@ -7,9 +7,10 @@ export const CONTEXTPRO_PROJECT_INSTRUCTIONS = `## ContextPro repository workflo
 For the lean profile, use context(query:...) to locate and read evidence together,
 or context(targets:[{file,symbol?,start?,end?},...]) for batched direct reads.
 Omit root only while you work in the folder this session started in. Pass the
-absolute path anywhere else (another worktree, clone, repository or added folder),
-after an "Ambiguous worktree" or "No project root" error, and on every subagent call.
-Never pass a relative path. A shell cd or worktree change does not retarget a shared MCP server.
+absolute path of the checkout you are working in anywhere else (another worktree,
+clone, repository or added folder), on every call after an "Ambiguous worktree" or
+"No project root" error, and on every subagent call. Never pass a relative root.
+File paths are relative to the Git toplevel, even from a subfolder. A shell cd or worktree change does not retarget a shared MCP server.
 Context budgets use max_tokens (512-12000, default 4000); exact batches accept at most six targets.
 Name a known relative directory and concrete routes/symbols to focus discovery.
 Scope/usage hints are bounded textual evidence, not compiler references or hard
@@ -34,7 +35,7 @@ disclose that textual matches cannot establish binding identity or rename safety
 Use discover_tools to find and enable other expert tools such as symbolic edits.
 If the client does not refresh its catalog, use the supported call:{name,arguments}
 dispatcher with the discovered schema; put root only at the top level.
-Use call alone with root; do not mix query, enable or limit into execution.
+Use call alone, plus root if needed; do not mix query, enable or limit into execution.
 Arguments are tool-specific: max_tokens belongs to context, not status or exact_references.
 Prefer text or compact search output; verbose json is for diagnostics.
 Batch independent symbol reads with explain(symbols:[{symbol,file},...], depth:0)
